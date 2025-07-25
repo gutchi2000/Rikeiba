@@ -1,5 +1,4 @@
-# 修正済みの Streamlit アプリを keiba_web_app.py として保存
-code = '''
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,15 +7,21 @@ st.title("競馬スコア分析アプリ")
 
 uploaded_file = st.file_uploader("Excelファイル（出走馬データ）をアップロードしてください", type=["xlsx"])
 
-if uploaded_file:
-    # 明示的に列名を指定
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-    df.columns = ["馬名", "頭数", "グレード", "着順"]
+if uploaded_file is not None:
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+        df.columns = ["馬名", "頭数", "グレード", "着順"]
+        st.success("1枚目（出走履歴）読み込み成功")
+    except Exception as e:
+        st.error(f"1枚目の読み込みエラー: {e}")
+        st.stop()
 
     try:
         df_stats = pd.read_excel(uploaded_file, sheet_name=1)
+        st.success("2枚目（統計データ）読み込み成功")
     except:
         df_stats = None
+        st.warning("2枚目の統計データ（勝率など）が見つかりません。")
 
     st.subheader("アップロードされたデータ")
     st.write(df)
@@ -50,7 +55,6 @@ if uploaded_file:
     avg_scores["偏差値"] = avg_scores["平均スコア"].apply(lambda x: 50 + 10 * (x - mean) / std)
 
     if df_stats is not None:
-        # 評価点数付け（印）
         def evaluate(rate, thresholds):
             if rate >= thresholds[0]:
                 return ("◎", 4)
@@ -84,7 +88,6 @@ if uploaded_file:
         final_std = merged["最終スコア"].std()
         merged["最終偏差値"] = merged["最終スコア"].apply(lambda x: 50 + 10 * (x - final_mean) / final_std)
 
-        # 上位6頭
         top6 = merged.sort_values("最終偏差値", ascending=False).head(6)
 
         st.subheader("上位6頭（最終偏差値順）")
@@ -93,6 +96,4 @@ if uploaded_file:
         st.subheader("全馬データ（詳細）")
         st.write(merged)
     else:
-        st.warning("勝率などの統計データ（シート2）が見つかりませんでした。評価点付きの分析はスキップされました。")
-'''
-
+        st.warning("評価点付きの分析はスキップされました。")
