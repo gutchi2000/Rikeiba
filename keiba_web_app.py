@@ -7,12 +7,13 @@ st.title("競馬スコア分析アプリ")
 uploaded_file = st.file_uploader("Excelファイル（出走馬データ）をアップロードしてください", type=["xlsx"])
 
 if uploaded_file:
-    # 明示的に列名を指定
+    # 出走データの読み込み
     df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
     df.columns = ["馬名", "頭数", "グレード", "着順"]
 
     try:
         df_stats = pd.read_excel(uploaded_file, sheet_name=1)
+        df_stats.columns = df_stats.columns.str.strip()  # 空白除去
     except:
         df_stats = None
 
@@ -72,25 +73,32 @@ if uploaded_file:
             return pd.Series([marks["勝率"], marks["連対率"], marks["複勝率"], score],
                              index=["勝率印", "連対率印", "複勝率印", "評価点"])
 
+        # 列名がなければ手動で設定する fallback
+        if not {"馬名", "勝率", "連対率", "複勝率"}.issubset(df_stats.columns):
+            df_stats.columns = ["馬名", "勝率", "連対率", "複勝率"]
+
         df_stats[["勝率印", "連対率印", "複勝率印", "評価点"]] = df_stats.apply(process_stats, axis=1)
 
-        # 偏差値 × 評価点 → 再スコア
-        merged = pd.merge(avg_scores, df_stats[["馬名", "評価点"]], on="馬名", how="left")
-        merged["評価点"] = merged["評価点"].fillna(0)
-        merged["最終スコア"] = merged["偏差値"] * merged["評価点"]
+        if "馬名" in df_stats.columns and "評価点" in df_stats.columns:
+            merged = pd.merge(avg_scores, df_stats[["馬名", "評価点"]], on="馬名", how="left")
+            merged["評価点"] = merged["評価点"].fillna(0)
+            merged["最終スコア"] = merged["偏差値"] * merged["評価点"]
 
-        # 最終偏差値
-        final_mean = merged["最終スコア"].mean()
-        final_std = merged["最終スコア"].std()
-        merged["最終偏差値"] = merged["最終スコア"].apply(lambda x: 50 + 10 * (x - final_mean) / final_std)
+            # 最終偏差値
+            final_mean = merged["最終スコア"].mean()
+            final_std = merged["最終スコア"].std()
+            merged["最終偏差値"] = merged["最終スコア"].apply(lambda x: 50 + 10 * (x - final_mean) / final_std)
 
-        # 上位6頭
-        top6 = merged.sort_values("最終偏差値", ascending=False).head(6)
+            # 上位6頭
+            top6 = merged.sort_values("最終偏差値", ascending=False).head(6)
 
-        st.subheader("上位6頭（最終偏差値順）")
-        st.write(top6[["馬名", "最終偏差値"]])
+            st.subheader("上位6頭（最終偏差値順）")
+            st.write(top6[["馬名", "最終偏差値"]])
 
-        st.subheader("全馬データ（詳細）")
-        st.write(merged)
+            st.subheader("全馬データ（詳細）")
+            st.write(merged)
+        else:
+            st.error("df_statsに '馬名' または '評価点' 列が見つかりません")
+
     else:
         st.warning("勝率などの統計データ（シート2）が見つかりませんでした。評価点付きの分析はスキップされました。")
