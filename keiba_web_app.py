@@ -3,10 +3,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import matplotlib.font_manager as fm
+from matplotlib import font_manager
 
-# 日本語フォント（IPAexゴシック）を設定
-jp_font = fm.FontProperties(fname="ipaexg.ttf")
+# 📌 日本語フォント読み込み
+jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
 plt.rcParams["font.family"] = jp_font.get_name()
 
 st.title("競馬スコア分析アプリ")
@@ -14,12 +14,12 @@ st.title("競馬スコア分析アプリ")
 uploaded_file = st.file_uploader("Excelファイル（出走馬データ）をアップロードしてください", type=["xlsx"])
 
 if uploaded_file:
-    # シート1: 出走データ読み込み
+    # シート1: 出走データ
     df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
     df.columns = ["馬名", "頭数", "グレード", "着順"]
 
     try:
-        # シート2: 成績データ読み込み（MultiIndex対応）
+        # シート2: 成績データ（MultiIndex）
         df_stats = pd.read_excel(uploaded_file, sheet_name=1, header=[0, 1])
         df_stats.columns = ["馬名"] + [f"{col1}_{col2}" for col1, col2 in df_stats.columns[1:]]
     except:
@@ -30,20 +30,18 @@ if uploaded_file:
 
     # スコア計算
     GRADE_SCORE = {
-        "GⅠ": 10, "GⅡ": 8, "GⅢ": 6, "リステッド": 5, "オープン特別": 4,
-        "3勝クラス": 3, "2勝クラス": 2, "1勝クラス": 1, "新馬": 1, "未勝利": 1
+        "GⅠ": 10, "GⅡ": 8, "GⅢ": 6, "リステッド": 5,
+        "オープン特別": 4, "3勝クラス": 3, "2勝クラス": 2,
+        "1勝クラス": 1, "新馬": 1, "未勝利": 1
     }
-
-    GP_MIN = 1
-    GP_MAX = 10
 
     def calculate_score(row):
         try:
-            GP = GRADE_SCORE.get(row["グレード"], 1)
-            N = int(row["頭数"])
+            gp = GRADE_SCORE.get(row["グレード"], 1)
+            n = int(row["頭数"])
             p = int(row["着順"])
-            raw_score = GP * (N + 1 - p)
-            score = (raw_score - GP_MIN) / (GP_MAX * N - GP_MIN) * 100
+            raw_score = gp * (n + 1 - p)
+            score = (raw_score - 1) / (10 * n - 1) * 100
             return score
         except:
             return np.nan
@@ -86,7 +84,7 @@ if uploaded_file:
 
         df_stats["評価点"] = df_stats[[f"{rt}_点" for rt in rate_types]].sum(axis=1)
 
-        # 最終スコアと偏差値
+        # 統合＆最終偏差値計算
         merged = pd.merge(avg_scores, df_stats[["馬名", "評価点"]], on="馬名", how="left")
         merged["評価点"] = merged["評価点"].fillna(0)
         merged["最終スコア"] = merged["偏差値"] * merged["評価点"]
@@ -96,30 +94,34 @@ if uploaded_file:
 
         top6 = merged.sort_values("最終偏差値", ascending=False).head(6)
 
-        # 棒グラフ（上位6頭）
+        # 🎨 棒グラフ（上位6頭）
         st.subheader("最終偏差値 上位6頭（棒グラフ）")
         fig1, ax1 = plt.subplots(figsize=(10, 6))
         sns.barplot(x="最終偏差値", y="馬名", data=top6, palette="Blues_d", ax=ax1)
         ax1.set_title("最終偏差値（上位6頭）", fontproperties=jp_font)
         ax1.set_xlabel("最終偏差値", fontproperties=jp_font)
         ax1.set_ylabel("馬名", fontproperties=jp_font)
+        for label in ax1.get_yticklabels():
+            label.set_fontproperties(jp_font)
         st.pyplot(fig1)
 
-        # 散布図（全馬）
+        # 🎨 散布図（全馬）
         st.subheader("偏差値 × 評価点 散布図（全馬）")
         fig2, ax2 = plt.subplots(figsize=(10, 6))
         sns.scatterplot(data=merged, x="偏差値", y="評価点", hue="馬名", s=100, ax=ax2)
         ax2.set_title("偏差値 × 評価点 散布図", fontproperties=jp_font)
         ax2.set_xlabel("偏差値", fontproperties=jp_font)
         ax2.set_ylabel("評価点", fontproperties=jp_font)
-        ax2.legend(prop=jp_font)
+        for label in ax2.get_xticklabels():
+            label.set_fontproperties(jp_font)
+        for label in ax2.get_yticklabels():
+            label.set_fontproperties(jp_font)
         st.pyplot(fig2)
 
+        # 表示
         st.subheader("上位6頭（最終偏差値順）")
         st.write(top6[["馬名", "最終偏差値"]])
-
         st.subheader("全馬データ（詳細）")
         st.write(merged)
-
     else:
-        st.warning("勝率などの統計データ（シート2）が見つかりませんでした。評価点付きの分析はスキップされました。")
+        st.warning("勝率などの統計データ（シート2）が見つかりませんでした。")
