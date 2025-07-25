@@ -8,6 +8,7 @@ from matplotlib import font_manager
 # 日本語フォント読み込み
 jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
 plt.rcParams["font.family"] = jp_font.get_name()
+sns.set(font=jp_font.get_name())  # seabornにも適用
 
 st.title("競馬スコア分析アプリ")
 
@@ -133,6 +134,14 @@ if uploaded_file:
         ax2.set_title("偏差値 × 評価点 散布図", fontproperties=jp_font)
         ax2.set_xlabel("偏差値", fontproperties=jp_font)
         ax2.set_ylabel("評価点", fontproperties=jp_font)
+        for label in ax2.get_xticklabels():
+            label.set_fontproperties(jp_font)
+        for label in ax2.get_yticklabels():
+            label.set_fontproperties(jp_font)
+        legend = ax2.get_legend()
+        if legend:
+            for text in legend.get_texts():
+                text.set_fontproperties(jp_font)
         st.pyplot(fig2)
 
         st.subheader("上位6頭（最終偏差値順）")
