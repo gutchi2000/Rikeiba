@@ -1,6 +1,6 @@
-pandas
-streamlit
-numpy
 matplotlib
 seaborn
+pandas
+numpy
 openpyxl
+streamlit
