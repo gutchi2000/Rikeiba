@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt  # 追加
+import seaborn as sns            # 追加
 
 st.title("競馬スコア分析アプリ")
 
@@ -85,6 +87,24 @@ if uploaded_file:
         merged["最終偏差値"] = merged["最終スコア"].apply(lambda x: 50 + 10 * (x - final_mean) / final_std)
 
         top6 = merged.sort_values("最終偏差値", ascending=False).head(6)
+
+        # ★ここからグラフ表示追加部分★
+        st.subheader("最終偏差値 上位6頭（棒グラフ）")
+        fig1, ax1 = plt.subplots(figsize=(10, 6))
+        sns.barplot(x="最終偏差値", y="馬名", data=top6, palette="Blues_d", ax=ax1)
+        ax1.set_title("最終偏差値（上位6頭）")
+        ax1.set_xlabel("最終偏差値")
+        ax1.set_ylabel("馬名")
+        st.pyplot(fig1)
+
+        st.subheader("偏差値 × 評価点 散布図（全馬）")
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        sns.scatterplot(data=merged, x="偏差値", y="評価点", hue="馬名", s=100, ax=ax2)
+        ax2.set_title("偏差値 × 評価点 散布図")
+        ax2.set_xlabel("偏差値")
+        ax2.set_ylabel("評価点")
+        st.pyplot(fig2)
+        # ★ここまで★
 
         st.subheader("上位6頭（最終偏差値順）")
         st.write(top6[["馬名", "最終偏差値"]])
