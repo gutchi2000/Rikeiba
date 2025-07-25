@@ -96,7 +96,6 @@ if uploaded_file:
         st.warning("勝率などの統計データ（シート2）が見つかりませんでした。評価点付きの分析はスキップされました。")
 '''
 
-with open("/mnt/data/keiba_web_app.py", "w", encoding="utf-8") as f:
     f.write(code)
 
 "/mnt/data/keiba_web_app.py"
