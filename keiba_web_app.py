@@ -93,9 +93,16 @@ fig2, ax2 = plt.subplots(figsize=(10,6))
 ax2.scatter(avg['偏差値'], avg['加重平均偏差値'], s=20, color='gray')
 # 各点に馬名ラベルを付与
 for _, row in avg.iterrows():
-    ax2.text(row['偏差値'], row['加重平均偏差値'], row['馬名'],
-             fontproperties=jp_font, fontsize=9,
-             verticalalignment='center', horizontalalignment='center')
+    # ラベルが重ならないようにオフセットして表示
+    ax2.annotate(
+        row['馬名'],
+        (row['偏差値'], row['加重平均偏差値']),
+        fontproperties=jp_font,
+        fontsize=9,
+        textcoords="offset points",
+        xytext=(5,5),
+        ha='left', va='bottom'
+    )
 # 軸ラベル・タイトル
 ax2.set_title("調子(加重偏差値)×安定性", fontproperties=jp_font)
 ax2.set_xlabel("偏差値", fontproperties=jp_font)
