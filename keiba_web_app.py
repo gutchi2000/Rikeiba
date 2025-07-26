@@ -45,7 +45,10 @@ def calculate_score_ext(row):
     raw = GP * (N + 1 - p)
     raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN)
     up3_norm = U3std / U3i if U3i > 0 else 0
-    return (raw_norm + up3_norm) / 2 * 100
+    # 重み付け: raw_norm ×8 + up3_norm ×2
+    weighted = raw_norm * 8 + up3_norm * 2
+    # 合計重み 10 で正規化し100点満点にスケール
+    return (weighted / 10) * 100
 
 df["Score"] = df.apply(calculate_score_ext, axis=1)
 
