@@ -15,12 +15,33 @@ except Exception as e:
     st.error(f"ファイル読み込みエラー: {e}")
     st.stop()
 
-# --- 前提: df には既に "馬名", "Score" カラムが存在している ---
-# ※ 実運用では過去成績DFを使用しますが、ここでは当該ファイルにScore列がある前提です。 "馬名", "Score" カラムが存在している ---
-# --- 実運用: アップロードされた df をそのまま使用 (Score 列を含む前提) ---
-#   df = pd.read_excel(uploaded_file) などで読み込み済み
+# --- 前提: アップロードシートに過去成績があり、必要カラムを計算する ---
+# 必要カラム: 馬名, 頭数, グレード, 着順
+col_req = ['馬名','頭数','グレード','着順']
+if not all(c in df.columns for c in col_req):
+    st.error(f"必須カラムが不足しています: {col_req}")
+    st.stop()
 
-# 必須列確認
+# スコア計算（例：単純に着順と頭数からRawScore）
+GRADE_SCORE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,"オープン特別":4,
+               "3勝クラス":3,"2勝クラス":2,"1勝クラス":1,"新馬":1,"未勝利":1}
+GP_MIN, GP_MAX = 1, 10
+
+def calculate_score(row):
+    N, p = row['頭数'], row['着順']
+    GP = GRADE_SCORE.get(row['グレード'],1)
+    raw = GP * (N + 1 - p)
+    return raw
+
+# Score 列を追加
+if 'Score' not in df.columns:
+    df['Score'] = df.apply(calculate_score, axis=1)
+
+# 必須列確認: 馬名, Score
+required_cols = ['馬名','Score']
+if not all(col in df.columns for col in required_cols):
+    st.error(f"入力データに必要なカラムがありません: {required_cols}")
+    st.stop()
 required_cols = ['馬名', 'Score']
 if not all(col in df.columns for col in required_cols):
     st.error(f"入力データに必要なカラムがありません: {required_cols}")
