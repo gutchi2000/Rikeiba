@@ -10,10 +10,11 @@ import seaborn as sns
 st.title("競馬スコア分析Webアプリ")
 
 # --- ファイルアップロード ---
-uploaded_file = st.file_uploader("Excelファイルを選択してください", type="xlsx")
+uploaded_file = st.file_uploader("Excelファイル（.xlsx）を選択してください", type="xlsx")
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+    # Excelファイルとして読み込む
+    df = pd.read_excel(uploaded_file)
     st.write("データサンプル", df.head())
 
     # --- スコア計算（例：適宜調整してください） ---
@@ -42,7 +43,7 @@ if uploaded_file is not None:
     ax.set_ylabel("馬ID")
     st.pyplot(fig)
 
-    # --- 散布図: 調子×安定性（馬名ラベル版） ---
+    # --- 散布図: 調子×安定性（馬IDラベル版） ---
     st.subheader("調子×安定性（馬IDラベル版）")
     fig2, ax2 = plt.subplots(figsize=(10,6))
     stds = df.groupby("horse_id")["Score"].std().reset_index()
@@ -71,4 +72,4 @@ if uploaded_file is not None:
     st.dataframe(avg2)
 
 else:
-    st.info("まずCSVファイルをアップロードしてください。")
+    st.info("まずExcelファイル（.xlsx）をアップロードしてください。")
