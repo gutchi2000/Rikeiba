@@ -17,8 +17,21 @@ uploaded_file = st.file_uploader("Excelファイルをアップロードして�
 if not uploaded_file:
     st.stop()
 
-# シート1: 過去成績データ
-df = pd.read_excel(uploaded_file, sheet_name=0)
+# シート1: 過去成績データ（ヘッダー無しの場合にも対応）
+# 期待カラム: 馬名, 頭数, グレード, 着順, 上がり3F, Ave-3F
+try:
+    df = pd.read_excel(uploaded_file, sheet_name=0)
+    # カラム名が既に揃っているか確認
+    col_req = ['馬名','頭数','グレード','着順','上がり3F','Ave-3F']
+    if not all(c in df.columns for c in col_req):
+        # ヘッダーなしで上書き
+        df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+        df.columns = col_req
+except Exception as e:
+    st.error(f"シート1の読み込みに失敗しました: {e}")
+    st.stop()
+# 必須列確認
+df = df[col_req](uploaded_file, sheet_name=0)
 # 列: 馬名, 頭数, グレード, 着順, 上がり3F, Ave-3F
 col_req = ['馬名','頭数','グレード','着順','上がり3F','Ave-3F']
 if any(c not in df.columns for c in col_req):
