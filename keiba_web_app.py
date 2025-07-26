@@ -2,7 +2,18 @@
 import pandas as pd
 import numpy as np
 
+import streamlit as st
+
+# ローカルExcelファイルを使用する
+file_path = st.text_input("Excelファイルパスを入力（例: data.xlsx）", value="data.xlsx")
+try:
+    df = pd.read_excel(file_path)
+except Exception as e:
+    st.error(f"ファイル読み込みエラー: {e}")
+    st.stop()
+
 # --- 前提: df には既に "馬名", "Score" カラムが存在している ---
+# ※ 実運用では過去成績DFを使用しますが、ここでは当該ファイルにScore列がある前提です。 "馬名", "Score" カラムが存在している ---
 # ※ サンプル用のダミーデータを作成（実運用時は過去成績DFを使用）
 data = {
     "馬名": ["A", "B", "C", "D"],
