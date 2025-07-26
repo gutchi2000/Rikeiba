@@ -20,6 +20,12 @@ except Exception as e:
 # --- 実運用: アップロードされた df をそのまま使用 (Score 列を含む前提) ---
 #   df = pd.read_excel(uploaded_file) などで読み込み済み
 
+# 必須列確認
+required_cols = ['馬名', 'Score']
+if not all(col in df.columns for col in required_cols):
+    st.error(f"入力データに必要なカラムがありません: {required_cols}")
+    st.stop()
+
 # 1. スコア標準偏差の算出（安定性）（安定性）
 score_std = df.groupby("馬名")["Score"].std().reset_index()
 score_std.columns = ["馬名", "スコア標準偏差"]
