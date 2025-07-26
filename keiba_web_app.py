@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from adjustText import adjust_text
 from matplotlib import font_manager
 
 # 日本語フォント読み込み
@@ -13,39 +14,26 @@ sns.set(font=jp_font.get_name())
 st.title("競馬スコア分析アプリ（完成版）")
 
 # Excelアップロード
-uploaded_file = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
-if not uploaded_file:
+df = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
+if not df:
     st.stop()
+df = pd.read_excel(df, sheet_name=0, header=None)
 
-# シート1: 過去成績データ（ヘッダー有無対応）
+# カラム設定
 col_req = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F","馬場状態"]
-try:
-    df = pd.read_excel(uploaded_file, sheet_name=0)
-    if not all(c in df.columns for c in col_req):
-        df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-        # 先頭7列のみ使用
-        df = df.iloc[:, :len(col_req)]
-        df.columns = col_req
-except Exception as e:
-    st.error(f"シート1読み込み失敗: {e}")
-    st.stop()
-
-df = df[col_req]
+df = df.iloc[:, :len(col_req)]
+df.columns = col_req
 
 # 列名マッピング
-df = df.rename(columns={
-    '馬場状態': 'track_condition'
-})
+df = df.rename(columns={'馬場状態':'track_condition'})
 
 # スコア計算パラメータ
-GRADE_SCORE = {
-    "GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
-    "オープン特別":4, "3勝クラス":3, "2勝クラス":2,
-    "1勝クラス":1, "新馬":1, "未勝利":1
-}
+GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
+               "オープン特別":4, "3勝クラス":3, "2勝クラス":2,
+               "1勝クラス":1, "新馬":1, "未勝利":1}
 GP_MIN, GP_MAX = 1, 10
 
-# 拡張スコア計算式
+# 拡張スコア計算式（9:1重み）
 def calculate_score_ext(row):
     N, p = row["頭数"], row["着順"]
     GP = GRADE_SCORE.get(row["グレード"], 1)
@@ -53,7 +41,6 @@ def calculate_score_ext(row):
     raw = GP * (N + 1 - p)
     raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN)
     up3_norm = U3std / U3i if U3i > 0 else 0
-    # 9:1 重み
     weighted = raw_norm * 9 + up3_norm * 1
     return (weighted / 10) * 100
 
@@ -76,58 +63,28 @@ ax.set_ylabel("馬名", fontproperties=jp_font)
 ax.set_yticklabels(ax.get_yticklabels(), fontproperties=jp_font)
 st.pyplot(fig)
 
-# 散布図: 調子×安定性（馬名ラベル版）
-st.subheader("調子×安定性（馬名ラベル版）")
+# 散布図: 調子×安定性（調整テキスト使用）
+st.subheader("調子×安定性（馬名ラベル版、重なり調整）")
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# 標準偏差計算
 df_std = df.groupby("馬名")["Score"].std().reset_index()
 df_std.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(df_std, on="馬名")
-# 散布点
-ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
-# ラベル（近接回避付き）
-label_positions = []
+# プロット
+ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=30)
+# ラベル配置と重なり調整
+texts = []
 for _, row in avg2.iterrows():
-    x, y = row['偏差値'], row['標準偏差']
-    dx, dy = 5, 5  # 初期オフセット
-    # 他ラベルとの距離チェック
-    for (lx, ly) in label_positions:
-        while abs(x + dx - lx) < 1.0 and abs(y + dy - ly) < 0.3:
-            dy += 3  # 重なり回避のため縦にずらす
-    label_positions.append((x+dx, y+dy))
-    ax2.annotate(
-        row['馬名'],
-        (x, y),
-        fontproperties=jp_font,
-        fontsize=9,
-        xytext=(dx, dy),
-        textcoords="offset points"
+    texts.append(
+        ax2.text(row['偏差値'], row['標準偏差'], row['馬名'], fontproperties=jp_font)
     )
-# 軸ラベル・タイトル
+adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray'))
+
+# 軸・タイトル設定
 ax2.set_xlabel("調子（偏差値）", fontproperties=jp_font)
 ax2.set_ylabel("安定性（標準偏差）", fontproperties=jp_font)
 ax2.set_title("調子×安定性", fontproperties=jp_font)
-
-# 四象限の中心線
-x_min, x_max = ax2.get_xlim()
-y_min, y_max = ax2.get_ylim()
-x_mid = (x_min + x_max) / 2
-y_mid = (y_min + y_max) / 2
-ax2.axvline(x_mid, color='gray', linestyle='--')
-ax2.axhline(y_mid, color='gray', linestyle='--')
-
-# 四象限の注釈
-offset = 0.02 * (x_max - x_min)
-ax2.text(x_mid + offset, y_mid - offset, '本命候補', fontproperties=jp_font)
-ax2.text(x_mid + offset, y_mid + offset, '抑え・穴狙い', fontproperties=jp_font)
-ax2.text(x_mid - offset*5, y_mid + offset, '軽視ゾーン', fontproperties=jp_font)
-ax2.text(x_mid - offset*5, y_mid - offset, '堅軸ゾーン', fontproperties=jp_font)
-
 st.pyplot(fig2)
 
 # テーブル表示
-st.subheader("馬別スコア一覧（テーブル）")
-st.dataframe(avg)
-
 st.subheader("馬別スコア一覧（テーブル）")
 st.dataframe(avg)
