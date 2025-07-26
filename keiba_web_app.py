@@ -18,12 +18,12 @@ if not uploaded_file:
     st.stop()
 
 # シート1: 過去成績データ（ヘッダー有無対応）
-col_req = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F"]
+col_req = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F","馬場状態"]
 try:
     df = pd.read_excel(uploaded_file, sheet_name=0)
     if not all(c in df.columns for c in col_req):
         df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-        # 先頭6列のみ使用
+        # 先頭7列のみ使用
         df = df.iloc[:, :len(col_req)]
         df.columns = col_req
 except Exception as e:
