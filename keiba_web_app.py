@@ -118,5 +118,3 @@ st.pyplot(fig2)
 # 最後にテーブル表示
 st.subheader("馬別スコア一覧（テーブル）")
 st.dataframe(avg)
-st.subheader("馬別スコア一覧（テーブル）")
-st.dataframe(avg)
