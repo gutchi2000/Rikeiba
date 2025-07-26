@@ -17,15 +17,10 @@ except Exception as e:
 
 # --- 前提: df には既に "馬名", "Score" カラムが存在している ---
 # ※ 実運用では過去成績DFを使用しますが、ここでは当該ファイルにScore列がある前提です。 "馬名", "Score" カラムが存在している ---
-# ※ サンプル用のダミーデータを作成（実運用時は過去成績DFを使用）
-data = {
-    "馬名": ["A", "B", "C", "D"],
-    "Score": [80, 75, 90, 65]
-}
-df = pd.DataFrame(data)
+# --- 実運用: アップロードされた df をそのまま使用 (Score 列を含む前提) ---
+#   df = pd.read_excel(uploaded_file) などで読み込み済み
 
-
-# 1. スコア標準偏差の算出（安定性）
+# 1. スコア標準偏差の算出（安定性）（安定性）
 score_std = df.groupby("馬名")["Score"].std().reset_index()
 score_std.columns = ["馬名", "スコア標準偏差"]
 
