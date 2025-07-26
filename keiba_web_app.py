@@ -85,14 +85,22 @@ df_std.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(df_std, on="馬名")
 # 散布点
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
-# ラベル
+# ラベル（近接回避付き）
+label_positions = []
 for _, row in avg2.iterrows():
+    x, y = row['偏差値'], row['標準偏差']
+    dx, dy = 5, 5  # 初期オフセット
+    # 他ラベルとの距離チェック
+    for (lx, ly) in label_positions:
+        while abs(x + dx - lx) < 1.0 and abs(y + dy - ly) < 0.3:
+            dy += 3  # 重なり回避のため縦にずらす
+    label_positions.append((x+dx, y+dy))
     ax2.annotate(
         row['馬名'],
-        (row['偏差値'], row['標準偏差']),
+        (x, y),
         fontproperties=jp_font,
         fontsize=9,
-        xytext=(5,5),
+        xytext=(dx, dy),
         textcoords="offset points"
     )
 # 軸ラベル・タイトル
