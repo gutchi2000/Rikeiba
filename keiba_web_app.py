@@ -31,7 +31,7 @@ except Exception as e:
     st.error(f"シート1の読み込みに失敗しました: {e}")
     st.stop()
 # 必須列確認
-df = df[col_req](uploaded_file, sheet_name=0)
+df = df[col_req]
 # 列: 馬名, 頭数, グレード, 着順, 上がり3F, Ave-3F
 col_req = ['馬名','頭数','グレード','着順','上がり3F','Ave-3F']
 if any(c not in df.columns for c in col_req):
