@@ -10,7 +10,7 @@ import seaborn as sns
 st.title("競馬スコア分析Webアプリ")
 
 # --- ファイルアップロード ---
-uploaded_file = st.file_uploader("CSVファイルを選択してください", type="csv")
+uploaded_file = st.file_uploader("Excelファイルを選択してください", type="xlsx")
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
