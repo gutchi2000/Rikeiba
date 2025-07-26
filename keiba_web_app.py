@@ -85,7 +85,7 @@ ax.set_yticklabels(ax.get_yticklabels(),fontproperties=jp_font)
 st.pyplot(fig)
 
 # 散布図: 調子×安定性
-fig2, ax2 = plt.subplots(figsize=(6, 6))
+fig2, ax2 = plt.subplots(figsize=(10, 3))
 sns.scatterplot(data=avg, x='偏差値', y='加重平均偏差値', hue='馬名', s=100, ax=ax2)
 ax2.set_title('調子(加重偏差値)×安定性', fontproperties=jp_font)
 ax2.set_xlabel('偏差値', fontproperties=jp_font)
