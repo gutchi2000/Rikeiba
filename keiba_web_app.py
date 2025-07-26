@@ -86,13 +86,17 @@ st.pyplot(fig)
 
 # 散布図: 調子×安定性
 fig2, ax2 = plt.subplots(figsize=(8,5))
-sns.scatterplot(data=avg,x='偏差値',y='加重平均偏差値',hue='馬名',s=100,ax=ax2)
-ax2.set_title('調子(加重偏差値)×安定性',fontproperties=jp_font)
-ax2.set_xlabel('偏差値',fontproperties=jp_font)
-ax2.set_ylabel('加重平均偏差値',fontproperties=jp_font)
+sns.scatterplot(data=avg, x='偏差値', y='加重平均偏差値', hue='馬名', s=100, ax=ax2)
+ax2.set_title('調子(加重偏差値)×安定性', fontproperties=jp_font)
+ax2.set_xlabel('偏差値', fontproperties=jp_font)
+ax2.set_ylabel('加重平均偏差値', fontproperties=jp_font)
+# 軸目盛フォント設定
 for lbl in ax2.get_xticklabels(): lbl.set_fontproperties(jp_font)
 for lbl in ax2.get_yticklabels(): lbl.set_fontproperties(jp_font)
+# 凡例をプロット外に配置
 legend = ax2.get_legend()
 if legend:
+    legend.set_bbox_to_anchor((1.02, 1))
+    legend.set_loc('upper left')
     for text in legend.get_texts(): text.set_fontproperties(jp_font)
 st.pyplot(fig2)
