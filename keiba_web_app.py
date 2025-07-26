@@ -115,6 +115,22 @@ if ax2.get_legend():
     ax2.get_legend().remove()
 st.pyplot(fig2)
 
+# ——— EMA(指数移動平均)によるスコア ———
+# 直近の Score を指数移動平均で平滑化（span=3）
+df['rorder'] = df.groupby('馬名').cumcount(ascending=True) + 1
+ema = (
+    df.sort_values(['馬名','rorder'])
+      .groupby('馬名')['Score']
+      .apply(lambda x: x.ewm(span=3, adjust=False).mean().iloc[-1])
+      .reset_index(name='emaスコア')
+)
+# ema偏差値化
+m_ema, s_ema = ema['emaスコア'].mean(), ema['emaスコア'].std()
+ema['ema偏差値'] = ema['emaスコア'].apply(lambda x: 50 + 10 * (x - m_ema) / s_ema)
+# avg に結合
+avg = avg.merge(ema, on='馬名')
+
 # 最後にテーブル表示
 st.subheader("馬別スコア一覧（テーブル）")
 st.dataframe(avg)
+
