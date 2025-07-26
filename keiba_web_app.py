@@ -64,9 +64,37 @@ sns.barplot(x='偏差値',y='馬名',data=top6,ax=ax)
 ax.set_title('偏差値 上位6頭', fontproperties=jp_font)
 ax.set_xlabel('偏差値', fontproperties=jp_font)
 ax.set_ylabel('馬名', fontproperties=jp_font)
+ax.set_yticklabels([t.get_text() for t in ax.get_yticklabels()], fontproperties=jp_font)
 st.pyplot(fig)
 
-# 散布図: 調子×安定性 with annotate
+# 散布図: 調子×安定性 with annotate and quadrants
+st.subheader('調子×安定性')
+stds = df.groupby('馬名')['Score'].std().reset_index()
+stds.columns=['馬名','標準偏差']
+avg2 = avg.merge(stds,on='馬名')
+fig2, ax2 = plt.subplots(figsize=(10,6))
+# プロット
+ax2.scatter(avg2['偏差値'],avg2['標準偏差'],color='black',s=20)
+# 四象限線
+x0 = avg2['偏差値'].mean()
+y0 = avg2['標準偏差'].mean()
+ax2.axvline(x0, color='gray', linestyle='--')
+ax2.axhline(y0, color='gray', linestyle='--')
+# ラベル
+for _,r in avg2.iterrows():
+    ax2.text(r['偏差値'],r['標準偏差'],r['馬名'],fontproperties=jp_font,fontsize=8,ha='center',va='bottom')
+# 四象限注釈
+offset_x = (ax2.get_xlim()[1] - ax2.get_xlim()[0]) * 0.02
+offset_y = (ax2.get_ylim()[1] - ax2.get_ylim()[0]) * 0.02
+ax2.text(x0+offset_x, y0-offset_y, '本命候補', fontproperties=jp_font)
+ax2.text(x0+offset_x, y0+offset_y, '抑え・穴狙い', fontproperties=jp_font)
+ax2.text(x0-offset_x*5, y0+offset_y, '軽視ゾーン', fontproperties=jp_font)
+ax2.text(x0-offset_x*5, y0-offset_y, '堅軸ゾーン', fontproperties=jp_font)
+# 軸設定
+ax2.set_xlabel('調子（偏差値）',fontproperties=jp_font)
+ax2.set_ylabel('安定性（標準偏差）',fontproperties=jp_font)
+ax2.set_title('調子×安定性',fontproperties=jp_font)
+st.pyplot(fig2)
 st.subheader('調子×安定性')
 stds = df.groupby('馬名')['Score'].std().reset_index()
 stds.columns=['馬名','標準偏差']
