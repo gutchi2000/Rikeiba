@@ -23,6 +23,8 @@ try:
     df = pd.read_excel(uploaded_file, sheet_name=0)
     if not all(c in df.columns for c in col_req):
         df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+        # 先頭6列のみ使用
+        df = df.iloc[:, :len(col_req)]
         df.columns = col_req
 except Exception as e:
     st.error(f"シート1読み込み失敗: {e}")
