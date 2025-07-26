@@ -3,6 +3,13 @@ import pandas as pd
 import numpy as np
 
 # --- 前提: df には既に "馬名", "Score" カラムが存在している ---
+# ※ サンプル用のダミーデータを作成（実運用時は過去成績DFを使用）
+data = {
+    "馬名": ["A", "B", "C", "D"],
+    "Score": [80, 75, 90, 65]
+}
+df = pd.DataFrame(data)
+
 
 # 1. スコア標準偏差の算出（安定性）
 score_std = df.groupby("馬名")["Score"].std().reset_index()
