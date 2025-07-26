@@ -76,10 +76,21 @@ st.pyplot(fig)
 st.subheader("調子×安定性（馬名ラベル版）")
 fig2, ax2 = plt.subplots(figsize=(10,6))
 # 計算: 標準偏差
-stds = df.groupby("馬名")["Score"].std().reset_index()
-stds.columns = ["馬名","標準偏差"]
-avg2 = avg.merge(stds, on="馬名")
+df_std = df.groupby("馬名")["Score"].std().reset_index()
+df_std.columns = ["馬名","標準偏差"]
+avg2 = avg.merge(df_std, on="馬名")
+# 点を描画
+ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
+# ラベルをオフセット方式で配置
 for _, row in avg2.iterrows():
+    ax2.annotate(
+        row['馬名'],
+        (row['偏差値'], row['標準偏差']),
+        fontproperties=jp_font,
+        fontsize=9,
+        xytext=(5,5),
+        textcoords="offset points"
+    )
     ax2.annotate(
         row['馬名'],
         (row['偏差値'], row['標準偏差']),
