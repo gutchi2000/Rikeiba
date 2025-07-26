@@ -66,35 +66,44 @@ ax.set_ylabel("馬名", fontproperties=jp_font)
 ax.set_yticklabels([t.get_text() for t in ax.get_yticklabels()], fontproperties=jp_font)
 st.pyplot(fig)
 
-# ─── 散布図：調子×安定性（ラベルを縦ずらし） ───
+# ─── 散布図：調子×安定性 ───
 st.subheader("調子×安定性")
 stds = df.groupby("馬名")["Score"].std().reset_index()
 stds.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(stds, on="馬名")
 
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# プロット
+
+# 1) 背景色で四象限を強調
+x0, y0 = avg2["偏差値"].mean(), avg2["標準偏差"].mean()
+xmin, xmax = avg2["偏差値"].min(), avg2["偏差値"].max()
+ymin, ymax = avg2["標準偏差"].min(), avg2["標準偏差"].max()
+ax2.fill_betweenx([ymin, y0], xmin, x0, color="#dff0d8", alpha=0.3)  # 左下
+ax2.fill_betweenx([ymin, y0], x0, xmax, color="#fcf8e3", alpha=0.3)  # 右下
+ax2.fill_betweenx([y0, ymax], xmin, x0, color="#d9edf7", alpha=0.3)  # 左上
+ax2.fill_betweenx([y0, ymax], x0, xmax, color="#f2dede", alpha=0.3)  # 右上
+
+# 2) 平均線
+ax2.axvline(x0, color="gray", linestyle="--", linewidth=1)
+ax2.axhline(y0, color="gray", linestyle="--", linewidth=1)
+
+# 3) 散布点
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
 
-# 四象限線（平均値軸）
-x0, y0 = avg2["偏差値"].mean(), avg2["標準偏差"].mean()
-ax2.axvline(x0, color="gray", linestyle="--")
-ax2.axhline(y0, color="gray", linestyle="--")
-
-# 馬名ラベル（インデックスに応じて縦オフセット）
+# 4) 馬名ラベル（縦ずらし）
 for i, r in avg2.iterrows():
-    dy = (i % 3) * 4  # 0,4,8pxのずらし
+    dy = (i % 3) * 0.1  # 小さく動かす
     ax2.text(
-        r["偏差値"], r["標準偏差"] + dy*0.01,
+        r["偏差値"], r["標準偏差"] + dy,
         r["馬名"],
         fontproperties=jp_font,
         fontsize=8,
         ha="center", va="bottom"
     )
 
-# 四象限注釈
-dx = (ax2.get_xlim()[1]-ax2.get_xlim()[0]) * 0.02
-dy = (ax2.get_ylim()[1]-ax2.get_ylim()[0]) * 0.02
+# 5) 四象限注釈
+dx = (xmax - xmin) * 0.02
+dy = (ymax - ymin) * 0.02
 ax2.text(x0+dx, y0-dy, "本命候補", fontproperties=jp_font)
 ax2.text(x0+dx, y0+dy, "抑え・穴狙い", fontproperties=jp_font)
 ax2.text(x0-dx*5, y0+dy, "軽視ゾーン", fontproperties=jp_font)
