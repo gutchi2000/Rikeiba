@@ -4,10 +4,13 @@ import numpy as np
 
 import streamlit as st
 
-# ローカルExcelファイルを使用する
-file_path = st.text_input("Excelファイルパスを入力（例: data.xlsx）", value="data.xlsx")
+# Streamlitファイルアップロード
+uploaded_file = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
+if not uploaded_file:
+    st.stop()
+# アップロードファイルから読み込み
 try:
-    df = pd.read_excel(file_path)
+    df = pd.read_excel(uploaded_file)
 except Exception as e:
     st.error(f"ファイル読み込みエラー: {e}")
     st.stop()
