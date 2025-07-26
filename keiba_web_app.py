@@ -86,22 +86,30 @@ ax.set_ylabel("馬名", fontproperties=jp_font)
 ax.set_yticklabels(ax.get_yticklabels(), fontproperties=jp_font)
 st.pyplot(fig)
 
-# 散布図: 調子(加重偏差値)×安定性
-st.subheader("調子(加重偏差値)×安定性（散布図）")
+# 散布図: 調子(加重偏差値)×安定性（馬名ラベル版）
+st.subheader("調子(加重偏差値)×安定性（馬名ラベル）")
 fig2, ax2 = plt.subplots(figsize=(10,6))
-sns.scatterplot(data=avg, x="偏差値", y="加重平均偏差値", hue="馬名", s=100, ax=ax2)
+# 散布点は目立たない色・小さめサイズで描画
+ax2.scatter(avg['偏差値'], avg['加重平均偏差値'], s=20, color='gray')
+# 各点に馬名ラベルを付与
+for _, row in avg.iterrows():
+    ax2.text(row['偏差値'], row['加重平均偏差値'], row['馬名'],
+             fontproperties=jp_font, fontsize=9,
+             verticalalignment='center', horizontalalignment='center')
+# 軸ラベル・タイトル
 ax2.set_title("調子(加重偏差値)×安定性", fontproperties=jp_font)
 ax2.set_xlabel("偏差値", fontproperties=jp_font)
 ax2.set_ylabel("加重平均偏差値", fontproperties=jp_font)
+# 目盛フォント
 for lbl in ax2.get_xticklabels(): lbl.set_fontproperties(jp_font)
 for lbl in ax2.get_yticklabels(): lbl.set_fontproperties(jp_font)
-legend = ax2.get_legend()
-if legend:
-    legend.set_bbox_to_anchor((1.3,1))
-    legend.set_loc("upper left")
-    for text in legend.get_texts(): text.set_fontproperties(jp_font)
+# レジェンド削除
+if ax2.get_legend():
+    ax2.get_legend().remove()
 st.pyplot(fig2)
 
 # 最後にテーブル表示
+st.subheader("馬別スコア一覧（テーブル）")
+st.dataframe(avg)
 st.subheader("馬別スコア一覧（テーブル）")
 st.dataframe(avg)
