@@ -58,7 +58,7 @@ if uploaded_file:
     std = avg_scores["平均スコア"].std()
     avg_scores["偏差値"] = avg_scores["平均スコア"].apply(lambda x: 50 + 10 * (x - mean) / std)
 
-    # 追加: 安定性と加重平均スコア
+    # 安定性（標準偏差）と加重平均スコア
     std_scores = df.groupby("馬名")["Score"].std().reset_index()
     std_scores.columns = ["馬名", "スコア標準偏差"]
 
@@ -143,6 +143,39 @@ if uploaded_file:
             for text in legend.get_texts():
                 text.set_fontproperties(jp_font)
         st.pyplot(fig2)
+
+        st.subheader("安定性フィルタ（標準偏差による絞り込み）")
+        std_threshold = st.slider("最大許容標準偏差（スコア）", min_value=0.0, max_value=50.0, value=15.0, step=0.5)
+        stable_horses = merged[merged["スコア標準偏差"] <= std_threshold]
+        st.write(f"標準偏差が {std_threshold} 以下の馬：{len(stable_horses)} 頭")
+        st.dataframe(stable_horses.sort_values("最終偏差値", ascending=False))
+
+        st.subheader("直近成績重視ランキング（加重平均偏差値）")
+        top_recent = merged.sort_values("加重平均偏差値", ascending=False).head(10)
+        st.write(top_recent[["馬名", "加重平均偏差値", "スコア標準偏差"]])
+
+        st.subheader("調子と安定性のバブルチャート")
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        sns.scatterplot(
+            data=merged,
+            x="スコア標準偏差",
+            y="加重平均偏差値",
+            hue="馬名",
+            s=100,
+            ax=ax3
+        )
+        ax3.set_title("調子（加重偏差値）× 安定性（標準偏差）", fontproperties=jp_font)
+        ax3.set_xlabel("スコア標準偏差", fontproperties=jp_font)
+        ax3.set_ylabel("加重平均偏差値", fontproperties=jp_font)
+        for label in ax3.get_xticklabels():
+            label.set_fontproperties(jp_font)
+        for label in ax3.get_yticklabels():
+            label.set_fontproperties(jp_font)
+        legend = ax3.get_legend()
+        if legend:
+            for text in legend.get_texts():
+                text.set_fontproperties(jp_font)
+        st.pyplot(fig3)
 
         st.subheader("上位6頭（最終偏差値順）")
         st.write(top6[["馬名", "最終偏差値"]])
