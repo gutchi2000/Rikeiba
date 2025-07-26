@@ -32,6 +32,11 @@ except Exception as e:
 
 df = df[col_req]
 
+# 列名マッピング
+df = df.rename(columns={
+    '馬場状態': 'track_condition'
+})
+
 # スコア計算パラメータ
 GRADE_SCORE = {
     "GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
@@ -71,16 +76,15 @@ ax.set_ylabel("馬名", fontproperties=jp_font)
 ax.set_yticklabels(ax.get_yticklabels(), fontproperties=jp_font)
 st.pyplot(fig)
 
-# 散布図: 調子(加重平均偏差値)×安定性(標準偏差)
-# ca2: scatter with labels
+# 散布図: 調子×安定性（馬名ラベル版）
 st.subheader("調子×安定性（馬名ラベル版）")
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# 計算: 標準偏差
+# 標準偏差計算
 df_std = df.groupby("馬名")["Score"].std().reset_index()
 df_std.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(df_std, on="馬名")
 # 点を描画
-ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
+ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
 # ラベルをオフセット方式で配置
 for _, row in avg2.iterrows():
     ax2.annotate(
@@ -91,14 +95,8 @@ for _, row in avg2.iterrows():
         xytext=(5,5),
         textcoords="offset points"
     )
-    ax2.annotate(
-        row['馬名'],
-        (row['偏差値'], row['標準偏差']),
-        fontproperties=jp_font,
-        fontsize=9,
-        xytext=(5,5),
-        textcoords="offset points"
-    )
+ax2.set_xlabel("調子（偏差値）", fontproperties=jp_font)
+ax2.set_ylabel("安定性（標準偏差）", fontproperties=jp_font)
 ax2.set_title("調子×安定性", fontproperties=jp_font)
 st.pyplot(fig2)
 
