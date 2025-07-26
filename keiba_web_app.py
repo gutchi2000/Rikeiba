@@ -83,9 +83,9 @@ fig2, ax2 = plt.subplots(figsize=(10,6))
 df_std = df.groupby("馬名")["Score"].std().reset_index()
 df_std.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(df_std, on="馬名")
-# 点を描画
+# 散布点
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color='black', s=20)
-# ラベルをオフセット方式で配置
+# ラベル
 for _, row in avg2.iterrows():
     ax2.annotate(
         row['馬名'],
@@ -95,11 +95,31 @@ for _, row in avg2.iterrows():
         xytext=(5,5),
         textcoords="offset points"
     )
+# 軸ラベル・タイトル
 ax2.set_xlabel("調子（偏差値）", fontproperties=jp_font)
 ax2.set_ylabel("安定性（標準偏差）", fontproperties=jp_font)
 ax2.set_title("調子×安定性", fontproperties=jp_font)
+
+# 四象限の中心線
+x_min, x_max = ax2.get_xlim()
+y_min, y_max = ax2.get_ylim()
+x_mid = (x_min + x_max) / 2
+y_mid = (y_min + y_max) / 2
+ax2.axvline(x_mid, color='gray', linestyle='--')
+ax2.axhline(y_mid, color='gray', linestyle='--')
+
+# 四象限の注釈
+offset = 0.02 * (x_max - x_min)
+ax2.text(x_mid + offset, y_mid - offset, '本命候補', fontproperties=jp_font)
+ax2.text(x_mid + offset, y_mid + offset, '抑え・穴狙い', fontproperties=jp_font)
+ax2.text(x_mid - offset*5, y_mid + offset, '軽視ゾーン', fontproperties=jp_font)
+ax2.text(x_mid - offset*5, y_mid - offset, '堅軸ゾーン', fontproperties=jp_font)
+
 st.pyplot(fig2)
 
 # テーブル表示
+st.subheader("馬別スコア一覧（テーブル）")
+st.dataframe(avg)
+
 st.subheader("馬別スコア一覧（テーブル）")
 st.dataframe(avg)
