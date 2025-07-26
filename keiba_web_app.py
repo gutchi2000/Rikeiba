@@ -83,13 +83,26 @@ ax2.axhline(y0, color='gray', linestyle='--')
 # ラベル
 for _,r in avg2.iterrows():
     ax2.text(r['偏差値'],r['標準偏差'],r['馬名'],fontproperties=jp_font,fontsize=8,ha='center',va='bottom')
-# 四象限注釈
-offset_x = (ax2.get_xlim()[1] - ax2.get_xlim()[0]) * 0.02
-offset_y = (ax2.get_ylim()[1] - ax2.get_ylim()[0]) * 0.02
-ax2.text(x0+offset_x, y0-offset_y, '本命候補', fontproperties=jp_font)
-ax2.text(x0+offset_x, y0+offset_y, '抑え・穴狙い', fontproperties=jp_font)
-ax2.text(x0-offset_x*5, y0+offset_y, '軽視ゾーン', fontproperties=jp_font)
-ax2.text(x0-offset_x*5, y0-offset_y, '堅軸ゾーン', fontproperties=jp_font)
+# 5) 四象限注釈：各象限中央にラベル配置
+xmin, xmax = ax2.get_xlim()
+ymin, ymax = ax2.get_ylim()
+x_mid, y_mid = x0, y0
+
+ax2.text((x_mid + xmax)/2, (y_mid + ymin)/2,
+         "本命候補", fontproperties=jp_font,
+         ha="center", va="center", fontsize=12)
+ax2.text((x_mid + xmax)/2, (y_mid + ymax)/2,
+         "抑え・穴狙い", fontproperties=jp_font,
+         ha="center", va="center", fontsize=12)
+ax2.text((xmin + x_mid)/2, (y_mid + ymax)/2,
+         "軽視ゾーン", fontproperties=jp_font,
+         ha="center", va="center", fontsize=12)
+ax2.text((xmin + x_mid)/2, (y_mid + ymin)/2,
+         "堅軸ゾーン", fontproperties=jp_font,
+         ha="center", va="center", fontsize=12)
+
+st.pyplot(fig2)
+
 # 軸設定
 ax2.set_xlabel('調子（偏差値）',fontproperties=jp_font)
 ax2.set_ylabel('安定性（標準偏差）',fontproperties=jp_font)
