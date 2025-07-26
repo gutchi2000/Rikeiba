@@ -17,25 +17,15 @@ uploaded_file = st.file_uploader("Excelファイルをアップロードして�
 if not uploaded_file:
     st.stop()
 
-# シート1: 過去成績データ（ヘッダー無しの場合にも対応）
-# 期待カラム: 馬名, 頭数, グレード, 着順, 上がり3F, Ave-3F
+# シート1: 過去成績データ（ヘッダー無し対応）
 try:
     df = pd.read_excel(uploaded_file, sheet_name=0)
-    # カラム名が既に揃っているか確認
     col_req = ['馬名','頭数','グレード','着順','上がり3F','Ave-3F']
     if not all(c in df.columns for c in col_req):
-        # ヘッダーなしで上書き
         df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df.columns = col_req
 except Exception as e:
     st.error(f"シート1の読み込みに失敗しました: {e}")
-    st.stop()
-# 必須列確認
-df = df[col_req]
-# 列: 馬名, 頭数, グレード, 着順, 上がり3F, Ave-3F
-col_req = ['馬名','頭数','グレード','着順','上がり3F','Ave-3F']
-if any(c not in df.columns for c in col_req):
-    st.error("必要列が不足しています: " + str([c for c in col_req if c not in df.columns]))
     st.stop()
 
 df = df[col_req]
@@ -48,17 +38,14 @@ GP_MAX = 10
 
 # 拡張スコア計算: Raw_norm + Up3_norm
 def calculate_score_ext(row):
-    N = row['頭数']
-    p = row['着順']
+    N, p = row['頭数'], row['着順']
     GP = GRADE_SCORE.get(row['グレード'],1)
-    U3i = row['上がり3F']
-    U3std = row['Ave-3F']
+    U3i, U3std = row['上がり3F'], row['Ave-3F']
     raw_score = GP * (N + 1 - p)
     raw_norm = (raw_score - GP_MIN) / (GP_MAX * N - GP_MIN)
     up3_norm = U3std / U3i if U3i>0 else 0
     return (raw_norm + up3_norm)/2 * 100
 
-# スコア列追加
 df['Score'] = df.apply(calculate_score_ext, axis=1)
 
 # 平均スコア・偏差値
@@ -67,15 +54,15 @@ avg.columns = ['馬名','平均スコア']
 mean, std = avg['平均スコア'].mean(), avg['平均スコア'].std()
 avg['偏差値'] = avg['平均スコア'].apply(lambda x: 50+10*(x-mean)/std)
 
-# 安定性（標準偏差）
+# 安定性
 stds = df.groupby('馬名')['Score'].std().reset_index()
 stds.columns = ['馬名','スコア標準偏差']
 avg = avg.merge(stds,on='馬名')
 
-# 直近3走(出走順逆)加重平均偏差値
-# 出走順データがないため既存順序を利用
+# 直近3走加重偏差値
 df['順'] = df.groupby('馬名').cumcount(ascending=False)+1
 recent = df.sort_values(['馬名','順']).groupby('馬名').head(3)
+
 def wavg(x): return np.average(x[::-1],weights=[3,2,1][:len(x)][::-1])
 w = recent.groupby('馬名')['Score'].apply(wavg).reset_index()
 w.columns=['馬名','加重平均スコア']
@@ -83,22 +70,29 @@ mw, sw = w['加重平均スコア'].mean(), w['加重平均スコア'].std()
 w['加重平均偏差値']=w['加重平均スコア'].apply(lambda x:50+10*(x-mw)/sw)
 avg = avg.merge(w,on='馬名')
 
-# 成績統計あれば評価点＆最終偏差値省略...
-
 # 表示
 st.subheader('馬別スコア一覧')
 st.dataframe(avg)
 
-# グラフ
-# 上位6頭
+# 棒グラフ: 偏差値 上位6
 top6 = avg.sort_values('偏差値',ascending=False).head(6)
 fig, ax = plt.subplots(figsize=(8,5))
 sns.barplot(x='偏差値',y='馬名',data=top6,ax=ax)
 ax.set_title('偏差値上位6頭',fontproperties=jp_font)
+ax.set_xlabel('偏差値',fontproperties=jp_font)
+ax.set_ylabel('馬名',fontproperties=jp_font)
+ax.set_yticklabels(ax.get_yticklabels(),fontproperties=jp_font)
 st.pyplot(fig)
 
-# 散布図
+# 散布図: 調子×安定性
 fig2, ax2 = plt.subplots(figsize=(8,5))
-sns.scatterplot(data=avg,x='偏差値',y='加重平均偏差値',hue='馬名',ax=ax2)
+sns.scatterplot(data=avg,x='偏差値',y='加重平均偏差値',hue='馬名',s=100,ax=ax2)
 ax2.set_title('調子(加重偏差値)×安定性',fontproperties=jp_font)
+ax2.set_xlabel('偏差値',fontproperties=jp_font)
+ax2.set_ylabel('加重平均偏差値',fontproperties=jp_font)
+for lbl in ax2.get_xticklabels(): lbl.set_fontproperties(jp_font)
+for lbl in ax2.get_yticklabels(): lbl.set_fontproperties(jp_font)
+legend = ax2.get_legend()
+if legend:
+    for text in legend.get_texts(): text.set_fontproperties(jp_font)
 st.pyplot(fig2)
