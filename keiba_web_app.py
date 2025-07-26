@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib import font_manager
-from adjustText import adjust_text
 
 # ─── 日本語フォント読み込み ───
 jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
@@ -28,7 +27,7 @@ if not all(c in df.columns for c in cols):
 else:
     df = df[cols]
 
-# 馬場状態を内部列名にマッピング
+# 内部列名統一
 df = df.rename(columns={"馬場状態":"track_condition"})
 
 # ─── スコア計算パラメータ ───
@@ -67,9 +66,8 @@ ax.set_ylabel("馬名", fontproperties=jp_font)
 ax.set_yticklabels([t.get_text() for t in ax.get_yticklabels()], fontproperties=jp_font)
 st.pyplot(fig)
 
-# ─── 散布図：調子×安定性（重なり自動回避） ───
+# ─── 散布図：調子×安定性（ラベルを縦ずらし） ───
 st.subheader("調子×安定性")
-# 安定性（Score の標準偏差）を算出
 stds = df.groupby("馬名")["Score"].std().reset_index()
 stds.columns = ["馬名","標準偏差"]
 avg2 = avg.merge(stds, on="馬名")
@@ -77,21 +75,23 @@ avg2 = avg.merge(stds, on="馬名")
 fig2, ax2 = plt.subplots(figsize=(10,6))
 # プロット
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
-# ラベルをまとめて生成
-texts = []
-for _, r in avg2.iterrows():
-    texts.append(
-        ax2.text(r["偏差値"], r["標準偏差"], r["馬名"],
-                 fontproperties=jp_font, fontsize=8)
-    )
-# 重なり回避
-adjust_text(texts, arrowprops=dict(arrowstyle="->", color="gray"), 
-            expand_points=(1.2, 1.2), force_text=0.5)
 
 # 四象限線（平均値軸）
 x0, y0 = avg2["偏差値"].mean(), avg2["標準偏差"].mean()
 ax2.axvline(x0, color="gray", linestyle="--")
 ax2.axhline(y0, color="gray", linestyle="--")
+
+# 馬名ラベル（インデックスに応じて縦オフセット）
+for i, r in avg2.iterrows():
+    dy = (i % 3) * 4  # 0,4,8pxのずらし
+    ax2.text(
+        r["偏差値"], r["標準偏差"] + dy*0.01,
+        r["馬名"],
+        fontproperties=jp_font,
+        fontsize=8,
+        ha="center", va="bottom"
+    )
+
 # 四象限注釈
 dx = (ax2.get_xlim()[1]-ax2.get_xlim()[0]) * 0.02
 dy = (ax2.get_ylim()[1]-ax2.get_ylim()[0]) * 0.02
