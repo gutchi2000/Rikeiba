@@ -6,7 +6,7 @@ import seaborn as sns
 from matplotlib import font_manager
 
 # 日本語フォント設定
-pj_font = font_manager.FontProperties(fname="ipaexg.ttf")
+jp_font = font_manager.FontProperties(fname="/mnt/data/ipaexg.ttf")
 plt.rcParams["font.family"] = jp_font.get_name()
 sns.set(font=jp_font.get_name())
 
@@ -17,7 +17,7 @@ uploaded_file = st.file_uploader("Excelファイルをアップロードして�
 if not uploaded_file:
     st.stop()
 
-# --- シート1 読み込み ---
+# --- データ読み込み（ヘッダー有無対応） ---
 cols = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム",
         "Ave-3F","馬場状態","馬体重","増減","斤量","単勝オッズ"]
 try:
@@ -75,35 +75,41 @@ avg2 = df_avg.merge(df_std, on="馬名")
 fig2, ax2 = plt.subplots(figsize=(10,6))
 
 # 背景色: 四象限
-x0, y0 = avg2 = avg2 = None # データ準備後再定義
-xmin, xmax = avg2 = avg2 = None
-ymin, ymax = avg2 = avg2 = None
-# --- 以下、実装例 ---
-# x0, y0 = avg2['偏差値'].mean(), avg2['標準偏差'].mean()
-# xmin, xmax = avg2['偏差値'].min(), avg2['偏差値'].max()
-# ymin, ymax = avg2['標準偏差'].min(), avg2['標準偏差'].max()
-# ax2.fill_betweenx([ymin,y0], xmin, x0, color='#dff0d8', alpha=0.3)
-# ax2.fill_betweenx([ymin,y0], x0, xmax, color='#fcf8e3', alpha=0.3)
-# ax2.fill_betweenx([y0,ymax], xmin, x0, color='#d9edf7', alpha=0.3)
-# ax2.fill_betweenx([y0,ymax], x0, xmax, color='#f2dede', alpha=0.3)
-# ax2.axvline(x0, color='gray', linestyle='--')
-# ax2.axhline(y0, color='gray', linestyle='--')
+x0, y0 = avg2_mean := (avg2 := avg2) and None
+# 実際の値で上書き
+x0 = avg2["偏差値"].mean()
+y0 = avg2["標準偏差"].mean()
+xmin, xmax = avg2["偏差値"].min(), avg2["偏差値"].max()
+ymin, ymax = avg2["標準偏差"].min(), avg2["標準偏差"].max()
+ax2.fill_betweenx([ymin, y0], xmin, x0, color="#dff0d8", alpha=0.3)
+ax2.fill_betweenx([ymin, y0], x0, xmax, color="#fcf8e3", alpha=0.3)
+ax2.fill_betweenx([y0, ymax], xmin, x0, color="#d9edf7", alpha=0.3)
+ax2.fill_betweenx([y0, ymax], x0, xmax, color="#f2dede", alpha=0.3)
+# 中心線
+ax2.axvline(x0, color="gray", linestyle="--", linewidth=1)
+ax2.axhline(y0, color="gray", linestyle="--", linewidth=1)
 
-# 散布点
-ax2.scatter(avg2['偏差値'], avg2['標準偏差'], color='black', s=20)
+# 散布点とラベル
+ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
 for i, r in avg2.iterrows():
     dy = (i % 3) * 0.1
-    ax2.text(r['偏差値'], r['標準偏差']+dy,
-             r['馬名'], fontproperties=jp_font, fontsize=8,
-             ha='center', va='bottom')
+    ax2.text(r["偏差値"], r["標準偏差"] + dy,
+             r["馬名"], fontproperties=jp_font,
+             fontsize=8, ha="center", va="bottom")
 
-# 四象限ラベル
-# ax2.text((x0+xmax)/2,(y0+ymin)/2, '本命候補', fontproperties=jp_font)
-# ...他...
+# 四象限注釈
+ax2.text((x0 + xmax)/2, (y0 + ymin)/2, "本命候補",
+         fontproperties=jp_font, ha="center", va="center", fontsize=12)
+ax2.text((x0 + xmax)/2, (y0 + ymax)/2, "抑え・穴狙い",
+         fontproperties=jp_font, ha="center", va="center", fontsize=12)
+ax2.text((xmin + x0)/2, (y0 + ymax)/2, "軽視ゾーン",
+         fontproperties=jp_font, ha="center", va="center", fontsize=12)
+ax2.text((xmin + x0)/2, (y0 + ymin)/2, "堅軸ゾーン",
+         fontproperties=jp_font, ha="center", va="center", fontsize=12)
 
-ax2.set_xlabel('調子（偏差値）',fontproperties=jp_font)
-ax2.set_ylabel('安定性（標準偏差）',fontproperties=jp_font)
-ax2.set_title('調子×安定性',fontproperties=jp_font)
+ax2.set_xlabel("調子（偏差値）", fontproperties=jp_font)
+ax2.set_ylabel("安定性（標準偏差）", fontproperties=jp_font)
+ax2.set_title("調子×安定性", fontproperties=jp_font)
 st.pyplot(fig2)
 
 # --- テーブル表示 ---
