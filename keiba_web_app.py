@@ -125,7 +125,7 @@ ax2.scatter(stats['偏差値'], stats['標準偏差'], color='black', s=30)
 
 # 注釈
 for _, r in stats.iterrows():
-    ax2.text(r['偏差値'], r['標準偏差'] + 0.05, r['馬名'], fontproperties=jp_font, fontsize=9, ha='center')
+    ax2.text(r['偏差値'], r['標準偏差'] + 0.05, r['馬名'], fontsize=9, ha='center')
 
 # 四象限ラベル位置を少しずらして重なりを回避
 x_low = xmin + (x0 - xmin) * 0.3
@@ -133,12 +133,18 @@ x_high = x0 + (xmax - x0) * 0.3
 y_low = ymin + (y0 - ymin) * 0.3
 y_high = y0 + (ymax - y0) * 0.3
 
-ax2.text(x_low,  y_high, '軽視ゾーン', ha='center', va='center', fontproperties=jp_font)
-ax2.text(x_high, y_high, '抑え・穴狙い', ha='center', va='center', fontproperties=jp_font)
-ax2.text(x_low,  y_low,  '堅軸ゾーン', ha='center', va='center', fontproperties=jp_font)
-ax2.text(x_high, y_low,  '本命候補', ha='center', va='center', fontproperties=jp_font)
+ax2.text(x_low,  y_high, '軽視ゾーン', ha='center', va='center')
+ax2.text(x_high, y_high, '抑え・穴狙い', ha='center', va='center')
+ax2.text(x_low,  y_low,  '堅軸ゾーン', ha='center', va='center')
+ax2.text(x_high, y_low,  '本命候補', ha='center', va='center')
 
 # 軸調整
+ax2.set_xlim(xmin, xmax)
+ax2.set_ylim(ymin, ymax)
+ax2.set_xlabel('偏差値')
+ax2.set_ylabel('標準偏差')
+ax2.set_title('調子×安定性')
+st.pyplot(fig2)
 ax2.set_xlim(xmin, xmax)
 ax2.set_ylim(ymin, ymax)
 ax2.set_xlabel('偏差値', fontproperties=jp_font)
