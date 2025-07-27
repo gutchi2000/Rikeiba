@@ -3,19 +3,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib import font_manager
-
-# 日本語フォント設定: IPAexゴシックを登録
-font_path = "/mnt/data/ipaexg.ttf"
-font_manager.fontManager.addfont(font_path)
-jp_font = font_manager.FontProperties(fname=font_path)
-plt.rcParams['font.family'] = jp_font.get_name()
-sns.set(font=jp_font.get_name())
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 st.title("競馬スコア分析アプリ（完成版）")
 
@@ -39,10 +26,6 @@ except ValueError:
     df.columns = ["馬名","頭数","グレード","着順",
                   "上がり3F","Ave-3F",
                   "track_condition","weight","weight_diff","jinryo","odds"]
-# 列名を統一
-df.columns = ["馬名","頭数","グレード","着順",
-              "上がり3F","Ave-3F",
-              "track_condition","weight","weight_diff","jinryo","odds"]
 
 # --- 型変換 ---
 for c in ["頭数","着順","上がり3F","Ave-3F","weight","weight_diff","jinryo","odds"]:
@@ -60,7 +43,7 @@ def calc_score(row):
     p = row['着順']
     GP = GRADE_SCORE.get(row['グレード'], 1)
     raw = GP * (N + 1 - p)
-    raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN) if GP_MAX*N - GP_MIN != 0 else 0
+    raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN) if GP_MAX * N - GP_MIN else 0
 
     up3 = row['上がり3F']
     ave3 = row['Ave-3F']
@@ -77,11 +60,10 @@ def calc_score(row):
     wt_mean = df['weight'].mean()
     wdiff_norm = 1 - abs(wdiff) / wt_mean if wt_mean > 0 else 0
 
-    # 合計重み 8+2+1+1+1 = 13
     score = raw_norm*8 + up3_norm*2 + odds_norm + jin_norm + wdiff_norm
     return score / 13 * 100
 
-# スコア適用
+# --- スコア適用 ---
 df['Score'] = df.apply(calc_score, axis=1)
 
 # --- 偏差値計算 ---
