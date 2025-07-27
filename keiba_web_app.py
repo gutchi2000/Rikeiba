@@ -23,6 +23,15 @@ except ValueError:
     df = df.iloc[:, :len(cols)]
     df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
                   "track_condition","weight","weight_diff","jinryo","odds"]
+# --- 数値列の型変換 ---
+for c in ["頭数","着順","上がり3F","Ave-3F","weight","weight_diff","jinryo","odds"]:
+    df[c] = pd.to_numeric(df[c], errors='coerce')
+
+except ValueError:
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+    df = df.iloc[:, :len(cols)]
+    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
 
 # --- パラメータ ---
 GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
