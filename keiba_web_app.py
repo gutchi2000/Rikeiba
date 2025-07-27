@@ -34,19 +34,35 @@ GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
 GP_MIN, GP_MAX = 1, 10
 
 # --- スコア計算 ---
+# 列名ベースに修正した calc_score
+
 def calc_score(row):
-    N, p = row[1], row[3]
-    GP = GRADE_SCORE.get(row[2], 1)
+    # 頭数, 着順, グレード
+    N = row['頭数']
+    p = row['着順']
+    GP = GRADE_SCORE.get(row['グレード'], 1)
     raw = GP * (N + 1 - p)
     raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN)
-    up3_norm = row[5] / row[4] if row[4] > 0 else 0
-    odds_norm = 1 / (1 + np.log10(row[10])) if row[10] > 1 else 1
-    mean_jin = df[9].mean()
-    jin_diff_norm = 1 - abs(row[9] - mean_jin) / mean_jin
-    wdiff_norm = 1 - abs(row[8]) / df[7].mean()
-    score = raw_norm*8 + up3_norm*2 + odds_norm + jin_diff_norm + wdiff_norm
+    # 上がり3F正規化
+    up3 = row['上がり3F']
+    ave3 = row['Ave-3F']
+    up3_norm = ave3 / up3 if up3 > 0 else 0
+    # オッズ正規化
+    odds = row['odds']
+    odds_norm = 1 / (1 + np.log10(odds)) if odds > 1 else 1
+    # 斤量差正規化
+    jin = row['jinryo']
+    mean_jin = df['jinryo'].mean()
+    jin_diff_norm = 1 - abs(jin - mean_jin) / mean_jin
+    # 馬体重増減正規化
+    wdiff = row['weight_diff']
+    mean_weight = df['weight'].mean()
+    wdiff_norm = 1 - abs(wdiff) / mean_weight
+    # 合成スコア (8+2+1+1+1=13)
+    score = raw_norm*8 + up3_norm*2 + odds_norm*1 + jin_diff_norm*1 + wdiff_norm*1
     return score / 13 * 100
 
+# スコア適用
 df['Score'] = df.apply(calc_score, axis=1)
 # 馬名列をキーに平均取得
 df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
