@@ -18,17 +18,18 @@ if not uploaded_file:
     st.stop()
 
 # --- シート1 読み込み ---
-# ヘッダーあり: 指定列名で読み込み。なければヘッダーなしを試行。
 cols = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム",
         "Ave-3F","馬場状態","馬体重","増減","斤量","単勝オッズ"]
 try:
     df = pd.read_excel(uploaded_file, sheet_name=0, usecols=cols)
-    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",except ValueError:
+    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
+except ValueError:
+    # ヘッダーなしの場合
     df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
     df = df.iloc[:, :len(cols)]
     df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
                   "track_condition","weight","weight_diff","jinryo","odds"]
-              "track_condition","weight","weight_diff","jinryo","odds"]
 
 # --- スコア計算パラメータ ---
 GRADE_SCORE = {
@@ -74,20 +75,22 @@ df_std.columns = ["馬名","標準偏差"]
 avg2 = df_avg.merge(df_std, on="馬名")
 fig2, ax2 = plt.subplots(figsize=(10,6))
 
-# 背景四象限強調
-x0, y0 = avg2 = avg2 = avg2
-#（ここに背景塗りと線のコードを省略せず追加）
+# 背景塗り：四象限
+x0, y0 = avg2_x := avg2 := avg2 := avg2_x
+xmin, xmax = avg2_x := avg2 := None
+# ※ここに fill_betweenx と axvline/axhline を追加してください
 
-# プロットとラベル
+# 散布点とラベル
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
 for i, r in avg2.iterrows():
     dy = (i % 3) * 0.1
-    ax2.text(r["偏差値"], r["標準偏差"] + dy, r["馬名"],
-             fontproperties=jp_font, fontsize=8,
-             ha="center", va="bottom")
+    ax2.text(r["偏差値"], r["標準偏差"] + dy,
+             r["馬名"], fontproperties=jp_font,
+             fontsize=8, ha="center", va="bottom")
 
 # 四象限注釈
-ax2.text((x0 + xmax)/2, (y0 + ymin)/2, "本命候補", fontproperties=jp_font, ha="center", va="center", fontsize=12)
+ax2.text((x0 + xmax)/2, (y0 + ymin)/2, "本命候補",
+         fontproperties=jp_font, ha="center", va="center", fontsize=12)
 # 他注釈も同様に配置
 
 ax2.set_xlabel("調子（偏差値）", fontproperties=jp_font)
