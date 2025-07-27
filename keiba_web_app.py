@@ -139,15 +139,10 @@ ax2.text(x_low,  y_low,  '堅軸ゾーン', ha='center', va='center')
 ax2.text(x_high, y_low,  '本命候補', ha='center', va='center')
 
 # 軸調整
+# 軸調整
 ax2.set_xlim(xmin, xmax)
 ax2.set_ylim(ymin, ymax)
 ax2.set_xlabel('偏差値')
 ax2.set_ylabel('標準偏差')
 ax2.set_title('調子×安定性')
-st.pyplot(fig2)
-ax2.set_xlim(xmin, xmax)
-ax2.set_ylim(ymin, ymax)
-ax2.set_xlabel('偏差値', fontproperties=jp_font)
-ax2.set_ylabel('標準偏差', fontproperties=jp_font)
-ax2.set_title('調子×安定性', fontproperties=jp_font)
 st.pyplot(fig2)
