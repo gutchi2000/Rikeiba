@@ -5,13 +5,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib import font_manager
 
-# 日本語フォント設定（存在しない場合はスキップ）
-try:
-    gp_font = font_manager.FontProperties(fname="/mnt/data/ipaexg.ttf")
-    plt.rcParams["font.family"] = gp_font.get_name()
-    sns.set(font=gp_font.get_name())
-except Exception:
-    gp_font = None  # フォールバック: デフォルトフォントを使用
+# 日本語フォント設定
+# フォントファイルをMatplotlibに登録
+font_manager.fontManager.addfont('/mnt/data/ipaexg.ttf')
+gp_font = font_manager.FontProperties(fname='/mnt/data/ipaexg.ttf')
+plt.rcParams['font.family'] = gp_font.get_name()
+sns.set(font=gp_font.get_name())
 
 
 st.title("競馬スコア分析アプリ（完成版 8:2 重み）")
