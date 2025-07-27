@@ -23,9 +23,7 @@ cols = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム",
         "Ave-3F","馬場状態","馬体重","増減","斤量","単勝オッズ"]
 try:
     df = pd.read_excel(uploaded_file, sheet_name=0, usecols=cols)
-    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
-                  "track_condition","weight","weight_diff","jinryo","odds"]
-except ValueError:
+    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",except ValueError:
     df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
     df = df.iloc[:, :len(cols)]
     df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
