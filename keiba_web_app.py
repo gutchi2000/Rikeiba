@@ -18,11 +18,18 @@ if not uploaded_file:
     st.stop()
 
 # --- シート1 読み込み ---
-use_cols = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム",
-            "Ave-3F","馬場状態","馬体重","増減","斤量","単勝オッズ"]
-df = pd.read_excel(uploaded_file, sheet_name=0, usecols=use_cols)
-# 列名を内部名称に統一
-df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
+# ヘッダーあり: 指定列名で読み込み。なければヘッダーなしを試行。
+cols = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム",
+        "Ave-3F","馬場状態","馬体重","増減","斤量","単勝オッズ"]
+try:
+    df = pd.read_excel(uploaded_file, sheet_name=0, usecols=cols)
+    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
+except ValueError:
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+    df = df.iloc[:, :len(cols)]
+    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
               "track_condition","weight","weight_diff","jinryo","odds"]
 
 # --- スコア計算パラメータ ---
