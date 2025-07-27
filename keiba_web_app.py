@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.title("競馬スコア分析アプリ（完成版 8:2 重み）")
+st.title("競馬スコア分析アプリ（完成版 8:2:1:1:1 重み）")
 
 # --- ファイルアップロード ---
 uploaded_file = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
@@ -23,15 +23,10 @@ except ValueError:
     df = df.iloc[:, :len(cols)]
     df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
                   "track_condition","weight","weight_diff","jinryo","odds"]
+
 # --- 数値列の型変換 ---
 for c in ["頭数","着順","上がり3F","Ave-3F","weight","weight_diff","jinryo","odds"]:
     df[c] = pd.to_numeric(df[c], errors='coerce')
-
-except ValueError:
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-    df = df.iloc[:, :len(cols)]
-    df.columns = ["馬名","頭数","グレード","着順","上がり3F","Ave-3F",
-                  "track_condition","weight","weight_diff","jinryo","odds"]
 
 # --- パラメータ ---
 GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
@@ -39,28 +34,20 @@ GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
                "1勝クラス":1, "新馬":1, "未勝利":1}
 GP_MIN, GP_MAX = 1, 10
 
-# --- スコア計算 (8:2:1:1 重み拡張バージョン) ---
+# --- スコア計算 (基本8 + 上がり2 + オッズ1 + 斤量1 + 体重1 =13) ---
 def calc_score(row):
-    # 基本偏差値項目
     N, p = row["頭数"], row["着順"]
     GP = GRADE_SCORE.get(row["グレード"], 1)
     raw = GP * (N + 1 - p)
     raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN)
-    # 上がり3F正規化
-    up3_norm = row["Ave-3F"] / row["上がり3F"] if row["上がり3F"]>0 else 0
-    # オッズ正規化
-    odds_norm = 1 / (1 + np.log10(row["odds"])) if row["odds"]>1 else 1
-    # 斤量差 (平均斤量との差) 正規化
+    up3_norm = row["Ave-3F"] / row["上がり3F"] if row["上がり3F"] > 0 else 0
+    odds_norm = 1 / (1 + np.log10(row["odds"])) if row["odds"] > 1 else 1
     mean_jin = df["jinryo"].mean()
     jin_diff_norm = 1 - abs(row["jinryo"] - mean_jin) / mean_jin
-    # 馬体重増減 正規化
     wdiff_norm = 1 - abs(row["weight_diff"]) / df["weight"].mean()
-    # 重み付け (基本:8, 上がり:2, オッズ:1, 斤量差:1, 体重増減:1)
     score = raw_norm*8 + up3_norm*2 + odds_norm*1 + jin_diff_norm*1 + wdiff_norm*1
-    # 0-100化
     return score / 13 * 100
 
-# 計算実行
 df["Score"] = df.apply(calc_score, axis=1)
 
 # --- 馬別 平均スコア & 偏差値 ---
@@ -86,7 +73,6 @@ df_std = df.groupby("馬名")["Score"].std().reset_index()
 df_std.columns = ["馬名","標準偏差"]
 avg2 = df_avg.merge(df_std, on="馬名")
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# 四象限背景
 x0 = avg2["偏差値"].mean()
 y0 = avg2["標準偏差"].mean()
 xmin, xmax = avg2["偏差値"].min(), avg2["偏差値"].max()
@@ -95,17 +81,13 @@ ax2.fill_betweenx([ymin,y0], xmin, x0, color="#dff0d8", alpha=0.3)
 ax2.fill_betweenx([ymin,y0], x0, xmax, color="#fcf8e3", alpha=0.3)
 ax2.fill_betweenx([y0,ymax], xmin, x0, color="#d9edf7", alpha=0.3)
 ax2.fill_betweenx([y0,ymax], x0, xmax, color="#f2dede", alpha=0.3)
-# 中心線
 ax2.axvline(x0, color="gray", linestyle="--")
 ax2.axhline(y0, color="gray", linestyle="--")
-# 散布点
 ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
-# ラベル
 for i, row in avg2.iterrows():
-    dy = (i%3)*0.1
+    dy = (i % 3) * 0.1
     ax2.text(row["偏差値"], row["標準偏差"]+dy, row["馬名"], fontsize=8,
              ha="center", va="bottom")
-# 注釈
 ax2.text((x0+xmax)/2, (y0+ymin)/2, "本命候補", ha="center", va="center")
 ax2.text((x0+xmax)/2, (y0+ymax)/2, "抑え・穴狙い", ha="center", va="center")
 ax2.text((xmin+x0)/2, (y0+ymax)/2, "軽視ゾーン", ha="center", va="center")
