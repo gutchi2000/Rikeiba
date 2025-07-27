@@ -3,15 +3,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from matplotlib import font_manager
-
-# 日本語フォント設定
-# フォントファイルをMatplotlibに登録
-font_manager.fontManager.addfont('/mnt/data/ipaexg.ttf')
-gp_font = font_manager.FontProperties(fname='/mnt/data/ipaexg.ttf')
-plt.rcParams['font.family'] = gp_font.get_name()
-sns.set(font=gp_font.get_name())
-
 
 st.title("競馬スコア分析アプリ（完成版 8:2 重み）")
 
@@ -48,7 +39,6 @@ def calc_score(row):
     up3_norm = row["Ave-3F"] / row["上がり3F"] if row["上がり3F"]>0 else 0
     return (raw_norm * 8 + up3_norm * 2) / 10 * 100
 
-# 計算適用
 df["Score"] = df.apply(calc_score, axis=1)
 
 # --- 馬別 平均スコア & 偏差値 ---
@@ -63,9 +53,9 @@ st.subheader("偏差値 上位6頭")
 top6 = df_avg.nlargest(6, "偏差値")
 fig1, ax1 = plt.subplots(figsize=(8,5))
 sns.barplot(x="偏差値", y="馬名", data=top6, ax=ax1)
-ax1.set_title("偏差値 上位6頭", fontproperties=gp_font)
-ax1.set_xlabel("偏差値", fontproperties=gp_font)
-ax1.set_ylabel("馬名", fontproperties=gp_font)
+ax1.set_title("偏差値 上位6頭")
+ax1.set_xlabel("偏差値")
+ax1.set_ylabel("馬名")
 st.pyplot(fig1)
 
 # --- 散布図: 調子×安定性 ---
@@ -73,7 +63,6 @@ st.subheader("調子×安定性")
 df_std = df.groupby("馬名")["Score"].std().reset_index()
 df_std.columns = ["馬名","標準偏差"]
 avg2 = df_avg.merge(df_std, on="馬名")
-
 fig2, ax2 = plt.subplots(figsize=(10,6))
 # 四象限背景
 x0 = avg2["偏差値"].mean()
@@ -92,17 +81,15 @@ ax2.scatter(avg2["偏差値"], avg2["標準偏差"], color="black", s=20)
 # ラベル
 for i, row in avg2.iterrows():
     dy = (i%3)*0.1
-    ax2.text(row["偏差値"], row["標準偏差"]+dy,
-             row["馬名"], fontproperties=gp_font, fontsize=8,
+    ax2.text(row["偏差値"], row["標準偏差"]+dy, row["馬名"], fontsize=8,
              ha="center", va="bottom")
 # 注釈
-ax2.text((x0+xmax)/2, (y0+ymin)/2, "本命候補", fontproperties=gp_font, ha="center", va="center")
-ax2.text((x0+xmax)/2, (y0+ymax)/2, "抑え・穴狙い", fontproperties=gp_font, ha="center", va="center")
-ax2.text((xmin+x0)/2, (y0+ymax)/2, "軽視ゾーン", fontproperties=gp_font, ha="center", va="center")
-ax2.text((xmin+x0)/2, (y0+ymin)/2, "堅軸ゾーン", fontproperties=gp_font, ha="center", va="center")
-ax2.set_xlabel("調子（偏差値）", fontproperties=gp_font)
-ax2.set_ylabel("安定性（標準偏差）", fontproperties=gp_font)
-ax2.set_title("調子×安定性", fontproperties=gp_font)
+ax2.text((x0+xmax)/2, (y0+ymin)/2, "本命候補", ha="center", va="center")
+ax2.text((x0+xmax)/2, (y0+ymax)/2, "抑え・穴狙い", ha="center", va="center")
+ax2.text((xmin+x0)/2, (y0+ymax)/2, "軽視ゾーン", ha="center", va="center")
+ax2.text((xmin+x0)/2, (y0+ymin)/2, "堅軸ゾーン", ha="center", va="center")
+ax2.set_xlabel("調子（偏差値）")
+ax2.set_ylabel("安定性（標準偏差）")
 st.pyplot(fig2)
 
 # --- テーブル表示 ---
