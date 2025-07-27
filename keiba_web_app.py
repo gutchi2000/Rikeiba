@@ -30,15 +30,28 @@ GRADE_SCORE = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
                "1勝クラス":1, "新馬":1, "未勝利":1}
 GP_MIN, GP_MAX = 1, 10
 
-# --- スコア計算 (8:2 重み) ---
+# --- スコア計算 (8:2:1:1 重み拡張バージョン) ---
 def calc_score(row):
+    # 基本偏差値項目
     N, p = row["頭数"], row["着順"]
     GP = GRADE_SCORE.get(row["グレード"], 1)
     raw = GP * (N + 1 - p)
     raw_norm = (raw - GP_MIN) / (GP_MAX * N - GP_MIN)
+    # 上がり3F正規化
     up3_norm = row["Ave-3F"] / row["上がり3F"] if row["上がり3F"]>0 else 0
-    return (raw_norm * 8 + up3_norm * 2) / 10 * 100
+    # オッズ正規化
+    odds_norm = 1 / (1 + np.log10(row["odds"])) if row["odds"]>1 else 1
+    # 斤量差 (平均斤量との差) 正規化
+    mean_jin = df["jinryo"].mean()
+    jin_diff_norm = 1 - abs(row["jinryo"] - mean_jin) / mean_jin
+    # 馬体重増減 正規化
+    wdiff_norm = 1 - abs(row["weight_diff"]) / df["weight"].mean()
+    # 重み付け (基本:8, 上がり:2, オッズ:1, 斤量差:1, 体重増減:1)
+    score = raw_norm*8 + up3_norm*2 + odds_norm*1 + jin_diff_norm*1 + wdiff_norm*1
+    # 0-100化
+    return score / 13 * 100
 
+# 計算実行
 df["Score"] = df.apply(calc_score, axis=1)
 
 # --- 馬別 平均スコア & 偏差値 ---
