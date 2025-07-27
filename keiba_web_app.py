@@ -15,7 +15,17 @@ if not uploaded_file:
 use_cols = ["馬名","頭数","クラス名","確定着順",
             "上がり3Fタイム","Ave-3F",
             "馬場状態","馬体重","増減","斤量","単勝オッズ"]
-df = pd.read_excel(uploaded_file, sheet_name=0, usecols=use_cols)
+try:
+    df = pd.read_excel(uploaded_file, sheet_name=0, usecols=use_cols)
+    df.columns = ["馬名","頭数","グレード","着順",
+                  "上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
+except ValueError:
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+    df = df.iloc[:, :len(use_cols)]
+    df.columns = ["馬名","頭数","グレード","着順",
+                  "上がり3F","Ave-3F",
+                  "track_condition","weight","weight_diff","jinryo","odds"]
 # 列名を統一
 df.columns = ["馬名","頭数","グレード","着順",
               "上がり3F","Ave-3F",
