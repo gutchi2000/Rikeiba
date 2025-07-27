@@ -3,6 +3,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib import font_manager
+
+# --- 日本語フォント読み込み ---
+font_path = "ipaexg.ttf"
+font_manager.fontManager.addfont(font_path)
+plt.rcParams["font.family"] = font_manager.FontProperties(fname=font_path).get_name()
 
 st.title("競馬スコア分析アプリ（完成版）")
 
