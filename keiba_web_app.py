@@ -104,35 +104,44 @@ st.pyplot(fig)
 
 # --- 散布図: 調子×安定性 ---
 fig2, ax2 = plt.subplots(figsize=(10,6))
-x0 = mu + sigma    # 調子閾値 = 平均+1σ
-y0 = stats['標準偏差'].mean()  # 安定性閾値 = 平均
-xmin, xmax = stats['偏差値'].min()-1, stats['偏差値'].max()+1
-ymin, ymax = stats['標準偏差'].min()-0.5, stats['標準偏差'].max()+0.5
-# 背景ゾーン
-ax2.fill_betweenx([ymin, y0], xmin, x0, color='green', alpha=0.2)
-ax2.fill_betweenx([ymin, y0], x0, xmax, color='yellow', alpha=0.2)
-ax2.fill_betweenx([y0, ymax], xmin, x0, color='blue', alpha=0.2)
-ax2.fill_betweenx([y0, ymax], x0, xmax, color='red', alpha=0.2)
+# 分割閾値
+x0 = mu             # 調子閾値
+y0 = stats['標準偏差'].mean()  # 安定性閾値
+xmin, xmax = stats['偏差値'].min() - 1, stats['偏差値'].max() + 1
+ymin, ymax = stats['標準偏差'].min() - 0.5, stats['標準偏差'].max() + 0.5
+
+# 背景ゾーン拡大：軽視ゾーンを上下いっぱいに
+ax2.fill_betweenx([ymin, ymax], xmin, x0, color='blue', alpha=0.2)    # 軽視ゾーン
+ax2.fill_betweenx([y0, ymax], x0, xmax, color='red', alpha=0.2)     # 抑え・穴狙い
+ax2.fill_betweenx([ymin, y0], xmin, x0, color='green', alpha=0.2)   # 堅軸ゾーン
+ax2.fill_betweenx([ymin, y0], x0, xmax, color='yellow', alpha=0.2)  # 本命候補
+
 # 基準線
 ax2.axvline(x0, color='gray', linestyle='--')
 ax2.axhline(y0, color='gray', linestyle='--')
+
 # 散布点
 ax2.scatter(stats['偏差値'], stats['標準偏差'], color='black', s=30)
+
 # 注釈
 for _, r in stats.iterrows():
-    ax2.text(r['偏差値'], r['標準偏差']+0.05, r['馬名'], fontsize=9, ha='center')
-# 四象限ラベル
-ax2.text((x0+xmax)/2, (y0+ymin)/2, '本命候補', ha='center', va='center')
-ax2.text((x0+xmax)/2, (y0+ymax)/2, '抑え・穴狙い', ha='center', va='center')
-ax2.text((xmin+x0)/2, (y0+ymax)/2, '軽視ゾーン', ha='center', va='center')
-ax2.text((xmin+x0)/2, (y0+ymin)/2, '堅軸ゾーン', ha='center', va='center')
+    ax2.text(r['偏差値'], r['標準偏差'] + 0.05, r['馬名'], fontproperties=jp_font, fontsize=9, ha='center')
+
+# 四象限ラベル位置を少しずらして重なりを回避
+x_low = xmin + (x0 - xmin) * 0.3
+x_high = x0 + (xmax - x0) * 0.3
+y_low = ymin + (y0 - ymin) * 0.3
+y_high = y0 + (ymax - y0) * 0.3
+
+ax2.text(x_low,  y_high, '軽視ゾーン', ha='center', va='center', fontproperties=jp_font)
+ax2.text(x_high, y_high, '抑え・穴狙い', ha='center', va='center', fontproperties=jp_font)
+ax2.text(x_low,  y_low,  '堅軸ゾーン', ha='center', va='center', fontproperties=jp_font)
+ax2.text(x_high, y_low,  '本命候補', ha='center', va='center', fontproperties=jp_font)
+
+# 軸調整
 ax2.set_xlim(xmin, xmax)
 ax2.set_ylim(ymin, ymax)
-ax2.set_xlabel('偏差値')
-ax2.set_ylabel('標準偏差')
-ax2.set_title('調子×安定性')
+ax2.set_xlabel('偏差値', fontproperties=jp_font)
+ax2.set_ylabel('標準偏差', fontproperties=jp_font)
+ax2.set_title('調子×安定性', fontproperties=jp_font)
 st.pyplot(fig2)
-
-# --- テーブル表示 ---
-st.subheader('馬別スコア一覧')
-st.dataframe(stats)
