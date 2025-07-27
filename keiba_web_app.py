@@ -3,6 +3,19 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib import font_manager
+
+# 日本語フォント設定: IPAexゴシックを登録
+font_path = "/mnt/data/ipaexg.ttf"
+font_manager.fontManager.addfont(font_path)
+jp_font = font_manager.FontProperties(fname=font_path)
+plt.rcParams['font.family'] = jp_font.get_name()
+sns.set(font=jp_font.get_name())
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 st.title("競馬スコア分析アプリ（完成版）")
 
