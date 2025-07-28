@@ -223,38 +223,21 @@ with st.expander('券種別買い目候補と予算配分'):
     alloc = {t: int(round(total_budget * r / 100) * 100) for t, r in rates.items()}
     alloc_per = {}
 
+    # 券種別配分比率（均等分配）
+    n = len(types)
+    rate_each = 1 / n
+    rates = {t: rate_each for t in types}
+    # 各券種への割当額（100円単位, 予算超えないよう切り捨て）
+    alloc = {}
+    remaining = total_budget
+    for i, t in enumerate(types):
+        # 最後の券種は残額を配分
+        if i == len(types) - 1:
+            alloc_amt = remaining // 100 * 100
+        else:
+            alloc_amt = int(total_budget * rates[t]) // 100 * 100
+            remaining -= alloc_amt
+        alloc[t] = alloc_amt
+    alloc_per = {}
+
     # 各券種表示
-    for t in types:
-        if t == '単勝・複勝':
-            # 単勝:複勝 = 1:3 の比率で配分
-            win_amt = int(round(alloc[t] * 1/4 / 100) * 100)
-            place_amt = int(round(alloc[t] * 3/4 / 100) * 100)
-            alloc_per['単勝'] = win_amt
-            alloc_per['複勝'] = place_amt
-        elif t == '馬連' or t == 'ワイド':
-            alloc_per[t] = alloc[t] // 5
-        elif t == '三連複':
-            alloc_per[t] = alloc[t] // len(sanrenpuku)
-        elif t == '三連単':
-            alloc_per[t] = alloc[t] // len(sanrentan)
-    st.write('**一券種あたり一買い目推奨金額**')
-    # 馬名（組み合わせ）と推奨金額の表を作成
-    alloc_rows = []
-    for t, amt in alloc_per.items():
-        if t == '単勝' or t == '複勝':
-            alloc_rows.append({'券種': t, '馬名': axis, '推奨金額': amt})
-        elif t == '馬連':
-            for combo in umaren:
-                alloc_rows.append({'券種': '馬連', '馬名': combo, '推奨金額': amt})
-        elif t == 'ワイド':
-            for combo in wide:
-                alloc_rows.append({'券種': 'ワイド', '馬名': combo, '推奨金額': amt})
-        elif t == '三連複':
-            for combo in sanrenpuku:
-                alloc_rows.append({'券種': '三連複', '馬名': combo, '推奨金額': amt})
-        elif t == '三連単':
-            for combo in sanrentan:
-                alloc_rows.append({'券種': '三連単', '馬名': combo, '推奨金額': amt})
-    alloc_df = pd.DataFrame(alloc_rows)
-    st.dataframe(alloc_df)
-    st.caption('※馬名（組み合わせ）ごとの推奨金額です。')
