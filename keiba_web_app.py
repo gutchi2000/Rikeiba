@@ -141,7 +141,7 @@ st.dataframe(result.sort_values('総合偏差値', ascending=False).reset_index(
 
 # --- 結果をExcelで書き出し ---
 download_df = result.sort_values('総合偏差値', ascending=False).reset_index(drop=True)
-with pd.ExcelWriter('/mnt/data/prediction_results.xlsx', engine='xlsxwriter') as writer:
+with pd.ExcelWriter('/mnt/data/prediction_results.xlsx') as writer:
     download_df.to_excel(writer, index=False, sheet_name='スコア一覧')
 # ダウンロードボタン
 st.download_button(
