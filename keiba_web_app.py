@@ -194,6 +194,9 @@ st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 # --- 券種別買い目出力 & 予算内訳配分 ---
 with st.expander('券種別買い目候補と予算配分'):
     st.write('◎→〇▲☆△を軸にした各券種サンプル買い目')
+    # 馬連とワイドのどちらを表示するか選択
+    choice = st.radio('表示する券種を選択', ['両方', '馬連のみ', 'ワイドのみ'], index=0)
+
     # 上位6頭リスト
     horses = list(top6['馬名'])
     axis = horses[0]
@@ -206,11 +209,15 @@ with st.expander('券種別買い目候補と予算配分'):
     fixed = horses[:4]
     sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1!=o2]
 
-    # 券種別買い目表示
-    st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
-    st.write(umaren)
-    st.markdown('**ワイド**（軸：◎ → 流し）')
-    st.write(wide)
+    # 馬連とワイド表示制御
+    if choice in ['両方', '馬連のみ']:
+        st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
+        st.write(umaren)
+    if choice in ['両方', 'ワイドのみ']:
+        st.markdown('**ワイド**（軸：◎ → 流し）')
+        st.write(wide)
+
+    # 三連複・三連単・単勝複勝は常に表示
     st.markdown('**三連複フォーメーション**')
     st.write(sanrenpuku)
     st.markdown('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
