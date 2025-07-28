@@ -116,22 +116,7 @@ ax1.set_ylabel('馬名')
 ax1.legend(title='タグ')
 st.pyplot(fig1)
 
-# 更新: 散布図用 top6 の mean_z, std_z を取得
-# (後続の散布図やベット推奨でもこの top6 を使用)
- (タグ別色分け) ---
-# タグ付け
-tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
-top6['タグ'] = top6.index.map(lambda i: tag_map.get(i+1, ''))
-fig1, ax1 = plt.subplots(figsize=(8,5))
-import seaborn as sns
-palette = {'◎':'#e31a1c','〇':'#1f78b4','▲':'#33a02c','☆':'#ff7f00','△':'#6a3d9a'}
-sns.barplot(x='平均偏差値', y='馬名', hue='タグ', data=top6, dodge=False, palette=palette, ax=ax1)
-ax1.set_xlabel('平均偏差値')
-ax1.set_ylabel('馬名')
-ax1.legend(title='タグ')
-st.pyplot(fig1)
-
-# --- 散布図: 調子×安定性 ---
+# --- 散布図: 調子×安定性 ---: 調子×安定性 ---
 df_out = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
 df_out.columns = ['馬名','mean_z','std_z']
 fig2, ax2 = plt.subplots(figsize=(10,6))
