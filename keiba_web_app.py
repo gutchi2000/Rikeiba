@@ -138,3 +138,37 @@ composite = df.groupby('馬名')['総合偏差値'].mean().reset_index()
 composite.columns = ['馬名','総合偏差値']
 result = composite.merge(df_out[['馬名']], on='馬名')
 st.dataframe(result.sort_values('総合偏差値', ascending=False).reset_index(drop=True))
+
+# --- 予想タグ付け & ご褒美／罰システム実装 ---
+# 上位6頭にタグ付け（5位・6位とも△）
+tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
+df_avg['タグ'] = df_avg['平均総合偏差値'].rank(method='first', ascending=False).astype(int).map(tag_map)
+# 上位6頭のみを抽出
+top6 = df_avg.nsmallest(6, '平均総合偏差値')
+st.subheader('本日の予想 (上位6頭)')
+st.write(top6[['馬名','タグ','平均総合偏差値']])
+
+# レース結果CSVアップロード
+res_file = st.file_uploader('実際の着順CSVをアップロード', type=['csv'], key='result')
+if res_file:
+    res = pd.read_csv(res_file)
+    merged = top6.merge(res, on='馬名', how='left')
+    # ポイント計算
+    def calc_point(row):
+        if row['タグ']=='◎' and row['着順']==1:
+            return 10
+        elif row['タグ']=='〇' and row['着順']<=2:
+            return 5
+        elif row['タグ']=='▲' and row['着順']<=3:
+            return 3
+        elif row['タグ']=='☆' and row['着順']<=4:
+            return 2
+        elif row['タグ']=='△' and row['着順']<=5:
+            return 1
+        else:
+            return -3
+    merged['ポイント'] = merged.apply(calc_point, axis=1)
+    st.subheader('予想結果と獲得ポイント')
+    st.write(merged[['馬名','タグ','着順','ポイント']])
+    total = merged['ポイント'].sum()
+    st.success(f'本日の合計ポイント: {total}')
