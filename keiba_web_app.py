@@ -159,3 +159,19 @@ if res_file:
 
     total = merged['ポイント'].sum()
     st.success(f'本日の合計ポイント: {total}')
+
+# --- 予算からのベット配分推奨 ---
+st.subheader('予算からの推奨ベット配分')
+# ユーザー入力予算
+budget = st.number_input('総ベット予算（円）を入力してください', min_value=1000, step=1000, value=10000)
+# top6 の平均総合偏差値を倍率として使用
+scores = top6['平均総合偏差値']
+# 比率計算
+ratios = scores / scores.sum()
+# 推奨ベット額
+bet_amounts = (ratios * budget).round(0).astype(int)
+recommend = pd.DataFrame({'馬名': top6['馬名'], 'タグ': top6['タグ'], '推奨ベット額': bet_amounts})
+st.write(recommend)
+
+# ベットの合計金額確認
+st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
