@@ -238,4 +238,23 @@ with st.expander('券種別買い目候補と予算配分'):
         elif t == '三連単':
             alloc_per[t] = alloc[t] // len(sanrentan)
     st.write('**一券種あたり一買い目推奨金額**')
-    st.write(pd.DataFrame([alloc_per]).T.rename(columns={0:'一買い目額(円)'}))
+    # 馬名（組み合わせ）と推奨金額の表を作成
+    alloc_rows = []
+    for t, amt in alloc_per.items():
+        if t == '単勝' or t == '複勝':
+            alloc_rows.append({'券種': t, '馬名': axis, '推奨金額': amt})
+        elif t == '馬連':
+            for combo in umaren:
+                alloc_rows.append({'券種': '馬連', '馬名': combo, '推奨金額': amt})
+        elif t == 'ワイド':
+            for combo in wide:
+                alloc_rows.append({'券種': 'ワイド', '馬名': combo, '推奨金額': amt})
+        elif t == '三連複':
+            for combo in sanrenpuku:
+                alloc_rows.append({'券種': '三連複', '馬名': combo, '推奨金額': amt})
+        elif t == '三連単':
+            for combo in sanrentan:
+                alloc_rows.append({'券種': '三連単', '馬名': combo, '推奨金額': amt})
+    alloc_df = pd.DataFrame(alloc_rows)
+    st.dataframe(alloc_df)
+    st.caption('※馬名（組み合わせ）ごとの推奨金額です。')
