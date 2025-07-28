@@ -191,42 +191,47 @@ recommend = pd.DataFrame({'馬名': top6['馬名'], 'タグ': top6['タグ'], '�
 st.write(recommend)
 st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 
-# --- 券種別買い目出力 ---
-with st.expander('券種別買い目候補を見る'):
+# --- 券種別買い目出力 & 予算内訳配分 ---
+with st.expander('券種別買い目候補と予算配分'):
     st.write('◎→〇▲☆△を軸にした各券種サンプル買い目')
-    # 上位6頭の馬番リストを取得
+    # 上位6頭リスト
     horses = list(top6['馬名'])
-    # 馬連: ◎-他5頭
     axis = horses[0]
     others = horses[1:]
+    # 各券種の買い目リスト
     umaren = [f"{axis}-{h}" for h in others]
-    st.write('**馬連**（軸：◎ → 相手：〇▲☆△）')
-    st.write(umaren)
-    # ワイド: boxで5頭流し（◎を軸に相手5頭）
-    wide = [f"{axis}-{h}" for h in others]
-    st.write('**ワイド**（軸：◎ → 流し）')
-    st.write(wide)
-    # 三連複フォーメーション: ◎-〇▲-☆△
-    first = horses[0]
-    second = horses[1:3]
-    third = horses[3:]
-    sanrenpuku = []
-    for b in second:
-        for c in third:
-            combo = sorted([first, b, c])
-            sanrenpuku.append("-".join(combo))
-    st.write('**三連複フォーメーション**')
-    st.write(sanrenpuku)
-    # 三連単マルチ（◎→〇▲☆）
+    wide = umaren.copy()
+    first = horses[0]; second = horses[1:3]; third = horses[3:]
+    sanrenpuku = ["-".join(sorted([first, b, c])) for b in second for c in third]
     fixed = horses[:4]
-    sanrentan = []
-    for o1 in fixed[1:]:
-        for o2 in fixed[1:]:
-            if o2 != o1:
-                sanrentan.append(f"{fixed[0]}→{o1}→{o2}")
-    st.write('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
-    st.write(sanrentan)
-    # 単勝・複勝は◎推奨
-    st.write('**単勝・複勝** →', axis)
+    sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1!=o2]
 
-    st.caption('※表示はサンプルです。実際の馬番変換やオッズ考慮は別途実装を。')
+    # 券種別買い目表示
+    st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
+    st.write(umaren)
+    st.markdown('**ワイド**（軸：◎ → 流し）')
+    st.write(wide)
+    st.markdown('**三連複フォーメーション**')
+    st.write(sanrenpuku)
+    st.markdown('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
+    st.write(sanrentan)
+    st.markdown('**単勝・複勝** → ' + axis)
+
+    # --- 予算内訳計算 ---
+    total_budget = st.number_input('券種合計ベット予算（円）を入力', min_value=1000, step=1000, value=10000)
+    # 券種比率（例：馬連:20%, ワイド:20%, 三連複:30%, 三連単:30%）
+    rates = {'馬連':0.2, 'ワイド':0.2, '三連複':0.3, '三連単':0.3}
+    # 各券種への割当額（100円単位）
+    alloc = {k: int(round(total_budget * v / 100) * 100) for k,v in rates.items()}
+    st.write('**券種別予算配分**')
+    st.write(pd.DataFrame([alloc]).T.rename(columns={0:'予算(円)'}))
+    # 一買い目あたりの金額（均等分配）
+    st.write('**一券種あたり一買い目推奨金額**')
+    alloc_per = {
+        '馬連': alloc['馬連']//len(umaren),
+        'ワイド': alloc['ワイド']//len(wide),
+        '三連複': alloc['三連複']//len(sanrenpuku),
+        '三連単': alloc['三連単']//len(sanrentan),
+    }
+    st.write(pd.DataFrame([alloc_per]).T.rename(columns={0:'一買い目額(円)'}))
+    st.caption('※合計が予算を超えないよう100円単位で丸めています。調整は比率をご変更ください。')
