@@ -3,139 +3,119 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
-# seaborn不要なので削除
 
 # --- 日本語フォント設定 ---
 font_path = "ipaexg.ttf"  # アプリフォルダに配置
 font_manager.fontManager.addfont(font_path)
 plt.rcParams["font.family"] = font_manager.FontProperties(fname=font_path).get_name()
 
-st.title("競馬スコア分析アプリ（騎手有無対応版 改良）")
+st.title("競馬スコア分析アプリ（標準化＆重み付け版）")
 
 # --- ファイルアップロード ---
 uploaded_file = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
 if not uploaded_file:
     st.stop()
 
-# --- データ読み込み ---
+# --- データ読み込み & 必要列抽出 ---
 df = pd.read_excel(uploaded_file)
 cols = df.columns.tolist()
-
-# 騎手あり/なし判定
-has_jockey = '騎手' in cols
-
-# 必要列設定
-base_cols = ["馬名","頭数","クラス名","確定着順",
-             "上がり3Fタイム","Ave-3F",
-             "馬場状態","馬体重","増減","斤量","単勝オッズ"]
-if has_jockey:
-    base_cols.insert(1, '騎手')
-
-# 列抽出／ヘッダー名がない場合は位置で指定
-missing = set(base_cols) - set(cols)
-if not missing:
-    df = df[base_cols]
-else:
-    st.warning(f"列名が見つかりませんでした。先頭{len(base_cols)}列を使用します。期待列: {missing}")
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-    df = df.iloc[:, :len(base_cols)]
-    df.columns = base_cols
-
-# 型変換
-for c in ["頭数","確定着順","上がり3Fタイム","Ave-3F","馬体重","増減","斤量","単勝オッズ"]:
+required = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
+missing = [c for c in required if c not in cols]
+if missing:
+    st.error(f"必要な列が不足しています: {missing}")
+    st.stop()
+# 列抽出 & 型変換
+df = df[required].copy()
+for c in ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
     df[c] = pd.to_numeric(df[c], errors='coerce')
 
-# グレードマップ
+# --- 基本指標計算 ---
+# グレード点数マップ
 GRADE_SCORE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,
                "オープン特別":4,"3勝クラス":3,"2勝クラス":2,
                "1勝クラス":1,"新馬":1,"未勝利":1}
 GP_MIN, GP_MAX = 1, 10
 
-# スコア計算
-def calc_score(r):
-    N, p = r['頭数'], r['確定着順']
-    GP = GRADE_SCORE.get(r['クラス名'],1)
-    raw = GP * (N + 1 - p)
-    denom = GP_MAX*N - GP_MIN
-    raw_norm = (raw - GP_MIN)/denom if denom>0 else 0
-    up3_norm = r['Ave-3F']/r['上がり3Fタイム'] if r['上がり3Fタイム']>0 else 0
-    odds_norm = 1/(1+np.log10(r['単勝オッズ'])) if r['単勝オッズ']>1 else 1
-    jin_min, jin_max = df['斤量'].min(), df['斤量'].max()
-    jin_norm = (jin_max - r['斤量'])/(jin_max-jin_min) if jin_max>jin_min else 0
-    wdiff_norm = 1 - abs(r['増減'])/df['馬体重'].mean() if df['馬体重'].mean()>0 else 0
-    bonus = 0.1 if has_jockey else 0
-    # 全体重み合計: 8+2+1+1+1+0.1=13.1 -> 正規化
-    total = 13.1
-    s = raw_norm*8 + up3_norm*2 + odds_norm*1 + jin_norm*1 + wdiff_norm*1 + bonus
-    return s/total*100
+# 生スコア & 各正規化値を計算
+def compute_metrics(df):
+    # 元スコア
+    df['raw'] = df.apply(lambda r: GRADE_SCORE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
+    # 正規化 raw_norm
+    denom = GP_MAX*df['頭数'] - GP_MIN
+    df['raw_norm'] = (df['raw'] - GP_MIN) / denom
+    # up3_norm
+    df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
+    # odds_norm
+    df['odds_norm'] = 1 / (1 + np.log10(df['単勝オッズ']))
+    # jin_norm (斤量軽いほど高)
+    jin_max, jin_min = df['斤量'].max(), df['斤量'].min()
+    df['jin_norm'] = (jin_max - df['斤量']) / (jin_max - jin_min)
+    # wdiff_norm (増減少ないほど高)
+    mean_w = df['増減'].abs().mean()
+    df['wdiff_norm'] = 1 - df['増減'].abs() / mean_w
+    return df
 
-# スコア適用
-df['Score'] = df.apply(calc_score, axis=1)
+df = compute_metrics(df)
 
-# 馬別偏差値算出
-df_out = df.groupby('馬名')['Score'].agg(['mean','std']).reset_index()
-df_out.columns=['馬名','平均スコア','標準偏差']
-mu, sigma = df_out['平均スコア'].mean(), df_out['平均スコア'].std()
-df_out['偏差値'] = 50 + 10*(df_out['平均スコア']-mu)/sigma
+# --- 標準化 (Z-score) ---
+for col in ['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm']:
+    mu, sigma = df[col].mean(), df[col].std(ddof=0)
+    df[f'Z_{col}'] = (df[col] - mu) / sigma
 
-# 偏差値上位6頭
-st.subheader('偏差値 上位6頭表')
-st.write(df_out.nlargest(6,'偏差値')[['馬名','偏差値']])
+# --- 重み付け合成 ---
+weights = {'Z_raw_norm':8, 'Z_up3_norm':2, 'Z_odds_norm':1, 'Z_jin_norm':1, 'Z_wdiff_norm':1}
+total_w = sum(weights.values())
+df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
+
+# --- 偏差値化 ---
+mu_t, sigma_t = df['total_z'].mean(), df['total_z'].std(ddof=0)
+df['総合偏差値'] = 50 + 10*(df['total_z'] - mu_t) / sigma_t
+
+# --- 出力 ---
+# 上位6頭
+st.subheader('総合偏差値 上位6頭')
+top6 = df[['馬名','総合偏差値']].drop_duplicates().nlargest(6,'総合偏差値')
+st.write(top6)
 
 # 棒グラフ
-st.subheader('偏差値 上位6頭（棒グラフ）')
+st.subheader('総合偏差値 上位6頭（棒グラフ）')
+fig, ax = plt.subplots(figsize=(8,5))
 import seaborn as sns
-fig1, ax1 = plt.subplots(figsize=(8,5))
-top6 = df_out.nlargest(6,'偏差値')
-sns.barplot(x='偏差値', y='馬名', data=top6, ax=ax1)
-ax1.set_xlabel('偏差値')
-ax1.set_ylabel('馬名')
-st.pyplot(fig1)
+sns.barplot(x='総合偏差値', y='馬名', data=top6, ax=ax)
+ax.set_xlabel('総合偏差値')
+ax.set_ylabel('馬名')
+st.pyplot(fig)
 
-# 散布図: 調子×安定性（散布図）
-st.subheader('調子×安定性（散布図）')
+# 散布図
+st.subheader('調子(総合偏差値)×安定性(偏差値標準偏差)')
+df_out = df.groupby('馬名')['総合偏差値','総合偏差値'].agg(['mean','std']).reset_index()
+# mean,std extract
+df_out.columns=['馬名','mean_z','std_z']
+# 偏差値 of std not used
 fig2, ax2 = plt.subplots(figsize=(10,6))
-
-# 四象限の境界を調整: 縦は平均+σ, 横は平均+σで本命候補をさらに絞り
-mu_val = df_out['偏差値'].mean()
-sigma_val = df_out['偏差値'].std()
-x0 = mu_val + sigma_val
-# Y軸の水平線も平均+σとし、軽視・抑えのゾーンを上側に拡大
-mu_std = df_out['標準偏差'].mean()
-sigma_std = df_out['標準偏差'].std()
-y0 = mu_std + sigma_std
-
-xmin, xmax = df_out['偏差値'].min()-1, df_out['偏差値'].max()+1
-ymin, ymax = df_out['標準偏差'].min()-0.5, df_out['標準偏差'].max()+0.5
-
-# 背景塗り (軽視ゾーン・抑えゾーンは上側に)
-ax2.fill_betweenx([y0, ymax], xmin, x0, color='#a6cee3', alpha=0.3)
-ax2.fill_betweenx([y0, ymax], x0, xmax, color='#fb9a99', alpha=0.3)
-# 下側 (堅軸ゾーン・本命候補)
-ax2.fill_betweenx([ymin, y0], xmin, x0, color='#b2df8a', alpha=0.3)
-ax2.fill_betweenx([ymin, y0], x0, xmax, color='#fdbf6f', alpha=0.3)
-
-# 線描画
-the_v = ax2.axvline(x0, color='gray', linestyle='--')
-the_h = ax2.axhline(y0, color='gray', linestyle='--')
-
-# プロット
-ax2.scatter(df_out['偏差値'], df_out['標準偏差'], color='black', s=30)
-for _, r in df_out.iterrows():
-    ax2.text(r['偏差値'], r['標準偏差']+0.05, r['馬名'], fontsize=8, ha='center')
-
-# 各ゾーンラベル (位置調整)
-ax2.text((xmin+x0)/2, (y0+ymax)/2, '軽視ゾーン', fontsize=12, ha='center', va='center')
-ax2.text((x0+xmax)/2, (y0+ymax)/2, '抑え・穴狙い', fontsize=12, ha='center', va='center')
-ax2.text((xmin+x0)/2, (ymin+y0)/2, '堅軸ゾーン', fontsize=12, ha='center', va='center')
-ax2.text((x0+xmax)/2, (ymin+y0)/2, '本命候補', fontsize=12, ha='center', va='center')
-
-ax2.set_xlim(xmin, xmax)
-ax2.set_ylim(ymin, ymax)
-ax2.set_xlabel('偏差値')
-ax2.set_ylabel('標準偏差')
+# 四象限: 平均+σ
+x0,y0 = df_out['mean_z'].mean()+df_out['mean_z'].std(), df_out['std_z'].mean()+df_out['std_z'].std()
+# background
+xmin,xmax=df_out['mean_z'].min(),df_out['mean_z'].max()
+ymin,ymax=df_out['std_z'].min(),df_out['std_z'].max()
+ax2.fill_betweenx([y0,ymax],xmin,x0,color='#a6cee3',alpha=0.3)
+ax2.fill_betweenx([y0,ymax],x0,xmax,color='#fb9a99',alpha=0.3)
+ax2.fill_betweenx([ymin,y0],xmin,x0,color='#b2df8a',alpha=0.3)
+ax2.fill_betweenx([ymin,y0],x0,xmax,color='#fdbf6f',alpha=0.3)
+ax2.axvline(x0,linestyle='--',color='gray')
+ax2.axhline(y0,linestyle='--',color='gray')
+# points/labels
+ax2.scatter(df_out['mean_z'],df_out['std_z'],color='black')
+for _,r in df_out.iterrows(): ax2.text(r['mean_z'],r['std_z'],r['馬名'],fontsize=8)
+# labels
+ax2.text((xmin+x0)/2,(y0+ymax)/2,'軽視',ha='center',va='center')
+ax2.text((x0+xmax)/2,(y0+ymax)/2,'抑え穴',ha='center',va='center')
+ax2.text((xmin+x0)/2,(ymin+y0)/2,'堅軸',ha='center',va='center')
+ax2.text((x0+xmax)/2,(ymin+y0)/2,'本命',ha='center',va='center')
+ax2.set_xlabel('総合偏差値')
+ax2.set_ylabel('安定性(std_z)')
 st.pyplot(fig2)
 
-# --- 馬別スコア詳細 ---
-st.subheader('馬別スコア詳細 (平均スコア・標準偏差・偏差値)')
-st.dataframe(df_out[['馬名','平均スコア','標準偏差','偏差値']])
+# テーブル
+st.subheader('馬別スコア一覧')
+st.dataframe(df[['馬名','総合偏差値']].drop_duplicates().sort_values('総合偏差値',ascending=False))
