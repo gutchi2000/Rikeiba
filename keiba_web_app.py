@@ -88,14 +88,12 @@ st.pyplot(fig)
 
 # 散布図
 st.subheader('調子(総合偏差値)×安定性(偏差値標準偏差)')
-df_out = df.groupby('馬名')['総合偏差値','総合偏差値'].agg(['mean','std']).reset_index()
-# mean,std extract
-df_out.columns=['馬名','mean_z','std_z']
-# 偏差値 of std not used
+# 馬別「総合偏差値」の平均と標準偏差を算出
+df_out = df.groupby('馬名')['総合偏差値'].agg(['mean','std']).reset_index()
+# 列名をわかりやすく変更
+df_out.columns = ['馬名','mean_z','std_z']
+# 四象限プロットの準備
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# 四象限: 平均+σ
-x0,y0 = df_out['mean_z'].mean()+df_out['mean_z'].std(), df_out['std_z'].mean()+df_out['std_z'].std()
-# background
 xmin,xmax=df_out['mean_z'].min(),df_out['mean_z'].max()
 ymin,ymax=df_out['std_z'].min(),df_out['std_z'].max()
 ax2.fill_betweenx([y0,ymax],xmin,x0,color='#a6cee3',alpha=0.3)
