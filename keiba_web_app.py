@@ -90,12 +90,35 @@ df_avg.columns = ['馬名','平均偏差値']
 st.subheader('全馬 偏差値一覧')
 st.dataframe(df_avg.sort_values('平均偏差値', ascending=False).reset_index(drop=True))
 
-# --- 表示: 上位6頭 ---
-top6 = df_avg.nlargest(6, '平均偏差値').reset_index(drop=True)
-st.subheader('平均偏差値 上位6頭')
-st.write(top6)
+# --- 表示: 上位6頭 （調子×安定性による総合評価） ---
+# 調子(mean_z)と安定性(std_z)の差分で総合スコアを計算
+candidate = df_out.copy()
+candidate['composite'] = candidate['mean_z'] - candidate['std_z']
+# 平均偏差値列を結合
+candidate = candidate.merge(df_avg, on='馬名')
+# composite 上位6頭を取得
+top6 = candidate.nlargest(6, 'composite')[[ '馬名','平均偏差値','composite' ]].reset_index(drop=True)
+st.subheader('総合スコア 上位6頭')
+st.write(top6[['馬名','平均偏差値']])
+
+# タグ付け
+# composite をもとにランク付け
+tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
+top6['タグ'] = top6.index.map(lambda i: tag_map.get(i+1, ''))
 
 # --- 棒グラフ (タグ別色分け) ---
+fig1, ax1 = plt.subplots(figsize=(8,5))
+import seaborn as sns
+palette = {'◎':'#e31a1c','〇':'#1f78b4','▲':'#33a02c','☆':'#ff7f00','△':'#6a3d9a'}
+sns.barplot(x='平均偏差値', y='馬名', hue='タグ', data=top6, dodge=False, palette=palette, ax=ax1)
+ax1.set_xlabel('平均偏差値')
+ax1.set_ylabel('馬名')
+ax1.legend(title='タグ')
+st.pyplot(fig1)
+
+# 更新: 散布図用 top6 の mean_z, std_z を取得
+# (後続の散布図やベット推奨でもこの top6 を使用)
+ (タグ別色分け) ---
 # タグ付け
 tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
 top6['タグ'] = top6.index.map(lambda i: tag_map.get(i+1, ''))
@@ -137,6 +160,12 @@ ax2.text((x0+xmax)/2, (y0+ymax)/2, '抑え穴', ha='center', va='center')
 ax2.text((x0+xmax)/2, (ymin+y0)/2, '本命', ha='center', va='center')
 ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性 (偏差値標準偏差)')
+
+# --- 参考線: 対角線 (負の相関目安) ---
+# 左上 -> 右下 のライン
+ax2.plot([xmin, xmax], [ymax, ymin], linestyle=':', linewidth=1, color='gray', label='対角線')
+ax2.legend()
+
 st.pyplot(fig2)
 
 # --- Excel ダウンロード ---
@@ -172,7 +201,42 @@ recommend = pd.DataFrame({'馬名': top6['馬名'], 'タグ': top6['タグ'], '�
 st.write(recommend)
 st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 
-# --- 今後の応用: 券種別買い目出力 ---
+# --- 券種別買い目出力 ---
 with st.expander('券種別買い目候補を見る'):
-    st.write('機能実装予定: ◎→〇▲☆△の組み合わせによるワイド、馬連、三連複、三連単')
-    # TODO: 自動買い目生成ロジックを追加
+    st.write('◎→〇▲☆△を軸にした各券種サンプル買い目')
+    # 上位6頭の馬番リストを取得
+    horses = list(top6['馬名'])
+    # 馬連: ◎-他5頭
+    axis = horses[0]
+    others = horses[1:]
+    umaren = [f"{axis}-{h}" for h in others]
+    st.write('**馬連**（軸：◎ → 相手：〇▲☆△）')
+    st.write(umaren)
+    # ワイド: boxで5頭流し（◎を軸に相手5頭）
+    wide = [f"{axis}-{h}" for h in others]
+    st.write('**ワイド**（軸：◎ → 流し）')
+    st.write(wide)
+    # 三連複フォーメーション: ◎-〇▲-☆△
+    first = horses[0]
+    second = horses[1:3]
+    third = horses[3:]
+    sanrenpuku = []
+    for b in second:
+        for c in third:
+            combo = sorted([first, b, c])
+            sanrenpuku.append("-".join(combo))
+    st.write('**三連複フォーメーション**')
+    st.write(sanrenpuku)
+    # 三連単マルチ（◎→〇▲☆）
+    fixed = horses[:4]
+    sanrentan = []
+    for o1 in fixed[1:]:
+        for o2 in fixed[1:]:
+            if o2 != o1:
+                sanrentan.append(f"{fixed[0]}→{o1}→{o2}")
+    st.write('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
+    st.write(sanrentan)
+    # 単勝・複勝は◎推奨
+    st.write('**単勝・複勝** →', axis)
+
+    st.caption('※表示はサンプルです。実際の馬番変換やオッズ考慮は別途実装を。')
