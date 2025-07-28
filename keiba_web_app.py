@@ -146,13 +146,14 @@ if res_file:
     merged = top6.merge(res_df, on='馬名', how='left')
 
     # ポイント計算ルール
-    def calc_point(row):
-    # 3着以内ならご褒美(+10)、それ以外は罰(-5)
-    if row['着順'] <= 3:
-        return 10
-    else:
-        return -5
+        def calc_point(row):
+        # 3着以内ならご褒美(+10)、それ以外は罰(-5)
+        if row['着順'] <= 3:
+            return 10
+        else:
+            return -5
 
+    merged['ポイント'] = merged.apply(calc_point, axis=1)
     merged['ポイント'] = merged.apply(calc_point, axis=1)
     st.subheader('予想結果と獲得ポイント')
     st.write(merged[['馬名','タグ','着順','ポイント']])
