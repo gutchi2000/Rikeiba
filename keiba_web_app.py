@@ -31,13 +31,16 @@ base_cols = ["馬名","頭数","クラス名","確定着順",
 if has_jockey:
     base_cols.insert(1, '騎手')
 
-# 列抽出
+# 列抽出／ヘッダー名がない場合は位置で指定
 missing = set(base_cols) - set(cols)
-if missing:
-    st.error(f"必要な列が不足しています: {missing}")
-    st.stop()
-
-df = df[base_cols]
+if not missing:
+    df = df[base_cols]
+else:
+    # ヘッダー名が不正 → 先頭11列を使用
+    st.warning(f"列名が見つかりませんでした。先頭11列を使用します。期待列: {missing}")
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+    df = df.iloc[:, :len(base_cols)]
+    df.columns = base_cols
 
 # 型変換
 for c in ["頭数","確定着順","上がり3Fタイム","Ave-3F","馬体重","増減","斤量","単勝オッズ"]:
