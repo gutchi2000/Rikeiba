@@ -135,3 +135,7 @@ ax2.set_ylim(ymin, ymax)
 ax2.set_xlabel('偏差値')
 ax2.set_ylabel('標準偏差')
 st.pyplot(fig2)
+
+# --- 馬別スコア詳細 ---
+st.subheader('馬別スコア詳細 (平均スコア・標準偏差・偏差値)')
+st.dataframe(df_out[['馬名','平均スコア','標準偏差','偏差値']])
