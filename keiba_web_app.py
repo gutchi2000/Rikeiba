@@ -91,6 +91,11 @@ st.subheader('全馬 偏差値一覧')
 st.dataframe(df_avg.sort_values('平均偏差値', ascending=False).reset_index(drop=True))
 
 # --- 表示: 上位6頭 （調子×安定性による総合評価） ---
+# 散布図用の df_out を定義（mean_z, std_z の算出）
+df_out = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
+df_out.columns = ['馬名','mean_z','std_z']
+# 調子(mean_z)と安定性(std_z)の差分で総合スコアを計算
+candidate = df_out.copy()
 # 調子(mean_z)と安定性(std_z)の差分で総合スコアを計算
 candidate = df_out.copy()
 candidate['composite'] = candidate['mean_z'] - candidate['std_z']
