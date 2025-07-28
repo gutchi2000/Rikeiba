@@ -130,3 +130,39 @@ st.download_button(label='偏差値一覧をExcelでダウンロード',
                    data=processed_data,
                    file_name='score_list.xlsx',
                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+# --- 予想タグ付け & ご褒美/罰システム実装 ---
+# 上位6頭にタグ付け（5位・6位とも△）
+top6 = df_avg.nlargest(6, '平均総合偏差値').reset_index(drop=True)
+tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
+top6['タグ'] = top6.index.map(lambda i: tag_map[i+1])
+st.subheader('本日の予想 (上位6頭)')
+st.write(top6[['馬名','タグ','平均総合偏差値']])
+
+# レース結果Excelをアップロード（必須シート1、カラム: 馬名, 確定着順）
+res_file = st.file_uploader('実際の着順Excelをアップロードしてください', type=['xlsx'], key='result')
+if res_file:
+    res_df = pd.read_excel(res_file, usecols=["馬名","確定着順"]).rename(columns={"確定着順":"着順"})
+    merged = top6.merge(res_df, on='馬名', how='left')
+
+    # ポイント計算ルール
+    def calc_point(row):
+        if row['タグ']=='◎' and row['着順']==1:
+            return 10
+        elif row['タグ']=='〇' and row['着順']<=2:
+            return 5
+        elif row['タグ']=='▲' and row['着順']<=3:
+            return 3
+        elif row['タグ']=='☆' and row['着順']<=4:
+            return 2
+        elif row['タグ']=='△' and row['着順']<=5:
+            return 1
+        else:
+            return -3
+
+    merged['ポイント'] = merged.apply(calc_point, axis=1)
+    st.subheader('予想結果と獲得ポイント')
+    st.write(merged[['馬名','タグ','着順','ポイント']])
+
+    total = merged['ポイント'].sum()
+    st.success(f'本日の合計ポイント: {total}')
