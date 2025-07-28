@@ -147,18 +147,11 @@ if res_file:
 
     # ポイント計算ルール
     def calc_point(row):
-        if row['タグ']=='◎' and row['着順']==1:
-            return 10
-        elif row['タグ']=='〇' and row['着順']<=2:
-            return 5
-        elif row['タグ']=='▲' and row['着順']<=3:
-            return 3
-        elif row['タグ']=='☆' and row['着順']<=4:
-            return 2
-        elif row['タグ']=='△' and row['着順']<=5:
-            return 1
-        else:
-            return -3
+    # 3着以内ならご褒美(+10)、それ以外は罰(-5)
+    if row['着順'] <= 3:
+        return 10
+    else:
+        return -5
 
     merged['ポイント'] = merged.apply(calc_point, axis=1)
     st.subheader('予想結果と獲得ポイント')
