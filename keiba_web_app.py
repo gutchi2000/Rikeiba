@@ -194,50 +194,79 @@ st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 # --- 券種別買い目出力 & 予算内訳配分 ---
 with st.expander('券種別買い目候補と予算配分'):
     st.write('◎→〇▲☆△を軸にした各券種サンプル買い目')
-    # 上位6頭
+    # 上位6頭リスト作成
     horses = list(top6['馬名'])
     axis = horses[0]
     others = horses[1:]
-    # 買い目リスト作成
+    # 各券種買い目生成
     umaren = [f"{axis}-{h}" for h in others]
     wide = umaren.copy()
     first, second, third = horses[0], horses[1:3], horses[3:]
     sanrenpuku = ["-".join(sorted([first, b, c])) for b in second for c in third]
     fixed = horses[:4]
-    sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1!=o2]
+    sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1 != o2]
 
-    # 予算入力 → しきい値判定
+    # 予算と使用券種判定
     total_budget = st.number_input('券種合計ベット予算（円）を入力', min_value=1000, step=1000, value=10000)
-    # 予算 ≤ 10000: 単勝・複勝・馬連・三連複・三連単
-    # 予算 > 10000: 単勝・複勝・ワイド・三連複・三連単
     if total_budget <= 10000:
         types = ['単勝・複勝', '馬連', '三連複', '三連単']
     else:
         types = ['単勝・複勝', 'ワイド', '三連複', '三連単']
 
-        # 券種別配分比率（均等分配）
-    n = len(types)
-    rate_each = 1 / n
-    rates = {t: rate_each for t in types}
-    # 各券種への割当額（100円単位）
-    alloc = {t: int(round(total_budget * r / 100) * 100) for t, r in rates.items()}
-    alloc_per = {}
+    # 各券種表示
+    for t in types:
+        if t == '単勝・複勝':
+            st.markdown(f'**{t}** → {axis}')
+        elif t == '馬連':
+            st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
+            st.write(umaren)
+        elif t == 'ワイド':
+            st.markdown('**ワイド**（軸：◎ → 流し）')
+            st.write(wide)
+        elif t == '三連複':
+            st.markdown('**三連複フォーメーション**')
+            st.write(sanrenpuku)
+        elif t == '三連単':
+            st.markdown('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
+            st.write(sanrentan)
 
-    # 券種別配分比率（均等分配）
+    # 予算配分（均等切り捨て）
     n = len(types)
-    rate_each = 1 / n
-    rates = {t: rate_each for t in types}
-    # 各券種への割当額（100円単位, 予算超えないよう切り捨て）
+    rates = {t: 1/n for t in types}
     alloc = {}
     remaining = total_budget
     for i, t in enumerate(types):
-        # 最後の券種は残額を配分
         if i == len(types) - 1:
             alloc_amt = remaining // 100 * 100
         else:
             alloc_amt = int(total_budget * rates[t]) // 100 * 100
             remaining -= alloc_amt
         alloc[t] = alloc_amt
-    alloc_per = {}
 
-    # 各券種表示
+    # 一買い目あたり金額算出
+    alloc_per = {}
+    for t, amt in alloc.items():
+        if t == '単勝・複勝':
+            win_amt = int(round(amt * 1/4) // 100 * 100)
+            place_amt = int(round(amt * 3/4) // 100 * 100)
+            alloc_per['単勝'] = win_amt
+            alloc_per['複勝'] = place_amt
+        elif t == '馬連':
+            for combo in umaren:
+                alloc_per[f'馬連: {combo}'] = amt // len(umaren)
+        elif t == 'ワイド':
+            for combo in wide:
+                alloc_per[f'ワイド: {combo}'] = amt // len(wide)
+        elif t == '三連複':
+            for combo in sanrenpuku:
+                alloc_per[f'三連複: {combo}'] = amt // len(sanrenpuku)
+        elif t == '三連単':
+            for combo in sanrentan:
+                alloc_per[f'三連単: {combo}'] = amt // len(sanrentan)
+
+    # 表示
+    st.write('**券種別予算配分**')
+    st.write(pd.DataFrame([{t: v for t, v in alloc.items()}]).T.rename(columns={0:'配分額(円)'}))
+    st.write('**一買い目あたり推奨金額**')
+    st.dataframe(pd.DataFrame([{k: v for k, v in alloc_per.items()}]).T.rename(columns={0:'推奨金額(円)'}))
+    st.caption('※100円単位で切り捨てています。')
