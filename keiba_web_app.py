@@ -235,8 +235,8 @@ with st.expander('券種別買い目候補と予算配分'):
     # 一買い目あたりの金額（均等分配）
     st.write('**一券種あたり一買い目推奨金額**')
     alloc_per = {
-        '馬連': alloc['馬連']//len(umaren),
-        'ワイド': alloc['ワイド']//len(wide),
+        '馬連': alloc['馬連']//5,
+        'ワイド': alloc['ワイド']//5,
         '三連複': alloc['三連複']//len(sanrenpuku),
         '三連単': alloc['三連単']//len(sanrentan),
     }
