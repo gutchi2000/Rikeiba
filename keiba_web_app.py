@@ -193,12 +193,7 @@ st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 
 # --- 券種別買い目出力 & 予算内訳配分 ---
 with st.expander('券種別買い目候補と予算配分'):
-    st.write('◎→〇▲☆△を軸にした各券種サンプル買い目')
-    # 上位6頭リスト作成
-    horses = list(top6['馬名'])
-    axis = horses[0]
-    others = horses[1:]
-    # 各券種買い目生成
+    horses = list(top6['馬名']); axis = horses[0]; others = horses[1:]
     umaren = [f"{axis}-{h}" for h in others]
     wide = umaren.copy()
     first, second, third = horses[0], horses[1:3], horses[3:]
@@ -206,63 +201,46 @@ with st.expander('券種別買い目候補と予算配分'):
     fixed = horses[:4]
     sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1 != o2]
 
-    # 予算と使用券種判定
+    # 馬連 or ワイド 選択
+    bet_type = st.radio('馬連とワイド、どちらを含めるか？', ['馬連','ワイド'])
+    selected_types = ['単勝','複勝', bet_type, '三連複', '三連単']
+
+    # 合計予算入力
     total_budget = st.number_input('券種合計ベット予算（円）を入力', min_value=1000, step=1000, value=10000)
-    if total_budget <= 10000:
-        types = ['単勝・複勝', '馬連', '三連複', '三連単']
-    else:
-        types = ['単勝・複勝', 'ワイド', '三連複', '三連単']
 
-    # 各券種表示
-    for t in types:
-        if t == '単勝・複勝':
-            st.markdown(f'**{t}** → {axis}')
-        elif t == '馬連':
-            st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
-            st.write(umaren)
-        elif t == 'ワイド':
-            st.markdown('**ワイド**（軸：◎ → 流し）')
-            st.write(wide)
-        elif t == '三連複':
-            st.markdown('**三連複フォーメーション**')
-            st.write(sanrenpuku)
-        elif t == '三連単':
-            st.markdown('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
-            st.write(sanrentan)
+    # 均等配分（切り捨て100円単位）
+    n = len(selected_types)
+    base = total_budget // n
+    alloc = {t: (base // 100) * 100 for t in selected_types}
+    # 余り調整: 最後の券種に追加
+    remain = total_budget - sum(alloc.values())
+    alloc[selected_types[-1]] += (remain // 100) * 100
 
-    # 予算配分（均等切り捨て）
-    n = len(types)
-    rates = {t: 1/n for t in types}
-    alloc = {}
-    remaining = total_budget
-    for i, t in enumerate(types):
-        if i == len(types) - 1:
-            alloc_amt = remaining // 100 * 100
-        else:
-            alloc_amt = int(total_budget * rates[t]) // 100 * 100
-            remaining -= alloc_amt
-        alloc[t] = alloc_amt
-
-    # 一買い目あたり金額算出
+    # 一買い目あたり金額計算
     alloc_per = {}
     for t, amt in alloc.items():
-        if t == '単勝・複勝':
-            win_amt = int(round(amt * 1/4) // 100 * 100)
-            place_amt = int(round(amt * 3/4) // 100 * 100)
-            alloc_per['単勝'] = win_amt
-            alloc_per['複勝'] = place_amt
+        if t == '単勝':
+            win = (amt * 1/4) // 100 * 100
+            alloc_per['単勝'] = int(win)
+        elif t == '複勝':
+            place = (amt * 3/4) // 100 * 100
+            alloc_per['複勝'] = int(place)
         elif t == '馬連':
+            per = (amt // 5) // 100 * 100
             for combo in umaren:
-                alloc_per[f'馬連: {combo}'] = amt // len(umaren)
+                alloc_per[f'馬連: {combo}'] = int(per)
         elif t == 'ワイド':
+            per = (amt // 5) // 100 * 100
             for combo in wide:
-                alloc_per[f'ワイド: {combo}'] = amt // len(wide)
+                alloc_per[f'ワイド: {combo}'] = int(per)
         elif t == '三連複':
+            per = (amt // len(sanrenpuku)) // 100 * 100
             for combo in sanrenpuku:
-                alloc_per[f'三連複: {combo}'] = amt // len(sanrenpuku)
+                alloc_per[f'三連複: {combo}'] = int(per)
         elif t == '三連単':
+            per = (amt // len(sanrentan)) // 100 * 100
             for combo in sanrentan:
-                alloc_per[f'三連単: {combo}'] = amt // len(sanrentan)
+                alloc_per[f'三連単: {combo}'] = int(per)
 
     # 表示
     st.write('**券種別予算配分**')
