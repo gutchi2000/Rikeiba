@@ -18,13 +18,19 @@ if not uploaded_file:
 
 # --- データ読み込み & 必要列抽出 ---
 df = pd.read_excel(uploaded_file)
-cols = df.columns.tolist()
+st.subheader('アップロードデータ プレビュー')
+st.write(df.head(5))
+st.write('列見出し:', df.columns.tolist())
+# 必要カラム定義
 required = ["馬名","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
-missing = [c for c in required if c not in cols]
+missing = [c for c in required if c not in df.columns]
 if missing:
     st.error(f"必要な列が不足しています: {missing}")
     st.stop()
 # 列抽出 & 型変換
+df = df[required].copy()
+for c in ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
+    df[c] = pd.to_numeric(df[c], errors='coerce')
 df = df[required].copy()
 for c in ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
     df[c] = pd.to_numeric(df[c], errors='coerce')
@@ -121,5 +127,12 @@ ax2.set_ylabel('安定性(std_z)')
 st.pyplot(fig2)
 
 # テーブル
-st.subheader('馬別スコア一覧')
-st.dataframe(df[['馬名','総合偏差値']].drop_duplicates().sort_values('総合偏差値',ascending=False))
+st.subheader('馬別スコア一覧 (全馬21頭)')
+# df_out は馬名ごとに mean_z, std_z を持つのでこれを利用
+# 総合偏差値の降順で全馬を表示
+table = df_out[['馬名']].copy()
+# map back 総合偏差値 from df
+composite = df.groupby('馬名')['総合偏差値'].mean().reset_index()
+composite.columns = ['馬名','総合偏差値']
+result = composite.merge(df_out[['馬名']], on='馬名')
+st.dataframe(result.sort_values('総合偏差値', ascending=False).reset_index(drop=True))
