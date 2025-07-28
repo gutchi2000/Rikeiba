@@ -78,9 +78,11 @@ mu_t, sigma_t = df['total_z'].mean(), df['total_z'].std(ddof=0)
 df['総合偏差値'] = 50 + 10*(df['total_z'] - mu_t) / sigma_t
 
 # --- 出力 ---
-# 上位6頭
-st.subheader('総合偏差値 上位6頭')
-top6 = df[['馬名','総合偏差値']].drop_duplicates().nlargest(6,'総合偏差値')
+# 馬名ごとに平均した総合偏差値を使い上位6頭を選出
+df_avg = df.groupby('馬名')['総合偏差値'].mean().reset_index()
+df_avg.columns = ['馬名','平均総合偏差値']
+top6 = df_avg.nlargest(6, '平均総合偏差値')
+st.subheader('平均総合偏差値 上位6頭')
 st.write(top6)
 
 # 棒グラフ
