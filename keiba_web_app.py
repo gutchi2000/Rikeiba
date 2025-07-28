@@ -139,6 +139,18 @@ composite.columns = ['馬名','総合偏差値']
 result = composite.merge(df_out[['馬名']], on='馬名')
 st.dataframe(result.sort_values('総合偏差値', ascending=False).reset_index(drop=True))
 
+# --- 結果をExcelで書き出し ---
+download_df = result.sort_values('総合偏差値', ascending=False).reset_index(drop=True)
+with pd.ExcelWriter('/mnt/data/prediction_results.xlsx', engine='xlsxwriter') as writer:
+    download_df.to_excel(writer, index=False, sheet_name='スコア一覧')
+# ダウンロードボタン
+st.download_button(
+    label='予測結果をExcelでダウンロード',
+    data=open('/mnt/data/prediction_results.xlsx','rb').read(),
+    file_name='prediction_results.xlsx',
+    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+)
+
 # --- 予想タグ付け & ご褒美／罰システム実装 ---
 # 上位6頭にタグ付け（5位・6位とも△）
 tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
