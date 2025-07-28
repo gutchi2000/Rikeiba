@@ -102,7 +102,7 @@ y0 = mu_s + sigma_s
 xmin, xmax = df_out['mean_z'].min(), df_out['mean_z'].max()
 ymin, ymax = df_out['std_z'].min(), df_out['std_z'].max()
 # 背景ゾーン塗り分け
-ax2.fill_betweenx([y0, ymax], xmin, x0, color='#a6cee3', alpha=0.3)([y0,ymax],xmin,x0,color='#a6cee3',alpha=0.3)
+ax2.fill_betweenx([y0, ymax], xmin, x0, color='#a6cee3', alpha=0.3)
 ax2.fill_betweenx([y0,ymax],x0,xmax,color='#fb9a99',alpha=0.3)
 ax2.fill_betweenx([ymin,y0],xmin,x0,color='#b2df8a',alpha=0.3)
 ax2.fill_betweenx([ymin,y0],x0,xmax,color='#fdbf6f',alpha=0.3)
