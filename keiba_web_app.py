@@ -38,10 +38,6 @@ num_cols = ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","�
 for c in num_cols:
     df[c] = pd.to_numeric(df[c], errors='coerce')
 
-# --- オッズ制限 (人気薄フィルタリング) ---
-odds_limit = st.slider('単勝オッズ上限', min_value=10, max_value=200, value=100, step=10)
-df = df[df['単勝オッズ'] <= odds_limit]
-
 # --- 指標計算 ---
 GRADE_SCORE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,
                "オープン特別":4,"3勝クラス":3,"2勝クラス":2,
@@ -139,18 +135,15 @@ st.download_button('偏差値一覧をExcelでダウンロード', data=processe
                    file_name='score_list.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # --- 予想結果履歴CSV ダウンロード ---
-# レース結果アップロード
 res_file = st.file_uploader('実際の着順Excelをアップロードしてください', type=['xlsx'], key='result')
 if res_file:
     res_df = pd.read_excel(res_file, usecols=["馬名","確定着順"]).rename(columns={"確定着順":"着順"})
     merged = top6.merge(res_df, on='馬名', how='left')
-    # ポイント
     merged['ポイント'] = merged['着順'].apply(lambda x: 10 if x<=3 else -5)
     st.subheader('予想結果と獲得ポイント')
     st.write(merged[['馬名','タグ','着順','ポイント']])
     total = merged['ポイント'].sum()
     st.success(f'本日の合計ポイント: {total}')
-    # 履歴CSV
     csv = merged.to_csv(index=False).encode('utf-8-sig')
     st.download_button('予想結果CSVをダウンロード', data=csv,
                        file_name='prediction_history.csv', mime='text/csv')
