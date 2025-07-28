@@ -92,13 +92,19 @@ ax1.set_xlabel('偏差値')
 ax1.set_ylabel('馬名')
 st.pyplot(fig1)
 
-# 散布図: 調子×安定性
+# 散布図: 調子×安定性（散布図）
 st.subheader('調子×安定性（散布図）')
 fig2, ax2 = plt.subplots(figsize=(10,6))
-x0 = mu
+
+# 四象限の境界を調整: 本命候補ゾーンを狭めるため、垂直線は平均偏差値+標準偏差に設定
+mu_val = df_out['偏差値'].mean()
+sigma_val = df_out['偏差値'].std()
+x0 = mu_val + sigma_val  # 標準偏差だけ右にシフト
 ny0 = df_out['標準偏差'].mean()
+
 xmin, xmax = df_out['偏差値'].min()-1, df_out['偏差値'].max()+1
 ymin, ymax = df_out['標準偏差'].min()-0.5, df_out['標準偏差'].max()+0.5
+
 # 背景拡大: 軽視ゾーン広げる
 ax2.fill_betweenx([ny0, ymax], xmin, x0, color='#a6cee3', alpha=0.3)
 ax2.fill_betweenx([ymin, ny0], xmin, x0, color='#b2df8a', alpha=0.3)
@@ -106,10 +112,12 @@ ax2.fill_betweenx([ny0, ymax], x0, xmax, color='#fb9a99', alpha=0.3)
 ax2.fill_betweenx([ymin, ny0], x0, xmax, color='#fdbf6f', alpha=0.3)
 ax2.axvline(x0, color='gray', linestyle='--')
 ax2.axhline(ny0, color='gray', linestyle='--')
+
 # 散布
 ax2.scatter(df_out['偏差値'], df_out['標準偏差'], color='black', s=30)
 for _, r in df_out.iterrows():
     ax2.text(r['偏差値'], r['標準偏差']+0.05, r['馬名'], fontsize=8, ha='center')
+
 # ラベル配置中心調整
 ax2.text((xmin+x0)/2, (ny0+ymax)/2, '軽視ゾーン', fontsize=12, ha='center')
 ax2.text((x0+xmax)/2, (ny0+ymax)/2, '抑え・穴狙い', fontsize=12, ha='center')
@@ -120,7 +128,3 @@ ax2.set_ylim(ymin, ymax)
 ax2.set_xlabel('偏差値')
 ax2.set_ylabel('標準偏差')
 st.pyplot(fig2)
-
-# 全馬スコア表
-st.subheader('全馬スコア')
-st.dataframe(df_out)
