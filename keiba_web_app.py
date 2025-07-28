@@ -215,6 +215,14 @@ with st.expander('券種別買い目候補と予算配分'):
     else:
         types = ['単勝・複勝', 'ワイド', '三連複', '三連単']
 
+        # 券種別配分比率（均等分配）
+    n = len(types)
+    rate_each = 1 / n
+    rates = {t: rate_each for t in types}
+    # 各券種への割当額（100円単位）
+    alloc = {t: int(round(total_budget * r / 100) * 100) for t, r in rates.items()}
+    alloc_per = {}
+
     # 各券種表示
     for t in types:
         if t == '単勝・複勝':
