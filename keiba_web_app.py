@@ -89,7 +89,7 @@ st.write(top6)
 st.subheader('総合偏差値 上位6頭（棒グラフ）')
 fig, ax = plt.subplots(figsize=(8,5))
 import seaborn as sns
-sns.barplot(x='総合偏差値', y='馬名', data=top6, ax=ax)
+sns.barplot(x='平均総合偏差値', y='馬名', data=top6, ax=ax)
 ax.set_xlabel('総合偏差値')
 ax.set_ylabel('馬名')
 st.pyplot(fig)
