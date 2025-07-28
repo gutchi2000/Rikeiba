@@ -218,34 +218,12 @@ with st.expander('券種別買い目候補と予算配分'):
     # 各券種表示
     for t in types:
         if t == '単勝・複勝':
-            st.markdown(f'**{t}** → {axis}')
-        elif t == '馬連':
-            st.markdown('**馬連**（軸：◎ → 相手：〇▲☆△）')
-            st.write(umaren)
-        elif t == 'ワイド':
-            st.markdown('**ワイド**（軸：◎ → 流し）')
-            st.write(wide)
-        elif t == '三連複':
-            st.markdown('**三連複フォーメーション**')
-            st.write(sanrenpuku)
-        elif t == '三連単':
-            st.markdown('**三連単マルチ**（軸：◎ → 相手：〇▲☆）')
-            st.write(sanrentan)
-    
-    # 券種別配分比率（均等分配）
-    n = len(types)
-    rate_each = 1 / n
-    rates = {t: rate_each for t in types}
-    st.write('**券種別予算配分**')
-    alloc = {t: int(round(total_budget * r / 100) * 100) if t!='単勝・複勝' else None for t,r in rates.items()}
-    # 単勝・複勝は単体なので割当なし
-    alloc_display = {t: alloc[t] for t in types if alloc[t] is not None}
-    st.write(pd.DataFrame([alloc_display]).T.rename(columns={0:'予算(円)'}))
-    
-    # 一買い目あたり金額
-    alloc_per = {}
-    for t in types:
-        if t == '馬連' or t == 'ワイド':
+            # 単勝:複勝 = 1:3 の比率で配分
+            win_amt = int(round(alloc[t] * 1/4 / 100) * 100)
+            place_amt = int(round(alloc[t] * 3/4 / 100) * 100)
+            alloc_per['単勝'] = win_amt
+            alloc_per['複勝'] = place_amt
+        elif t == '馬連' or t == 'ワイド':
             alloc_per[t] = alloc[t] // 5
         elif t == '三連複':
             alloc_per[t] = alloc[t] // len(sanrenpuku)
@@ -253,4 +231,3 @@ with st.expander('券種別買い目候補と予算配分'):
             alloc_per[t] = alloc[t] // len(sanrentan)
     st.write('**一券種あたり一買い目推奨金額**')
     st.write(pd.DataFrame([alloc_per]).T.rename(columns={0:'一買い目額(円)'}))
-    st.caption('※単勝・複勝は割当不要、丸めは100円単位です。')
