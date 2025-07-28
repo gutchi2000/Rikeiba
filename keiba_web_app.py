@@ -37,6 +37,8 @@ df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 num_cols = ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]
 for c in num_cols:
     df[c] = pd.to_numeric(df[c], errors='coerce')
+# 欠損行の削除
+df.dropna(subset=["レース日"] + num_cols, inplace=True)
 
 # --- 指標計算 ---
 GRADE_SCORE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,
@@ -47,7 +49,7 @@ GP_MIN, GP_MAX = 1, 10
 # 生スコアと正規化
 N = df['頭数']
 df['raw'] = df.apply(lambda r: GRADE_SCORE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['raw_norm'] = (df['raw'] - GP_MIN) / (GP_MAX*df['頭数'] - GP_MIN)
+df['raw_norm'] = (df['raw'] - GP_MIN) / (GP_MAX * df['頭数'] - GP_MIN)
 # 上がり3F
 df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
 # オッズ
@@ -64,16 +66,22 @@ df['rank_date'] = df.groupby('馬名')['レース日'].rank(ascending=False, met
 df['weight'] = 1 / df['rank_date']
 
 # --- Zスコア標準化 ---
-for col in ['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm']:
+metrics = ['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm']
+for col in metrics:
     mu, sigma = df[col].mean(), df[col].std(ddof=0)
-    df[f'Z_{col}'] = (df[col] - mu) / sigma
+    # sigma が 0 の場合は 0 除算回避
+    df[f'Z_{col}'] = df[col].apply(lambda x: 0 if sigma == 0 else (x - mu) / sigma)
 
 # --- 重み付け合成と偏差値化 ---
 weights = {'Z_raw_norm':8, 'Z_up3_norm':2, 'Z_odds_norm':1, 'Z_jin_norm':1, 'Z_wdiff_norm':1}
 total_w = sum(weights.values())
-df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
+df['total_z'] = sum(df[k] * w for k, w in weights.items()) / total_w
 mu_t, sigma_t = df['total_z'].mean(), df['total_z'].std(ddof=0)
-df['偏差値'] = 50 + 10*(df['total_z'] - mu_t) / sigma_t
+# sigma_t が 0 の場合は全偏差値を50に設定
+if sigma_t == 0:
+    df['偏差値'] = 50
+else:
+    df['偏差値'] = 50 + 10 * (df['total_z'] - mu_t) / sigma_t
 
 # --- 馬別平均偏差値 (加重平均) ---
 df_avg = df.groupby('馬名').apply(lambda d: np.average(d['偏差値'], weights=d['weight'])).reset_index()
@@ -84,14 +92,14 @@ st.subheader('全馬 偏差値一覧')
 st.dataframe(df_avg.sort_values('平均偏差値', ascending=False).reset_index(drop=True))
 
 # --- 表示: 上位6頭 ---
-top6 = df_avg.nlargest(6,'平均偏差値').reset_index(drop=True)
+top6 = df_avg.nlargest(6, '平均偏差値').reset_index(drop=True)
 st.subheader('平均偏差値 上位6頭')
 st.write(top6)
 
 # --- 棒グラフ (タグ別色分け) ---
 # タグ付け
 tag_map = {1: '◎', 2: '〇', 3: '▲', 4: '☆', 5: '△', 6: '△'}
-top6['タグ'] = top6.index.map(lambda i: tag_map[i+1])
+top6['タグ'] = top6.index.map(lambda i: tag_map.get(i+1, ''))
 fig, ax = plt.subplots(figsize=(8,5))
 import seaborn as sns
 palette = {'◎':'#e31a1c','〇':'#1f78b4','▲':'#33a02c','☆':'#ff7f00','△':'#6a3d9a'}
@@ -149,7 +157,7 @@ if res_file:
                        file_name='prediction_history.csv', mime='text/csv')
 
 # --- 予算からのベット配分推奨（100円単位） ---
-st.subheader('予算からの推奨ベット配分')
+st.subheader('予算から의推奨ベット配分')
 budget = st.number_input('総ベット予算（円）を入力してください', min_value=1000, step=1000, value=10000)
 scores = top6['平均偏差値']
 ratios = scores / scores.sum()
@@ -158,7 +166,7 @@ recommend = pd.DataFrame({'馬名': top6['馬名'], 'タグ': top6['タグ'], '�
 st.write(recommend)
 st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 
-# --- 今後の応用: 券種別買い目出力 ---
-with st.expander('券種別買い目候補を見る'):
+# --- 今後の応用: 券種별買い目出力 ---
+with st.expander('券種별買い目候補を見る'):
     st.write('機能実装予定: ◎→〇▲☆△の組み合わせによるワイド、馬連、三連複、三連単')
     # TODO: 自動買い目生成ロジックを追加
