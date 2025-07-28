@@ -78,8 +78,41 @@ mu, sigma = df_out['平均スコア'].mean(), df_out['平均スコア'].std()
 df_out['偏差値'] = 50 + 10*(df_out['平均スコア']-mu)/sigma
 
 # 結果表示
-st.subheader('偏差値 上位6頭')
+st.subheader('偏差値 上位6頭表')
 st.write(df_out.nlargest(6,'偏差値')[['馬名','偏差値']])
 
+# --- 棒グラフ: 偏差値上位6頭 ---
+st.subheader('偏差値 上位6頭（棒グラフ）')
+import seaborn as sns
+fig1, ax1 = plt.subplots(figsize=(8,5))
+top6 = df_out.nlargest(6,'偏差値')
+sns.barplot(x='偏差値', y='馬名', data=top6, ax=ax1)
+ax1.set_xlabel('偏差値')
+ax1.set_ylabel('馬名')
+st.pyplot(fig1)
+
+# --- 散布図: 調子×安定性 ---
+st.subheader('調子×安定性（散布図）')
+fig2, ax2 = plt.subplots(figsize=(10,6))
+x0 = mu
+ny0 = df_out['標準偏差'].mean()
+xmin, xmax = df_out['偏差値'].min()-1, df_out['偏差値'].max()+1
+ymin, ymax = df_out['標準偏差'].min()-0.5, df_out['標準偏差'].max()+0.5
+# 背景
+ax2.fill_betweenx([ymin, ymax], xmin, x0, color='blue', alpha=0.2)
+ax2.fill_betweenx([ymin, ymax], x0, xmax, color='yellow', alpha=0.2)
+ax2.axvline(x0, color='gray', linestyle='--')
+ax2.axhline(ny0, color='gray', linestyle='--')
+# 散布
+ax2.scatter(df_out['偏差値'], df_out['標準偏差'], color='black', s=30)
+for _, r in df_out.iterrows():
+    ax2.text(r['偏差値'], r['標準偏差']+0.05, r['馬名'], fontsize=8, ha='center')
+ax2.set_xlim(xmin, xmax)
+ax2.set_ylim(ymin, ymax)
+ax2.set_xlabel('偏差値')
+ax2.set_ylabel('標準偏差')
+st.pyplot(fig2)
+
+# 全馬スコア表
 st.subheader('全馬スコア')
 st.dataframe(df_out)
