@@ -24,21 +24,15 @@ df = df[required].copy()
 df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 for col in ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
     df[col] = pd.to_numeric(df[col], errors='coerce')
-
 df.dropna(subset=["レース日","頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"], inplace=True)
 
-GRADE_SCORE = {
-    "GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5,
-    "オープン特別":4, "3勝クラス":3, "2勝クラス":2,
-    "1勝クラス":1, "新馬":1, "未勝利":1
-}
+GRADE_SCORE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,"オープン特別":4,"3勝クラス":3,"2勝クラス":2,"1勝クラス":1,"新馬":1,"未勝利":1}
 GP_MIN, GP_MAX = 1, 10
 
 df['raw'] = df.apply(lambda r: GRADE_SCORE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
 df['raw_norm'] = (df['raw'] - GP_MIN) / (GP_MAX * df['頭数'] - GP_MIN)
 df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
 df['odds_norm'] = 1 / (1 + np.log10(df['単勝オッズ']))
-
 jin_max, jin_min = df['斤量'].max(), df['斤量'].min()
 df['jin_norm'] = (jin_max - df['斤量']) / (jin_max - jin_min)
 mean_w = df['増減'].abs().mean()
@@ -55,19 +49,15 @@ for col in metrics:
 weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff_norm':1}
 total_w = sum(weights.values())
 df['total_z'] = sum(df[k] * w for k,w in weights.items()) / total_w
-mu_t, sigma_t = df['total_z'].mean(), df['total_z'].std(ddof=1)
-scale = 15
-if sigma_t == 0:
-    df['偏差値'] = 50
-else:
-    df['偏差値'] = 50 + scale * (df['total_z'] - mu_t) / sigma_t
+z = df['total_z']
+z_min, z_max = z.min(), z.max()
+df['偏差値'] = 30 + (z - z_min) / (z_max - z_min) * 40
 
 df_avg = df.groupby('馬名').apply(lambda d: np.average(d['偏差値'], weights=d['weight'])).reset_index(name='平均偏差値')
 st.subheader('全馬 偏差値一覧')
 st.dataframe(df_avg.sort_values('平均偏差値', ascending=False))
 
 # 上位6頭抽出
-
 df_out = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
 df_out.columns = ['馬名','mean_z','std_z']
 candidate = df_out.copy()
@@ -160,8 +150,8 @@ with st.expander('券種別買い目候補と予算配分'):
             per = (amt // len(sanrenpuku)) // 100 * 100
             for combo in sanrenpuku:
                 alloc_rows.append({'券種':'三連複','組合せ':combo,'金額':int(per)})
-        elif t == '三連単':
-            per = (amt // len(sanrentan)) // 100 * 100
+        elif t =='Three連単':
+            per = (amt // len(sanrentan)) //100*100
             for combo in sanrentan:
                 alloc_rows.append({'券種':'三連単','組合せ':combo,'金額':int(per)})
     st.dataframe(pd.DataFrame(alloc_rows))
