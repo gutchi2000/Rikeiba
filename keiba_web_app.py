@@ -80,29 +80,33 @@ st.pyplot(fig1)
 
 # 散布図: 調子×安定性
 fig2, ax2 = plt.subplots(figsize=(10,6))
+# 基準線 (mean+1σ)
 x0 = df_out['mean_z'].mean() + df_out['mean_z'].std(ddof=1)
 y0 = df_out['std_z'].mean() + df_out['std_z'].std(ddof=1)
 xmin, xmax = df_out['mean_z'].min(), df_out['mean_z'].max()
 ymin, ymax = df_out['std_z'].min(), df_out['std_z'].max()
-# 背景
-ax2.fill_betweenx([y0,ymax], xmin, x0, color='#a6cee3', alpha=0.3)
-ax2.fill_betweenx([ymin,y0], xmin, x0, color='#b2df8a', alpha=0.3)
-ax2.fill_betweenx([y0,ymax], x0, xmax, color='#fb9a99', alpha=0.3)
-ax2.fill_betweenx([ymin,y0], x0, xmax, color='#fdbf6f', alpha=0.3)
+# 背景ゾーン
+ax2.fill_betweenx([y0, ymax], xmin, x0, color='#a6cee3', alpha=0.3)
+ax2.fill_betweenx([ymin, y0], xmin, x0, color='#b2df8a', alpha=0.3)
+ax2.fill_betweenx([y0, ymax], x0, xmax, color='#fb9a99', alpha=0.3)
+ax2.fill_betweenx([ymin, y0], x0, xmax, color='#fdbf6f', alpha=0.3)
 # 基準線
 ax2.axvline(x0, linestyle='--', color='gray')
 ax2.axhline(y0, linestyle='--', color='gray')
-# 散布
+# 散布プロット
 ax2.scatter(df_out['mean_z'], df_out['std_z'], color='black', s=30)
-# ラベル
 for _, r in df_out.iterrows():
     ax2.text(r['mean_z'], r['std_z'], r['馬名'], fontsize=8)
-# 参照線: 負の相関目安の y = -x ライン
+# 参考線: 負の相関目安 y = -x
+import numpy as np
 x_vals = np.array([xmin, xmax])
 y_vals = -x_vals
 ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='y = -x')
 ax2.legend()
-
+# 軸設定
+ax2.set_xlabel('平均偏差値')
+ax2.set_ylabel('安定性')
+ax2.set_xlim(xmin, xmax)
 ax2.set_ylim(ymin, ymax)
 st.pyplot(fig2)
 
