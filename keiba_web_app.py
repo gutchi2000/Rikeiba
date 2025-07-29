@@ -193,58 +193,40 @@ st.write(f"合計推奨ベット額: {bet_amounts.sum():,}円")
 
 # --- 券種別買い目出力 & 予算内訳配分 ---
 with st.expander('券種別買い目候補と予算配分'):
-    horses = list(top6['馬名']); axis = horses[0]; others = horses[1:]
-    umaren = [f"{axis}-{h}" for h in others]
-    wide = umaren.copy()
-    first, second, third = horses[0], horses[1:3], horses[3:]
-    sanrenpuku = ["-".join(sorted([first, b, c])) for b in second for c in third]
-    fixed = horses[:4]
-    sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1 != o2]
+    # ... existing code ...
 
-    # 馬連 or ワイド 選択
-    bet_type = st.radio('馬連とワイド、どちらを含めるか？', ['馬連','ワイド'])
-    selected_types = ['単勝','複勝', bet_type, '三連複', '三連単']
+# --- 可視化ダッシュボード ---
+st.header('可視化ダッシュボード')
+# 1. 偏差値分布ヒストグラム
+st.subheader('偏差値分布ヒストグラム')
+fig3, ax3 = plt.subplots()
+ax3.hist(df['偏差値'], bins=20)
+ax3.set_xlabel('偏差値')
+ax3.set_ylabel('頭数')
+st.pyplot(fig3)
 
-    # 合計予算入力
-    total_budget = st.number_input('券種合計ベット予算（円）を入力', min_value=1000, step=1000, value=10000)
+# 2. 日付別平均偏差値推移
+st.subheader('日付別平均偏差値推移')
+df_time = df.groupby('レース日')['偏差値'].mean().reset_index()
+fig4, ax4 = plt.subplots()
+ax4.plot(df_time['レース日'], df_time['偏差値'], marker='o')
+ax4.set_xlabel('レース日')
+ax4.set_ylabel('平均偏差値')
+st.pyplot(fig4)
 
-    # 均等配分（切り捨て100円単位）
-    n = len(selected_types)
-    base = total_budget // n
-    alloc = {t: (base // 100) * 100 for t in selected_types}
-    # 余り調整: 最後の券種に追加
-    remain = total_budget - sum(alloc.values())
-    alloc[selected_types[-1]] += (remain // 100) * 100
-
-    # 一買い目あたり金額計算
-    alloc_per = {}
-    for t, amt in alloc.items():
-        if t == '単勝':
-            win = (amt * 1/4) // 100 * 100
-            alloc_per['単勝'] = int(win)
-        elif t == '複勝':
-            place = (amt * 3/4) // 100 * 100
-            alloc_per['複勝'] = int(place)
-        elif t == '馬連':
-            per = (amt // 5) // 100 * 100
-            for combo in umaren:
-                alloc_per[f'馬連: {combo}'] = int(per)
-        elif t == 'ワイド':
-            per = (amt // 5) // 100 * 100
-            for combo in wide:
-                alloc_per[f'ワイド: {combo}'] = int(per)
-        elif t == '三連複':
-            per = (amt // len(sanrenpuku)) // 100 * 100
-            for combo in sanrenpuku:
-                alloc_per[f'三連複: {combo}'] = int(per)
-        elif t == '三連単':
-            per = (amt // len(sanrentan)) // 100 * 100
-            for combo in sanrentan:
-                alloc_per[f'三連単: {combo}'] = int(per)
-
-    # 表示
-    st.write('**券種別予算配分**')
-    st.write(pd.DataFrame([{t: v for t, v in alloc.items()}]).T.rename(columns={0:'配分額(円)'}))
-    st.write('**一買い目あたり推奨金額**')
-    st.dataframe(pd.DataFrame([{k: v for k, v in alloc_per.items()}]).T.rename(columns={0:'推奨金額(円)'}))
-    st.caption('※100円単位で切り捨てています。')
+# 3. 的中シミュレーション（結果履歴があれば）
+if 'merged' in globals():
+    st.subheader('的中率・期待回収率シミュレーション')
+    # 的中フラグ
+    merged['当たり'] = merged['ポイント'] > 0
+    hit_rate = merged['当たり'].mean()
+    # 累積ポイント推移
+    merged['累積ポイント'] = merged['ポイント'].cumsum()
+    fig5, ax5 = plt.subplots()
+    ax5.plot(merged['馬名'], merged['累積ポイント'], marker='x')
+    ax5.set_xlabel('レース/着順')
+    ax5.set_ylabel('累積ポイント')
+    st.pyplot(fig5)
+    st.write(f"的中率: {hit_rate:.2%}")
+else:
+    st.info('結果履歴をアップロードすると的中シミュレーションが表示されます。')
