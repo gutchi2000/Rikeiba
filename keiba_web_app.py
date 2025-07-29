@@ -53,13 +53,16 @@ df.dropna(subset=cols, inplace=True)
 # --- 血統評価 ---
 def eval_pedigree(mn):
     if html_file:
-        tables = pd.read_html(html_file)
-        ped = tables[0]
-        sire = ped.set_index('馬名').get('父馬', {}).get(mn, '')
-        if sire in ["サクラバクシンオー","スウェプトオーヴァーボード"]:
-            return 1.2
-        if sire in ["マンハッタンカフェ","フジキセキ"]:
-            return 1.1
+        try:
+            tables = pd.read_html(html_file.getvalue())
+            ped = tables[0]
+            sire = ped.set_index('馬名').get('父馬', {}).get(mn, '')
+            if sire in ["サクラバクシンオー","スウェプトオーヴァード"]:
+                return 1.2
+            if sire in ["マンハッタンカフェ","フジキセキ"]:
+                return 1.1
+        except Exception:
+            return 1.0
     return 1.0
 
 df['pedigree_factor'] = df['馬名'].map(eval_pedigree)
@@ -108,48 +111,4 @@ df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
 # 偏差値計算
 z = df['total_z']
 zmin, zmax = z.min(), z.max()
-df['偏差値'] = 30 + (z - zmin) / (zmax - zmin) * 40 + (z - zmin) / (zmax - zmin) * 40
-
-# --- 馬別集計 ---
-df_avg = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
-df_avg.columns = ['馬名','平均偏差値','安定性']
-df_avg['バランススコア'] = df_avg['平均偏差値'] - df_avg['安定性']
-
-# --- 表示: 馬別評価 ---
-st.subheader('馬別 評価一覧')
-st.dataframe(df_avg.sort_values('バランススコア',ascending=False))
-
-# --- 上位抽出 ---
-top10 = df_avg.nlargest(10,'平均偏差値')['馬名']
-st.subheader('偏差値上位10頭')
-st.write(top10.tolist())
-combined = df_avg[df_avg['馬名'].isin(top10)].nlargest(6,'バランススコア')
-st.subheader('偏差値10頭中の安定&調子上位6頭')
-st.table(combined)
-
-# --- 可視化: 棒グラフ ---
-fig, ax = plt.subplots(figsize=(8,6))
-sns.barplot(x='バランススコア', y='馬名', data=combined, palette='viridis', ax=ax)
-st.pyplot(fig)
-
-# --- ベット設定 ---
-with st.expander('ベット設定'):
-    bet_type = st.selectbox('券種', ['単勝','複勝','馬連','ワイド','三連複','三連単'])
-    budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000)
-    axis = combined['馬名'].iat[0]
-    if bet_type in ['単勝','複勝']:
-        ratio = {'単勝':0.25,'複勝':0.75}[bet_type]
-        amt = (budget * ratio)//100*100
-        st.write(f"{bet_type} {axis} に {amt} 円")
-    else:
-        others = combined['馬名'].tolist()[1:]
-        if bet_type in ['馬連','ワイド']:
-            combos = [f"{axis}-{h}" for h in others]
-        elif bet_type == '三連複':
-            f, s, t = combined['馬名'].tolist()[0], combined['馬名'].tolist()[1:3], combined['馬名'].tolist()[3:]
-            combos = ["-".join(sorted([f,b,c])) for b in s for c in t]
-        else:
-            fix = combined['馬名'].tolist()[:4]
-            combos = [f"{fix[0]}→{i}→{j}" for i in fix[1:] for j in fix[1:] if i != j]
-        amt = (budget // len(combos))//100*100
-        st.dataframe(pd.DataFrame({'券種':[bet_type]*len(combos),'組合せ':combos,'金額':[amt]*len(combos)}))
+df['偏差値'] = 30 + (z - zmin) / (zmax - zmin) * 40
