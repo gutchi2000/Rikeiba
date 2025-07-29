@@ -17,14 +17,7 @@ if not uploaded_file:
     st.stop()
 
 df = pd.read_excel(uploaded_file)
-# レース計算対象数の表示
-# 全レースとフィルタ後（計算対象）のレース数を数値で表示
-total_races = len(df)
-valid_races = len(valid)
-st.subheader('レースデータ集計')
-st.write(f"全レース数: {total_races} 件")
-st.write(f"計算対象レース数: {valid_races} 件")('総レース数', ascending=False))
-
+# （レース計算対象数の表示セクションは不要のため削除）
 cols = ["馬名","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
 if any(c not in df.columns for c in cols):
     st.error("必要な列が不足しています")
