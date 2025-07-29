@@ -103,8 +103,10 @@ with st.expander('買い目と配分'):
     for t,am in al.items():
         if t=='単勝':rows.append({'券種':'単勝','組合せ':a,'金額':int((am*1/4)//100*100)})
         elif t=='複勝':rows.append({'券種':'複勝','組合せ':a,'金額':int((am*3/4)//100*100)})
-        elif t=='馬連':p=(am//5)//100*100
-            for c in um:rows.append({'券種':'馬連','組合せ':c,'金額':int(p)})
+        elif t=='馬連':
+            p = (am // 5) // 100 * 100
+            for c in um:
+                rows.append({'券種':'馬連','組合せ':c,'金額':int(p)})
         elif t=='ワイド':p=(am//5)//100*100
             for c in wd:rows.append({'券種':'ワイド','組合せ':c,'金額':int(p)})
         elif t=='三連複':p=(am//len(sr))//100*100
