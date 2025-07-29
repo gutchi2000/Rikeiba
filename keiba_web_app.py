@@ -68,8 +68,12 @@ df_out.columns = ['馬名','mean_z','std_z']
 cand = df_out.copy()
 cand['comp'] = cand['mean_z'] - cand['std_z']
 cand = cand.merge(df_avg, on='馬名')
-top6 = cand.nlargest(6, 'comp')[['馬名','平均偏差値']]
+# 全頭スコア表示
+st.subheader('総合スコア（全頭）')
+st.dataframe(cand[['馬名','平均偏差値','comp']].sort_values('comp', ascending=False).reset_index(drop=True))
+# 上位6頭表示
 st.subheader('総合スコア 上位6頭')
+top6 = cand.nlargest(6, 'comp')[['馬名','平均偏差値']]
 st.table(top6)
 
 # 棒グラフ
@@ -97,18 +101,19 @@ ax2.axhline(y0, linestyle='--', color='gray')
 ax2.scatter(df_out['mean_z'], df_out['std_z'], color='black', s=30)
 for _, r in df_out.iterrows():
     ax2.text(r['mean_z'], r['std_z'], r['馬名'], fontsize=8)
-# 参考線: 負の相関目安 対角線
+# 参考線: y = -x
 import numpy as np
 x_vals = np.array([xmin, xmax])
-# 対角線をプロット: y = -x + (xmin + ymax)
-y_vals = -x_vals + (xmin + ymax)
-ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='対角線')
-ax2.legend()
+y_vals = -x_vals
+ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='y = -x')
 # 軸設定
 ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
-ax2.set_xlim(xmin, xmax)
-ax2.set_ylim(ymin, ymax)
+# 軸範囲を広げて参考線を表示
+lim = max(abs(xmin), abs(xmax), abs(ymin), abs(ymax))
+ax2.set_xlim(-lim, lim)
+ax2.set_ylim(-lim, lim)
+ax2.legend()
 st.pyplot(fig2)
 
 # ダウンロード
@@ -127,6 +132,13 @@ if res_file:
     st.subheader('予想結果と獲得ポイント')
     st.dataframe(merged[['馬名','ポイント']])
     st.success(f"本日の合計ポイント: {merged['ポイント'].sum()}")
+
+# キタノブレイドのスコア詳細表示
+kitano = df[df['馬名']=='キタノブレイド'].copy()
+cols_detail = ['レース日','raw','raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm',
+               'Z_raw_norm','Z_up3_norm','Z_odds_norm','Z_jin_norm','Z_wdiff_norm','偏差値','weight']
+st.subheader('キタノブレイド スコア詳細')
+st.dataframe(kitano[cols_detail].sort_values('レース日', ascending=False).reset_index(drop=True))
 
 # 券種別買い目配分
 with st.expander('券種別買い目候補と予算配分'):
