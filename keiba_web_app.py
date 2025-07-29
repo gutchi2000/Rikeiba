@@ -113,7 +113,7 @@ ax2.set_ylabel('安定性')
 ax2.set_xlim(xmin, xmax)
 ax2.set_ylim(ymin, ymax)
 ax2.legend()
-st.pyplot(fig2)(fig2)
+st.pyplot(fig2)
 
 # ダウンロード
 output = BytesIO()
