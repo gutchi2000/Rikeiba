@@ -13,19 +13,49 @@ st.title("競馬予想アプリ（完成版）")
 
 # --- 入力 ---
 uploaded_file = st.file_uploader("成績データをアップロード (Excel)", type=["xlsx"])
-html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])
-radio_course = st.text_area("コース解説を入力", height=150)
-style_map_input = st.text_area("馬の脚質（CSV:馬名,脚質）入力", height=100)
 if not uploaded_file:
     st.stop()
 
-df = pd.read_excel(uploaded_file)
+# --- 後から入力: 年齢と脚質 ---
+# 馬名一覧取得
+equine_list = df['馬名'].unique().tolist()
+# 年齢入力
+st.subheader('馬ごとの年齢選択')
+age_map = {}
+for mn in equine_list:
+    age_map[mn] = st.selectbox(f"{mn} の年齢", options=list(range(1,11)), index=4, key=f"age_{mn}")
+# 脚質入力
+st.subheader('馬ごとの脚質選択')
+style_map = {}
+style_choices = ['逃げ','先行','差し','追込']
+for mn in equine_list:
+    style_map[mn] = st.selectbox(f"{mn} の脚質", options=style_choices, index=2, key=f"style_{mn}")
+
+# 血統表入力
+html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])("血統表をアップロード (HTML)", type=["html"])
+
+df = pd.read_excel(uploaded_file)(uploaded_file)
 cols = ["馬名","年齢","脚質","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
 if any(c not in df.columns for c in cols):
     st.error(f"必要列が不足しています: {set(cols)-set(df.columns)}")
     st.stop()
 
 df = df[cols].copy()
+# --- 馬名・年齢・脚質表示 ---
+st.subheader('馬名・年齢・脚質一覧')
+st.dataframe(df[['馬名','年齢','脚質']].drop_duplicates().reset_index(drop=True))
+# --- 計算式 ---
+st.markdown('''
+**計算式**
+
+- RawScore = GRADE × (頭数 + 1 - 着順)
+- RawNorm = (RawScore - GP_min) / (GP_max × 頭数 - GP_min)
+- Up3Norm = Ave-3F / 上がり3Fタイム
+- OddsNorm = 1 / (1 + log10(単勝オッズ))
+- JinNorm = (max(斤量) - 斤量) / (max(斤量) - min(斤量))
+- WdiffNorm = 1 - |増減| / 平均|増減|
+- 各指標を Z-スコア化し、重み付け合成後、30-70の偏差値にマッピング
+''')
 # 型変換
 for c in ["年齢","頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
     df[c] = pd.to_numeric(df[c], errors='coerce')
