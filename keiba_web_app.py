@@ -97,10 +97,12 @@ ax2.scatter(df_out['mean_z'], df_out['std_z'], color='black', s=30)
 # ラベル
 for _, r in df_out.iterrows():
     ax2.text(r['mean_z'], r['std_z'], r['馬名'], fontsize=8)
-# 参照線
-ax2.plot([xmin,xmax], [ymin,ymax], linestyle=':', color='gray')
-ax2.set_xlabel('平均偏差値')
-ax2.set_ylabel('安定性')
+# 参照線: 負の相関目安の y = -x ライン
+x_vals = np.array([xmin, xmax])
+y_vals = -x_vals
+ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='y = -x')
+ax2.legend()
+
 ax2.set_ylim(ymin, ymax)
 st.pyplot(fig2)
 
