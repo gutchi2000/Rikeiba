@@ -18,20 +18,18 @@ if not uploaded_file:
 
 df = pd.read_excel(uploaded_file)
 
-# --- 後から入力: 年齢と脚質 ---
-# 馬名一覧取得
+# --- 馬名／年齢／脚質入力（Excelライク） ---
 equine_list = df['馬名'].unique().tolist()
-# 年齢入力
-st.subheader('馬ごとの年齢選択')
-age_map = {}
-for mn in equine_list:
-    age_map[mn] = st.selectbox(f"{mn} の年齢", options=list(range(1,11)), index=4, key=f"age_{mn}")
-# 脚質入力
-st.subheader('馬ごとの脚質選択')
-style_map = {}
-style_choices = ['逃げ','先行','差し','追込']
-for mn in equine_list:
-    style_map[mn] = st.selectbox(f"{mn} の脚質", options=style_choices, index=2, key=f"style_{mn}")
+equine_df = pd.DataFrame({'馬名': equine_list, '年齢': ['']*len(equine_list), '脚質': ['']*len(equine_list)})
+edited = st.experimental_data_editor(
+    equine_df,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="equine_editor"
+)
+# 編集結果をマッピング
+age_map = dict(zip(edited['馬名'], edited['年齢']))
+style_map = dict(zip(edited['馬名'], edited['脚質']))
 
 # --- 血統表入力 ---
 html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])
