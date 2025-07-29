@@ -105,8 +105,10 @@ weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff
            'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2}
 total_w = sum(weights.values())
 df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
- z = df['total_z']; zmin, zmax = z.min(), z.max()
- df['偏差値'] = 30 + (z - zmin) / (zmax - zmin) * 40
+# 偏差値計算
+z = df['total_z']
+zmin, zmax = z.min(), z.max()
+df['偏差値'] = 30 + (z - zmin) / (zmax - zmin) * 40 + (z - zmin) / (zmax - zmin) * 40
 
 # --- 馬別集計 ---
 df_avg = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
