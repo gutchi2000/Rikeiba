@@ -101,7 +101,7 @@ df_avg['バランススコア']=df_avg['平均偏差値']-df_avg['安定性']
 st.subheader('馬別 評価一覧')
 st.dataframe(df_avg.sort_values('バランススコア',ascending=False))
 # 上位抽出
-t10=df_avg.nlargest(10,'平均偏差値')['馬名'].tolist()
+t10 = df_avg.sort_values('平均偏差値', ascending=False).head(10)['馬名'].tolist()
 st.subheader('偏差値上位10頭')
 st.write(t10)
 combined = df_avg[df_avg['馬名'].isin(t10)].nlargest(6,'バランススコア')
