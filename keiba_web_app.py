@@ -23,7 +23,10 @@ equine_list = df['馬名'].unique().tolist()
 equine_df = pd.DataFrame({'馬名': equine_list, '年齢': ['']*len(equine_list), '脚質': ['']*len(equine_list)})
 edited = st.data_editor(
     equine_df,
-    num_rows="dynamic",
+    column_config={
+        '年齢': st.column_config.NumberColumn("年齢", help="1歳～10歳を入力", min_value=1, max_value=10, step=1),
+        '脚質': st.column_config.SelectboxColumn("脚質", help="脚質を選択", options=['逃げ','先行','差し','追込'])
+    },
     use_container_width=True,
     key="equine_editor"
 )
