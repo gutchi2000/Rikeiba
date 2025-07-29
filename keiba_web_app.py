@@ -33,23 +33,35 @@ df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=cols, inplace=True)
 
 # --- 血統評価 ---
+# 血統入力（CSV形式: 馬名,父馬スコア）
+pedigree_map_input = st.text_area("血統スコア入力 (CSV: 馬名,スコア)", height=100)
 pedigree_map = {}
+if pedigree_map_input:
+    for line in pedigree_map_input.splitlines():
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts)==2:
+            pedigree_map[parts[0]] = float(parts[1])
+
 if html_file:
     import pandas as _pd
     tables = _pd.read_html(html_file)
-    # assume first table has 馬名, 父馬
     ped = tables[0][["馬名","父馬"]]
-    # 仮評価: MP系なら1.2、Halo系1.1、その他1.0
-    def eval_ped(sire):
+    # CSV入力があれば優先
+    def get_pedigree_factor(mn):
+        if mn in pedigree_map:
+            return pedigree_map[mn]
+        # fallback: MP系 or Halo系
+        sire = ped.set_index('馬名').get('父馬').get(mn, '')
         if sire in ["サクラバクシンオー","スウェプトオーヴァーボード"]:
             return 1.2
         if sire in ["マンハッタンカフェ","フジキセキ"]:
             return 1.1
         return 1.0
-    ped['pedigree_factor'] = ped['父馬'].map(eval_ped)
+    ped['pedigree_factor'] = ped['馬名'].map(get_pedigree_factor)
     df = df.merge(ped[['馬名','pedigree_factor']], on='馬名', how='left')
 else:
-    df['pedigree_factor'] = 1.0
+    # CSV入力だけでも利用可能
+    df['pedigree_factor'] = df['馬名'].map(lambda mn: pedigree_map.get(mn, 1.0))
 
 # --- 脚質評価 ---
 style_map = {}
@@ -121,6 +133,33 @@ st.table(combined)
 fig,ax=plt.subplots(figsize=(8,6))
 sns.barplot(x='バランススコア',y='馬名',data=combined,palette='viridis',ax=ax)
 st.pyplot(fig)
+
+# --- ベット設定 ---
+with st.expander('ベット設定'):
+    bet_type = st.selectbox('券種を選択', ['単勝','複勝','馬連','ワイド','三連複','三連単'])
+    budget = st.number_input('ベット総予算（円）', min_value=1000, step=1000, value=10000)
+    st.write(f"選択: {bet_type}, 予算: {budget:,} 円")
+    # 単勝・複勝は一頭軸、他は組み合わせ生成
+    axis = combined['馬名'].iloc[0]
+    if bet_type in ['単勝','複勝']:
+        ratio = {'単勝':0.25,'複勝':0.75}[bet_type]
+        amt = (budget * ratio)//100*100
+        st.write(f"おすすめ {bet_type} {axis} に {amt:,} 円")
+    else:
+        combos = []
+        others = combined['馬名'].tolist()[1:]
+        if bet_type in ['馬連','ワイド']:
+            combos = [f"{axis}-{h}" for h in others]
+        elif bet_type=='三連複':
+            f, s, t = combined['馬名'].tolist()[0], combined['馬名'].tolist()[1:3], combined['馬名'].tolist()[3:]
+            combos = ["-".join(sorted([f,b,c])) for b in s for c in t]
+        elif bet_type=='三連単':
+            fix = combined['馬名'].tolist()[:4]
+            combos = [f"{fix[0]}→{i}→{j}" for i in fix[1:] for j in fix[1:] if i!=j]
+        cnt = len(combos)
+        amt = (budget//cnt)//100*100
+        df_bet = pd.DataFrame([{'券種':bet_type,'組合せ':c,'金額':amt} for c in combos])
+        st.dataframe(df_bet)
 
 # --- 結果ダウンロード ---
 buf=BytesIO()
