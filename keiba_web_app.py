@@ -17,6 +17,14 @@ if not uploaded_file:
     st.stop()
 
 df = pd.read_excel(uploaded_file)
+# レース計算対象数の表示
+# 全レースとフィルタ後（計算対象）のレース数を数値で表示
+total_races = len(df)
+valid_races = len(valid)
+st.subheader('レースデータ集計')
+st.write(f"全レース数: {total_races} 件")
+st.write(f"計算対象レース数: {valid_races} 件")('総レース数', ascending=False))
+
 cols = ["馬名","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
 if any(c not in df.columns for c in cols):
     st.error("必要な列が不足しています")
@@ -130,37 +138,15 @@ if res_file:
     st.dataframe(merged[['馬名','ポイント']])
     st.success(f"本日の合計ポイント: {merged['ポイント'].sum()}")
 
-# 券種別配分
-with st.expander('券種別買い目候補と予算配分'):
-    horses = combined['馬名'].tolist()
-    axis = horses[0]; others = horses[1:]
-    umaren = [f"{axis}-{h}" for h in others]; wide = umaren.copy()
-    first, second, third = horses[0], horses[1:3], horses[3:]
-    sanrenpuku = ["-".join(sorted([first,b,c])) for b in second for c in third]
-    fixed = horses[:4]
-    sanrentan = [f"{fixed[0]}→{o1}→{o2}" for o1 in fixed[1:] for o2 in fixed[1:] if o1!=o2]
-    bet_choice = st.radio('馬連 or ワイド', ['馬連','ワイド'])
-    types = ['単勝','複勝', bet_choice, '三連複', '三連単']
-    total_budget = st.number_input('総ベット予算（円）', min_value=1000, step=1000, value=10000)
-    base = total_budget // len(types)
-    alloc = {t: (base//100)*100 for t in types[:-1]}
-    alloc[types[-1]] = ((total_budget-sum(alloc.values()))//100)*100
-    rows = []
-    for t, amt in alloc.items():
-        if t=='単勝':
-            amount = (amt*1/4)//100*100; rows.append({'券種':'単勝','組合せ':axis,'金額':int(amount)})
-        elif t=='複勝':
-            amount = (amt*3/4)//100*100; rows.append({'券種':'複勝','組合せ':axis,'金額':int(amount)})
-        elif t=='馬連':
-            p = (amt//5)//100*100
-            for c in umaren: rows.append({'券種':'馬連','組合せ':c,'金額':int(p)})
-        elif t=='ワイド':
-            p = (amt//5)//100*100
-            for c in wide: rows.append({'券種':'ワイド','組合せ':c,'金額':int(p)})
-        elif t=='三連複':
-            p = (amt//len(sanrenpuku))//100*100
-            for c in sanrenpuku: rows.append({'券種':'三連複','組合せ':c,'金額':int(p)})
-        elif t=='三連単':
-            p = (amt//len(sanrentan))//100*100
-            for c in sanrentan: rows.append({'券種':'三連単','組合せ':c,'金額':int(p)})
-    st.dataframe(pd.DataFrame(rows))
+# 全頭 計算過程（馬別平均）
+df_summary = df.groupby('馬名').agg(
+    平均RawScore=('raw','mean'),
+    平均RawNorm=('raw_norm','mean'),
+    平均Up3Norm=('up3_norm','mean'),
+    平均OddsNorm=('odds_norm','mean'),
+    平均JinNorm=('jin_norm','mean'),
+    平均WdiffNorm=('wdiff_norm','mean'),
+    平均偏差値=('偏差値','mean')
+).reset_index()
+st.subheader('全頭 計算過程（馬別平均値）')
+st.dataframe(df_summary.sort_values('平均偏差値', ascending=False))
