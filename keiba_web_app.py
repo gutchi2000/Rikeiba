@@ -103,7 +103,7 @@ x_vals = np.array([xmin, xmax])
 # 対角線をプロット: y = -x + (xmin + ymax)
 y_vals = -x_vals + (xmin + ymax)
 ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='対角線')
-ax2.legend()()
+ax2.legend()
 # 軸設定
 ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
