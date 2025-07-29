@@ -104,7 +104,7 @@ st.dataframe(df_avg.sort_values('バランススコア',ascending=False))
 t10 = df_avg.sort_values('平均偏差値', ascending=False).head(10)['馬名'].tolist()
 st.subheader('偏差値上位10頭')
 st.write(t10)
-combined = df_avg[df_avg['馬名'].isin(t10)].nlargest(6,'バランススコア')
+combined = df_avg[df_avg['馬名'].isin(t10)].sort_values('バランススコア', ascending=False).head(6)
 st.subheader('偏差値10頭中の安定&調子上位6頭')
 st.table(combined)
 
