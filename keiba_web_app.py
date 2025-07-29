@@ -41,11 +41,20 @@ if any(c not in df.columns for c in cols):
     st.stop()
 
 df = df[cols].copy()
-# --- 馬名・年齢・脚質一覧表示 ---
-# 初期テーブルとして馬名のみ表示、年齢・脚質は空欄
-equine_df = pd.DataFrame({'馬名': equine_list, '年齢': ['']*len(equine_list), '脚質': ['']*len(equine_list)})
-st.subheader('馬名／年齢／脚質 (選択後に下で編集)')
-st.table(equine_df)
+# --- 馬名・年齢・脚質入力テーブル ---
+import streamlit as st
+equine_df = pd.DataFrame({'馬名': equine_list, '年齢': [5]*len(equine_list), '脚質': ['差し']*len(equine_list)})
+# データエディタで直接編集可能
+edited = st.experimental_data_editor(
+    equine_df,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="equine_editor"
+)
+# 編集結果をマッピング
+age_map = dict(zip(edited['馬名'], edited['年齢']))
+style_map = dict(zip(edited['馬名'], edited['脚質']))
+
 # --- 計算式 ---df[['馬名','年齢','脚質']].drop_duplicates().reset_index(drop=True))
 # --- 計算式 ---
 st.markdown('''
