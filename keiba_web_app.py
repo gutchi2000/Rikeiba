@@ -76,7 +76,7 @@ def age_factor(a):
     return 1 + 0.2 * (1 - abs(a - peak) / peak)
 
 df['年齢'] = df['馬名'].map(lambda mn: age_map.get(mn, 5))
- df['age_factor'] = df['年齢'].apply(age_factor)
+df['age_factor'] = df['年齢'].apply(age_factor)
 
 # --- 基本指標計算 ---
 GRADE = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,"オープン特別":4,"3勝クラス":3,"2勝クラス":2,"1勝クラス":1,"新馬":1,"未勝利":1}
@@ -103,8 +103,8 @@ for m in ['pedigree_factor','age_factor','style_factor']:
 # --- 合成偏差値化 ---
 weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff_norm':1,
            'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2}
- total_w = sum(weights.values())
- df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
+total_w = sum(weights.values())
+df['total_z'] = sum(df[k]*w for k,w in weights.items()) / total_w
  z = df['total_z']; zmin, zmax = z.min(), z.max()
  df['偏差値'] = 30 + (z - zmin) / (zmax - zmin) * 40
 
