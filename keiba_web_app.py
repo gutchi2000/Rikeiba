@@ -36,7 +36,7 @@ style_map = dict(zip(edited['馬名'], edited['脚質']))
 
 # --- 血統表入力 ---
 html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])
-cols = ["馬名","年齢","脚質","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
+cols = ["馬名","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"],"頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
 if any(c not in df.columns for c in cols):
     st.error(f"必要列が不足しています: {set(cols)-set(df.columns)}")
     st.stop()
