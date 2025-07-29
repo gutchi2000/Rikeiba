@@ -41,9 +41,12 @@ if any(c not in df.columns for c in cols):
     st.stop()
 
 df = df[cols].copy()
-# --- 馬名・年齢・脚質表示 ---
-st.subheader('馬名・年齢・脚質一覧')
-st.dataframe(df[['馬名','年齢','脚質']].drop_duplicates().reset_index(drop=True))
+# --- 馬名・年齢・脚質一覧表示 ---
+# 初期テーブルとして馬名のみ表示、年齢・脚質は空欄
+equine_df = pd.DataFrame({'馬名': equine_list, '年齢': ['']*len(equine_list), '脚質': ['']*len(equine_list)})
+st.subheader('馬名／年齢／脚質 (選択後に下で編集)')
+st.table(equine_df)
+# --- 計算式 ---df[['馬名','年齢','脚質']].drop_duplicates().reset_index(drop=True))
 # --- 計算式 ---
 st.markdown('''
 **計算式**
