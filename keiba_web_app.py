@@ -16,6 +16,8 @@ uploaded_file = st.file_uploader("成績データをアップロード (Excel)",
 if not uploaded_file:
     st.stop()
 
+df = pd.read_excel(uploaded_file)
+
 # --- 後から入力: 年齢と脚質 ---
 # 馬名一覧取得
 equine_list = df['馬名'].unique().tolist()
@@ -31,10 +33,8 @@ style_choices = ['逃げ','先行','差し','追込']
 for mn in equine_list:
     style_map[mn] = st.selectbox(f"{mn} の脚質", options=style_choices, index=2, key=f"style_{mn}")
 
-# 血統表入力
-html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])("血統表をアップロード (HTML)", type=["html"])
-
-df = pd.read_excel(uploaded_file)(uploaded_file)
+# --- 血統表入力 ---
+html_file = st.file_uploader("血統表をアップロード (HTML)", type=["html"])(uploaded_file)
 cols = ["馬名","年齢","脚質","レース日","頭数","クラス名","確定着順","上がり3Fタイム","Ave-3F","馬場状態","斤量","増減","単勝オッズ"]
 if any(c not in df.columns for c in cols):
     st.error(f"必要列が不足しています: {set(cols)-set(df.columns)}")
