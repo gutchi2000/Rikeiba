@@ -8,6 +8,7 @@ from matplotlib import font_manager
 font_path = "ipaexg.ttf"
 font_manager.fontManager.addfont(font_path)
 plt.rcParams["font.family"] = font_manager.FontProperties(fname=font_path).get_name()
+
 st.title("競馬スコア分析アプリ（完成版）")
 
 uploaded_file = st.file_uploader("Excelファイルをアップロードしてください", type=["xlsx"])
@@ -24,7 +25,6 @@ df = df[required].copy()
 df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 for col in ["頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"]:
     df[col] = pd.to_numeric(df[col], errors='coerce')
-
 df.dropna(subset=["レース日","頭数","確定着順","上がり3Fタイム","Ave-3F","斤量","増減","単勝オッズ"], inplace=True)
 
 GRADE_SCORE = {
@@ -53,20 +53,15 @@ for col in metrics:
     df[f'Z_{col}'] = df[col].apply(lambda x: 0 if sigma == 0 else (x - mu) / sigma)
 
 weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff_norm':1}
-total_w = sum(weights.values())
-df['total_z'] = sum(df[k] * w for k,w in weights.items()) / total_w
-mu_t, sigma_t = df['total_z'].mean(), df['total_z'].std(ddof=1)
-scale = 15
-if sigma_t == 0:
-    df['偏差値'] = 50
-else:
-    df['偏差値'] = 50 + scale * (df['total_z'] - mu_t) / sigma_t
+df['total_z'] = sum(df[k] * w for k,w in weights.items()) / sum(weights.values())
+
+z = df['total_z']
+z_min, z_max = z.min(), z.max()
+df['偏差値'] = 30 + (z - z_min) / (z_max - z_min) * 40
 
 df_avg = df.groupby('馬名').apply(lambda d: np.average(d['偏差値'], weights=d['weight'])).reset_index(name='平均偏差値')
 st.subheader('全馬 偏差値一覧')
 st.dataframe(df_avg.sort_values('平均偏差値', ascending=False))
-
-# 上位6頭抽出
 
 df_out = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
 df_out.columns = ['馬名','mean_z','std_z']
@@ -77,14 +72,12 @@ top6 = candidate.nlargest(6, 'composite')[['馬名','平均偏差値','composite
 st.subheader('総合スコア 上位6頭')
 st.table(top6)
 
-# 棒グラフ
 import seaborn as sns
 colors = ['#e31a1c','#1f78b4','#33a02c','#ff7f00','#6a3d9a','#6a3d9a']
 fig1, ax1 = plt.subplots(figsize=(8,5))
 sns.barplot(x='平均偏差値', y='馬名', data=top6, palette=colors[:len(top6)], ax=ax1)
 st.pyplot(fig1)
 
-# 散布図
 fig2, ax2 = plt.subplots(figsize=(10,6))
 x0 = df_out['mean_z'].mean() + df_out['mean_z'].std(ddof=1)
 y0 = df_out['std_z'].mean() + df_out['std_z'].std(ddof=1)
@@ -104,14 +97,12 @@ ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
 st.pyplot(fig2)
 
-# 偏差値一覧ダウンロード
 output = BytesIO()
 with pd.ExcelWriter(output, engine='openpyxl') as writer:
     df_avg.to_excel(writer, index=False, sheet_name='偏差値一覧')
 processed = output.getvalue()
 st.download_button('偏差値一覧をExcelでダウンロード', data=processed, file_name='score_list.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-# 結果履歴とポイント計算
 res_file = st.file_uploader('実際の着順Excelをアップロードしてください', type=['xlsx'], key='result')
 if res_file:
     res_df = pd.read_excel(res_file, usecols=['馬名','確定着順']).rename(columns={'確定着順':'着順'})
@@ -121,7 +112,6 @@ if res_file:
     st.dataframe(merged[['馬名','ポイント']])
     st.success(f"本日の合計ポイント: {merged['ポイント'].sum()}")
 
-# 買い目候補と予算配分
 with st.expander('券種別買い目候補と予算配分'):
     horses = top6['馬名'].tolist()
     axis = horses[0]
