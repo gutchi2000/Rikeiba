@@ -101,20 +101,19 @@ ax2.axhline(y0, linestyle='--', color='gray')
 ax2.scatter(df_out['mean_z'], df_out['std_z'], color='black', s=30)
 for _, r in df_out.iterrows():
     ax2.text(r['mean_z'], r['std_z'], r['馬名'], fontsize=8)
-# 参考線: y = -x
+# 参考線: 負の相関目安の対角線
 import numpy as np
 x_vals = np.array([xmin, xmax])
-y_vals = -x_vals
-ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='y = -x')
-# 軸設定
+# 線を左上(xmin,ymax)→右下(xmax,ymin)に
+y_vals = np.array([ymax, ymin])
+ax2.plot(x_vals, y_vals, linestyle=':', color='gray', label='y = -x (corners)')
+# 軸設定 (データ範囲のみ)
 ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
-# 軸範囲を広げて参考線を表示
-lim = max(abs(xmin), abs(xmax), abs(ymin), abs(ymax))
-ax2.set_xlim(-lim, lim)
-ax2.set_ylim(-lim, lim)
+ax2.set_xlim(xmin, xmax)
+ax2.set_ylim(ymin, ymax)
 ax2.legend()
-st.pyplot(fig2)
+st.pyplot(fig2)(fig2)
 
 # ダウンロード
 output = BytesIO()
