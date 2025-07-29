@@ -21,7 +21,7 @@ df = pd.read_excel(uploaded_file)
 # --- 馬名／年齢／脚質入力（Excelライク） ---
 equine_list = df['馬名'].unique().tolist()
 equine_df = pd.DataFrame({'馬名': equine_list, '年齢': ['']*len(equine_list), '脚質': ['']*len(equine_list)})
-edited = st.experimental_data_editor(
+edited = st.data_editor(
     equine_df,
     num_rows="dynamic",
     use_container_width=True,
