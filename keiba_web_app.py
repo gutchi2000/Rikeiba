@@ -132,13 +132,6 @@ if res_file:
     st.dataframe(merged[['馬名','ポイント']])
     st.success(f"本日の合計ポイント: {merged['ポイント'].sum()}")
 
-# キタノブレイドのスコア詳細表示
-kitano = df[df['馬名']=='キタノブレイド'].copy()
-cols_detail = ['レース日','raw','raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm',
-               'Z_raw_norm','Z_up3_norm','Z_odds_norm','Z_jin_norm','Z_wdiff_norm','偏差値','weight']
-st.subheader('キタノブレイド スコア詳細')
-st.dataframe(kitano[cols_detail].sort_values('レース日', ascending=False).reset_index(drop=True))
-
 # 券種別買い目配分
 with st.expander('券種別買い目候補と予算配分'):
     horses = top6['馬名'].tolist()
