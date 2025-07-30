@@ -199,11 +199,9 @@ with st.expander('ベット設定'):
     elif detail == '馬単':
         combos = [f"{axis}->{o}" for o in others]
     elif detail == '三連複':
+        # ◎軸＋他2頭 の組み合わせ
         from itertools import combinations
-        if budget >= 10000:
-            combos = ["-".join(c) for c in combinations(names,3)]
-        else:
-            combos = [f"{axis}-{o1}-{o2}" for o1,o2 in combinations(others,2)]
+        combos = [f"{axis}-{o1}-{o2}" for o1, o2 in combinations(others, 2)]
     elif detail == '三連単マルチ':
         from itertools import permutations
         combos = ["→".join(p) for p in permutations(names,3)]
