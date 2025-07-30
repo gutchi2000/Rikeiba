@@ -152,19 +152,27 @@ st.pyplot(fig2)
 
 # --- ベット設定 ---
 with st.expander('ベット設定'):
-    bt = st.selectbox('券種', ['単勝','複勝','馬連','ワイド','三連複','三連単'])
-    bd = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000)
-    axis = top10.iloc[0]['馬名']
+    bt = st.selectbox('券種', ['単勝','複勝','馬連','ワイド','三連複','三連単'], key='bet_type')
+    bd = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000, key='budget')
+    # 軸馬
+    axis = combined['馬名'].iloc[0] if not combined.empty else df['馬名'].iloc[0]
+    # 単勝・複勝
     if bt in ['単勝','複勝']:
         ratio = {'単勝':0.25,'複勝':0.75}[bt]
-        st.write(f"{bt} {axis} → {(bd * ratio)//100*100} 円")
+        amt = (bd * ratio)//100*100
+        st.write(f"{bt} {axis} → {int(amt):,} 円")
     else:
         names = combined['馬名'].tolist()
+        # 組み合わせ生成
         if bt in ['馬連','ワイド']:
             combos = [f"{names[0]}-{n}" for n in names[1:]]
         elif bt == '三連複':
             combos = ["-".join(sorted([names[0], b, c])) for b in names[1:3] for c in names[3:]]
-        else:
+        else:  # 三連単
             combos = [f"{names[0]}→{i}→{j}" for i in names[1:4] for j in names[1:4] if i != j]
-        amt = (bd // len(combos))//100*100
-        st.dataframe(pd.DataFrame({'券種': bt, '組合せ': combos, '金額': [amt]*len(combos)}))
+        if combos:
+            amt = (bd // len(combos))//100*100
+            df_bet = pd.DataFrame({'券種': bt, '組合せ': combos, '金額': [int(amt)]*len(combos)})
+            st.dataframe(df_bet)
+        else:
+            st.write("候補馬が不足しています。入力データを確認してください。")
