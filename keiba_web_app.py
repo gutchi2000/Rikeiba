@@ -77,37 +77,11 @@ def eval_pedigree(row):
 df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
-# コース解説に基づきstyle_mapと連携して重みを個別設定可能
+# コース解説に基づき style_map から重みを取得
 
 def style_factor(row):
     base = style_map.get(row['馬名'], '')
-    # ここでコースごとの脚質重みを設定
-    weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
-    return weights.get(base, 1.0)
-
-# 適用
-df['style_factor'] = df.apply(style_factor, axis=1)
-
-# --- 脚質評価ファクター ---
-def style_factor(row):
-    base = style_map.get(row['馬名'], '')
-    # コース特性に応じた重み付け
-    if race_type == '直線':
-        weights = {'逃げ':1.1,'先行':1.2,'差し':1.0,'追込':0.9}
-    elif race_type == '小回り':
-        weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
-    else:
-        weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
-    return weights.get(base, 1.0)
-
-df['style_factor'] = df.apply(style_factor, axis=1)
-
-# --- 脚質評価ファクター ---
-# レース条件（コース特性）に合わせて脚質評価を動的に変更
-
-def style_factor(row):
-    base = style_map.get(row['馬名'], '')
-    weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
+    weights = {'逃げ':1.2, '先行':1.1, '差し':1.0, '追込':0.9}
     return weights.get(base, 1.0)
 
 df['style_factor'] = df.apply(style_factor, axis=1)
