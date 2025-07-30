@@ -168,15 +168,20 @@ def allocate_budget(budget, percents):
         rounded[main] += diff
     return rounded
 
-with st.expander('ベット設定'):
-# シナリオ別資金配分関数
+# --- ベット設定 ---
+# シナリオ定義
+scenarios = {
+    '通常（堅め）': {'単勝':8,'複勝':22,'ワイド等':70,'三連複':0,'三連単マルチ':0},
+    'ちょい余裕':   {'単勝':6,'複勝':19,'ワイド等':50,'三連複':25,'三連単マルチ':0},
+    '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド等':35,'三連複':25,'三連単マルチ':20},
+}
+# 資金配分関数
 @st.cache_data(ttl=600)
 def allocate_budget(budget, percents):
     raw = {k: budget * v / 100 for k, v in percents.items()}
     rounded = {k: int(v // 100) * 100 for k, v in raw.items()}
     diff = budget - sum(rounded.values())
     if diff != 0:
-        # 端数は最も比率が高い項目に追加
         main = max(percents, key=lambda k: percents[k])
         rounded[main] += diff
     return rounded
@@ -196,11 +201,10 @@ with st.expander('ベット設定'):
     detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist(), key='detail')
     amt = alloc.get(detail, 0)
     if detail in ['単勝','複勝']:
-        st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
+        st.write(f"{detail}：軸馬 {combined['馬名'].iat[0]} に {amt:,}円")
     else:
         # 組み合わせ生成
         names = combined['馬名'].tolist()
-        combos = []
         if detail in ['馬連','ワイド']:
             combos = [f"{names[0]}-{n}" for n in names[1:]]
         elif detail == '三連複':
