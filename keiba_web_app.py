@@ -152,8 +152,8 @@ st.pyplot(fig2)
 
 # --- ベット設定 ---
 # 予算配分関数を定義
-@st.cache(ttl=600)
-def allocate_budget(budget, percents):
+@st.cache_data(ttl=600)
+def allocate_budget(budget, percents):(budget, percents):
     raw = {k: budget*v/100 for k,v in percents.items()}
     rounded = {k: int(v//100)*100 for k,v in raw.items()}
     diff = budget - sum(rounded.values())
