@@ -54,20 +54,25 @@ df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
 # --- 血統評価ファクター ---
+# HTML があれば一度だけ読み込み
+ped_df = None
+if html_file:
+    try:
+        html_bytes = html_file.read()
+        ped_df = pd.read_html(html_bytes)[0].set_index('馬名')
+    except:
+        ped_df = None
+
 def eval_pedigree(row):
     mn = row['馬名']
-    if html_file and priority_sires:
-        try:
-            html_bytes = html_file.read()
-            tables = pd.read_html(html_bytes)
-            ped = tables[0].set_index('馬名')
-            sire = ped.at[mn, '父馬'] if mn in ped.index else ''
-            if sire in priority_sires:
-                return 1.2
-        except:
-            pass
+    # 強調種牡馬リスト優先
+    if priority_sires and ped_df is not None:
+        sire = ped_df.at[mn, '父馬'] if mn in ped_df.index else ''
+        if sire in priority_sires:
+            return 1.2
     return 1.0
-df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
+
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
 def style_factor(row):
