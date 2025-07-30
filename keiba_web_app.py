@@ -118,7 +118,7 @@ st.pyplot(fig)
 with st.expander('ベット設定'):
     bt=st.selectbox('券種',['単勝','複勝','馬連','ワイド','三連複','三連単'])
     bd=st.number_input('予算',1000,step=1000,value=10000)
-    axis = t10[0]
+    axis = t10[0] if len(t10)>0 else equine_list[0]
     if bt in ['単勝','複勝']:
         r={'単勝':0.25,'複勝':0.75}[bt]
         st.write(f"{bt} {axis} → {(bd*r)//100*100} 円")
