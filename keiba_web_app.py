@@ -79,8 +79,12 @@ def eval_pedigree(row):
 df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
-# レース条件（コース特性）に合わせて脚質評価を動的に変更可能
-
+# レース条件（コース特性）に合わせて脚質評価を動的に変更
+ def style_factor(row):
+     base = style_map.get(row['馬名'], '')
+     weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
+     return weights.get(base, 1.0)
+ df['style_factor'] = df.apply(style_factor, axis=1)
 
 # --- 年齢評価ファクター ---
 def age_factor(age):
