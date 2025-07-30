@@ -135,6 +135,21 @@ fig, ax = plt.subplots(figsize=(8,6))
 sns.barplot(x='バランススコア', y='馬名', data=combined, palette='viridis', ax=ax)
 st.pyplot(fig)
 
+# --- 散布図: 調子 × 安定性 ---
+fig2, ax2 = plt.subplots(figsize=(10,6))
+# mean, std
+df_out = summary.copy()
+x0 = df_out['平均偏差値'].mean()
+y0 = df_out['安定性'].mean()
+ax2.scatter(df_out['平均偏差値'], df_out['安定性'], color='black')
+ax2.axvline(x0, linestyle='--', color='gray')
+ax2.axhline(y0, linestyle='--', color='gray')
+for _, r in df_out.iterrows():
+    ax2.text(r['平均偏差値'], r['安定性'], r['馬名'], fontsize=8)
+ax2.set_xlabel('平均偏差値')
+ax2.set_ylabel('安定性')
+st.pyplot(fig2)
+
 # --- ベット設定 ---
 with st.expander('ベット設定'):
     bt = st.selectbox('券種', ['単勝','複勝','馬連','ワイド','三連複','三連単'])
