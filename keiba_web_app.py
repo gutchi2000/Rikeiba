@@ -71,26 +71,8 @@ def eval_pedigree(row):
         except:
             pass
     return 1.0
-(row):
-    mn = row['馬名']
-    if html_file:
-        try:
-            html_bytes = html_file.read()
-            tables = pd.read_html(html_bytes)
-            ped = tables[0]
-            sire = ped.set_index('馬名').get('父馬', {}).get(mn, '')
-            # ここでレース別に変えたい血統強調リストを参照
-            # 例: flat_priority = ['サクラバクシンオー','スウェプトオーヴァード']
-            #      dirt_priority = ['キングカメハメハ', 'アグネスタキオン']
-            if sire in []:
-                return 1.2
-            if sire in []:
-                return 1.1
-        except:
-            pass
-    return 1.0
 
-df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
 # コース解説に基づき style_map から重みを取得
