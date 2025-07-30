@@ -168,25 +168,32 @@ def allocate_budget(budget, percents):
         rounded[main] += diff
     return rounded
 
-# --- ベット設定 ---
-# シナリオ定義
-scenarios = {
-    '通常（堅め）': {'単勝':8,'複勝':22,'ワイド等':70,'三連複':0,'三連単マルチ':0},
-    'ちょい余裕':   {'単勝':6,'複勝':19,'ワイド等':50,'三連複':25,'三連単マルチ':0},
-    '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド等':35,'三連複':25,'三連単マルチ':20},
-}
-# 資金配分関数
-@st.cache_data(ttl=600)
-def allocate_budget(budget, percents):
-    raw = {k: budget * v / 100 for k, v in percents.items()}
-    rounded = {k: int(v // 100) * 100 for k, v in raw.items()}
-    diff = budget - sum(rounded.values())
-    if diff != 0:
-        main = max(percents, key=lambda k: percents[k])
-        rounded[main] += diff
-    return rounded
-
 with st.expander('ベット設定'):
+    scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()), key='scenario')
+    budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000, key='budget')
+    alloc = allocate_budget(budget, scenarios[scenario])
+    st.write(f"**シナリオ：{scenario}**, **予算：{budget:,}円**")
+    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
+    alloc_df.columns = ['券種','金額(円)']
+    st.table(alloc_df)
+    detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist(), key='detail')
+    amt = alloc.get(detail, 0)
+    if detail in ['単勝','複勝']:
+        st.write(f"{detail}：軸馬 {combined['馬名'].iat[0]} に {amt:,}円")
+    else:
+        names = combined['馬名'].tolist()
+        if detail in ['馬連','ワイド']:
+            combos = [f"{names[0]}-{n}" for n in names[1:]]
+        elif detail == '三連複':
+            combos = ["-".join(sorted([names[0], b, c])) for b in names[1:3] for c in names[3:]]
+        else:
+            combos = [f"{names[0]}→{i}→{j}" for i in names[1:4] for j in names[1:4] if i != j]
+        if combos:
+            per = amt // len(combos) // 100 * 100
+            dfb = pd.DataFrame({'券種': detail, '組合せ': combos, '金額': [per]*len(combos)})
+            st.dataframe(dfb)
+        else:
+            st.write('対象の買い目がありません')('ベット設定'):
     # シナリオ選択
     scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()), key='scenario')
     budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000, key='budget')
