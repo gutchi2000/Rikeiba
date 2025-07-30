@@ -196,11 +196,20 @@ with st.expander('ベット設定'):
         st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
     else:
         # 組み合わせ生成
-        if detail in ['馬連','ワイド等']:
-            combos = [f"{names[0]}-{n}" for n in names[1:]]
+        if detail == '馬連':
+            from itertools import combinations
+            combos = [f"{a}-{b}" for a,b in combinations(names,2)]
+        elif detail == 'ワイド等':
+            from itertools import combinations
+            combos = [f"{a}-{b}" for a,b in combinations(names,2)]
         elif detail == '三連複':
-            combos = ["-".join(sorted([names[0], b, c])) for b in names[1:3] for c in names[3:]]
+            from itertools import combinations
+            # C(n,3) 組み合わせ
+            combos = ["-".join(c) for c in combinations(names, 3)]
         elif detail == '三連単マルチ':
+            from itertools import permutations
+            # P(n,3) 全順列
+            combos = ["→".join(p) for p in permutations(names, 3)]
             combos = [f"{names[0]}→{i}→{j}" for i in names[1:4] for j in names[1:4] if i != j]
         else:
             combos = []
