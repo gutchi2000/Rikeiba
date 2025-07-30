@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from io import BytesIO
 from matplotlib import font_manager
+from itertools import combinations, permutations
 
 # 日本語フォント設定
 font_manager.fontManager.addfont("ipaexg.ttf")
@@ -19,7 +20,9 @@ df = pd.read_excel(uploaded_file)
 
 # --- 馬名／年齢／脚質入力テーブル ---
 equine_list = df['馬名'].unique().tolist()
-equine_df = pd.DataFrame({'馬名': equine_list,'年齢': [5]*len(equine_list),'脚質': ['差し']*len(equine_list)})
+equine_df = pd.DataFrame({'馬名': equine_list,
+                          '年齢': [5]*len(equine_list),
+                          '脚質': ['差し']*len(equine_list)})
 edited = st.data_editor(
     equine_df,
     column_config={
@@ -54,7 +57,6 @@ df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
 # --- 血統評価ファクター ---
-# HTML があれば一度だけ読み込み
 ped_df = None
 if html_file:
     try:
@@ -65,14 +67,12 @@ if html_file:
 
 def eval_pedigree(row):
     mn = row['馬名']
-    # 強調種牡馬リスト優先
     if priority_sires and ped_df is not None:
         sire = ped_df.at[mn, '父馬'] if mn in ped_df.index else ''
         if sire in priority_sires:
             return 1.2
     return 1.0
-
-df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)(eval_pedigree, axis=1)
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
 def style_factor(row):
@@ -91,9 +91,9 @@ df['age_factor'] = df['年齢'].apply(age_factor)
 # --- 基本指標計算 ---
 GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
          '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
-GP_MIN, GP_MAX = 1, 10
 fc = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
 df['raw'] = fc * df['pedigree_factor']
+GP_MIN, GP_MAX = 1, 10
 df['raw_norm'] = (df['raw'] - GP_MIN) / (GP_MAX * df['頭数'] - GP_MIN)
 df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
 df['odds_norm'] = 1 / (1 + np.log10(df['単勝オッズ']))
@@ -103,21 +103,19 @@ wmean = df['増減'].abs().mean()
 df['wdiff_norm'] = 1 - df['増減'].abs() / wmean
 
 # --- Zスコア化 ---
-metrics = ['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm']
+metrics = ['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm',
+           'pedigree_factor','style_factor','age_factor']
 for m in metrics:
-    mu, sd = df[m].mean(), df[m].std(ddof=1)
-    df[f'Z_{m}'] = (df[m] - mu) / sd if sd != 0 else 0
-for m in ['pedigree_factor','style_factor','age_factor']:
     mu, sd = df[m].mean(), df[m].std(ddof=1)
     df[f'Z_{m}'] = (df[m] - mu) / sd if sd != 0 else 0
 
 # --- 合成偏差値化 ---
 weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff_norm':1,
            'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2}
-total_w = sum(weights.values())
-df['total_z'] = sum(df[k] * w for k, w in weights.items()) / total_w
-zmin, zmax = df['total_z'].min(), df['total_z'].max()
-df['偏差値'] = 30 + (df['total_z'] - zmin) / (zmax - zmin) * 40
+ total_w = sum(weights.values())
+ df['total_z'] = sum(df[k]*w for k,w in weights.items())/total_w
+ zmin, zmax = df['total_z'].min(), df['total_z'].max()
+ df['偏差値'] = 30 + (df['total_z'] - zmin)/(zmax-zmin)*40
 
 # --- 馬別集計 ---
 summary = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
@@ -129,63 +127,4 @@ st.subheader('馬別 評価一覧')
 st.dataframe(summary.sort_values('バランススコア', ascending=False).reset_index(drop=True))
 top10 = summary.sort_values('平均偏差値', ascending=False).head(10)
 st.subheader('偏差値上位10頭')
-st.table(top10[['馬名','平均偏差値']])
-combined = top10.sort_values('バランススコア', ascending=False).head(6)
-st.subheader('偏差値10頭中の安定&調子上位6頭')
-st.table(combined)
-
-# --- 可視化 ---
-import seaborn as sns
-fig, ax = plt.subplots(figsize=(8,6))
-sns.barplot(x='バランススコア', y='馬名', data=combined, palette='viridis', ax=ax)
-st.pyplot(fig)
-fig2, ax2 = plt.subplots(figsize=(10,6))
-df_out = summary.copy()
-x0, y0 = df_out['平均偏差値'].mean(), df_out['安定性'].mean()
-ax2.scatter(df_out['平均偏差値'], df_out['安定性'], color='black')
-ax2.axvline(x0, linestyle='--', color='gray')
-ax2.axhline(y0, linestyle='--', color='gray')
-for _, r in df_out.iterrows(): ax2.text(r['平均偏差値'], r['安定性'], r['馬名'], fontsize=8)
-ax2.set_xlabel('平均偏差値'); ax2.set_ylabel('安定性')
-st.pyplot(fig2)
-
-# --- 予想タグ表示 ---
-st.subheader('本日の予想')
-tag_map={1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
-pred = combined.reset_index(drop=True).copy()
-pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
-st.table(pred[['馬名','タグ','平均偏差値']])
-
-# --- ベット設定 ---
-scenarios = {'通常（堅め）': {'単勝':8,'複勝':22,'ワイド':70,'三連複':0,'三連単マルチ':0},
-             'ちょい余裕': {'単勝':6,'複勝':19,'ワイド':50,'三連複':25,'三連単マルチ':0},
-             '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド':35,'三連複':25,'三連単マルチ':20}}
-@st.cache_data(ttl=600)
-def allocate_budget(budget, percents):
-    raw = {k: budget*v/100 for k,v in percents.items()}
-    rounded = {k: int(v//100)*100 for k,v in raw.items()}
-    diff = budget - sum(rounded.values())
-    if diff: rounded[max(percents, key=lambda k: percents[k])] += diff
-    return rounded
-with st.expander('ベット設定'):
-    scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()))
-    budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000)
-    alloc = allocate_budget(budget, scenarios[scenario])
-    st.write(f"**シナリオ：{scenario}**, **予算：{budget:,}円**")
-    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index(); alloc_df.columns=['券種','金額(円)']
-    st.table(alloc_df)
-    detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist())
-    names = combined['馬名'].tolist(); axis = names[0] if names else ''; others = names[1:]; amt=alloc.get(detail,0)
-    combos=[]
-    if detail=='馬連': from itertools import combinations; combos=[f"{a}-{b}" for a,b in combinations(names,2)]
-    elif detail=='ワイド': from itertools import combinations; combos=[f"{a}-{b}" for a,b in combinations(names,2)]
-    elif detail=='馬単': combos=[f"{axis}->{o}" for o in others]
-    elif detail=='三連複': from itertools import combinations; combos=[f"{axis}-{o1}-{o2}" for o1,o2 in combinations(others,2)]
-    elif detail=='三連単マルチ': from itertools import permutations; combos=["→".join(p) for p in permutations(names,3)]
-    if detail in ['単勝','複勝']: st.write(f"{detail}：軸馬 {axis} に {amt//100*100:,}円")
-    else:
-        if combos:
-            # 均等配分＋端数処理
-            cnt=len(combos); unit=amt//cnt//100*100; rem=amt-unit*cnt; amounts=[unit+100 if i<rem//100 else unit for i in range(cnt)]
-            st.dataframe(pd.DataFrame({'券種':detail,'組合せ':combos,'金額':amounts}))
-        else: st.write('対象の買い目がありません')
+st.table(top10[['馬名','平均との差']] ), etc...
