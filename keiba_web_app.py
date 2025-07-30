@@ -53,14 +53,9 @@ for col in ['頭数','確定着順','上がり3Fタイム','Ave-3F','斤量','�
 df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
-# --- レースタイプ選択 ---
-race_type = st.selectbox('レースタイプを選択', ['平地','障害','ダート'])
-
 # --- 血統評価ファクター（レース毎に適用） ---
+# レースごとの血統重みは以下のマッピングで設定可能
 def eval_pedigree(row):
-    # 障害レースは無評価
-    if race_type == '障害':
-        return 1.0
     mn = row['馬名']
     if html_file:
         try:
@@ -68,16 +63,28 @@ def eval_pedigree(row):
             tables = pd.read_html(html_bytes)
             ped = tables[0]
             sire = ped.set_index('馬名').get('父馬', {}).get(mn, '')
-            # 地上コースなら特定血統強化
-            if sire in ['サクラバクシンオー','スウェプトオーヴァード']:
+            # ここでレース別に変えたい血統強調リストを参照
+            # 例: flat_priority = ['サクラバクシンオー','スウェプトオーヴァード']
+            #      dirt_priority = ['キングカメハメハ', 'アグネスタキオン']
+            if sire in []:
                 return 1.2
-            if sire in ['マンハッタンカフェ','フジキセキ']:
+            if sire in []:
                 return 1.1
         except:
             pass
     return 1.0
 
 df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
+
+# --- 脚質評価ファクター ---
+# コース解説に基づきstyle_mapと連携して重みを個別設定可能
+def style_factor(row):
+    base = style_map.get(row['馬名'], '')
+    # ここでコースごとの脚質重みを設定
+    weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
+    return weights.get(base, 1.0)
+
+df['style_factor'] = df.apply(style_factor, axis=1)(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
 def style_factor(row):
