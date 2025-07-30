@@ -53,8 +53,15 @@ for col in ['頭数','確定着順','上がり3Fタイム','Ave-3F','斤量','�
 df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
-# --- 血統評価ファクター ---
-def eval_pedigree(mn):
+# --- 血統評価ファクター（レース毎に適用） ---
+# 障害レースは無視、それ以外は血統種牡馬に応じて補正
+
+def eval_pedigree(row):
+    cls = row['クラス名']
+    # 障害レースは無評価
+    if '障害' in cls:
+        return 1.0
+    mn = row['馬名']
     if html_file:
         try:
             html_bytes = html_file.read()
@@ -68,7 +75,19 @@ def eval_pedigree(mn):
         except:
             pass
     return 1.0
-df['pedigree_factor'] = df['馬名'].map(eval_pedigree)
+
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
+
+# --- 脚質評価ファクター ---
+# レース条件（コース特性）に合わせて脚質評価を動的に変更可能
+def style_factor(row):
+    cls = row['クラス名']
+    # 直線レース等の条件に応じて重みを調整したい場合はここに追加
+    base = style_map.get(row['馬名'], '')
+    weights = {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}
+    return weights.get(base, 1.0)
+
+df['style_factor'] = df.apply(style_factor, axis=1)
 
 # --- 脚質評価ファクター ---
 def style_factor(mn):
