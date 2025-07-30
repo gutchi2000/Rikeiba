@@ -197,8 +197,18 @@ with st.expander('ベット設定'):
         else:
             combos = []
         if combos:
-            per = amt // len(combos) // 100 * 100
-            dfb = pd.DataFrame({'券種': detail, '組合せ': combos, '金額': [per]*len(combos)})
+            # 均等配分＋余りを先頭組み合わせに振り分け
+            cnt = len(combos)
+            total_amt = alloc.get(detail, 0)
+            unit = total_amt // cnt // 100 * 100
+            spent = unit * cnt
+            rem = total_amt - spent
+            amounts = []
+            for i in range(cnt):
+                add = 100 if rem >= 100 else 0
+                amounts.append(unit + add)
+                rem -= add
+            dfb = pd.DataFrame({'券種': detail, '組合せ': combos, '金額': amounts})
             st.dataframe(dfb)
         else:
             st.write('対象の買い目がありません')
