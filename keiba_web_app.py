@@ -19,11 +19,7 @@ df = pd.read_excel(uploaded_file)
 
 # --- 馬名／年齢／脚質入力テーブル ---
 equine_list = df['馬名'].unique().tolist()
-equine_df = pd.DataFrame({
-    '馬名': equine_list,
-    '年齢': [5] * len(equine_list),
-    '脚質': ['差し'] * len(equine_list)
-})
+equine_df = pd.DataFrame({'馬名': equine_list,'年齢': [5]*len(equine_list),'脚質': ['差し']*len(equine_list)})
 edited = st.data_editor(
     equine_df,
     column_config={
@@ -39,6 +35,10 @@ style_map = dict(zip(edited['馬名'], edited['脚質']))
 # --- 血統HTMLアップロード ---
 html_file = st.file_uploader('血統表をアップロード (HTML)', type=['html'])
 
+# --- ユーザー入力: 強調したい種牡馬リスト ---
+ped_input = st.text_area('強調種牡馬リストを入力 (カンマ区切り)', '')
+priority_sires = [s.strip() for s in ped_input.split(',') if s.strip()]
+
 # --- 必要列チェック ---
 required_cols = ['馬名','レース日','頭数','クラス名','確定着順','上がり3Fタイム',
                  'Ave-3F','馬場状態','斤量','増減','単勝オッズ']
@@ -48,16 +48,12 @@ if any(c not in df.columns for c in required_cols):
 
 # --- 前処理 ---
 df = df[required_cols].copy()
-for col in ['頭数','確定着順','上がり3Fタイム','Ave-3F','斤量','増減','単勝オッズ']:
+for col in required_cols[2:]:
     df[col] = pd.to_numeric(df[col], errors='coerce')
 df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
-# --- 血統評価ファクター（レース毎に適用） ---
-# ユーザー入力: 強調したい種牡馬リスト (カンマ区切り)
-ped_input = st.text_area('強調種牡馬リストを入力 (例: サクラバクシンオー,マンハッタンカフェ)', '')
-priority_sires = [s.strip() for s in ped_input.split(',') if s.strip()]
-
+# --- 血統評価ファクター ---
 def eval_pedigree(row):
     mn = row['馬名']
     if html_file and priority_sires:
@@ -71,23 +67,19 @@ def eval_pedigree(row):
         except:
             pass
     return 1.0
-
-df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)(eval_pedigree, axis=1)
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 
 # --- 脚質評価ファクター ---
-# コース解説に基づき style_map から重みを取得
-
 def style_factor(row):
     base = style_map.get(row['馬名'], '')
     weights = {'逃げ':1.2, '先行':1.1, '差し':1.0, '追込':0.9}
     return weights.get(base, 1.0)
-
 df['style_factor'] = df.apply(style_factor, axis=1)
 
 # --- 年齢評価ファクター ---
-def age_factor(age):
+def age_factor(a):
     peak = 5
-    return 1 + 0.2 * (1 - abs(age - peak) / peak)
+    return 1 + 0.2 * (1 - abs(a - peak) / peak)
 df['年齢'] = df['馬名'].map(lambda m: age_map.get(m,5))
 df['age_factor'] = df['年齢'].apply(age_factor)
 
@@ -95,8 +87,8 @@ df['age_factor'] = df['年齢'].apply(age_factor)
 GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
          '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
 GP_MIN, GP_MAX = 1, 10
-df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['raw'] *= df['pedigree_factor']
+fc = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
+df['raw'] = fc * df['pedigree_factor']
 df['raw_norm'] = (df['raw'] - GP_MIN) / (GP_MAX * df['頭数'] - GP_MIN)
 df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
 df['odds_norm'] = 1 / (1 + np.log10(df['単勝オッズ']))
@@ -130,7 +122,6 @@ summary['バランススコア'] = summary['平均偏差値'] - summary['安定�
 # --- 表示 ---
 st.subheader('馬別 評価一覧')
 st.dataframe(summary.sort_values('バランススコア', ascending=False).reset_index(drop=True))
-# 上位抽出
 top10 = summary.sort_values('平均偏差値', ascending=False).head(10)
 st.subheader('偏差値上位10頭')
 st.table(top10[['馬名','平均偏差値']])
@@ -143,84 +134,53 @@ import seaborn as sns
 fig, ax = plt.subplots(figsize=(8,6))
 sns.barplot(x='バランススコア', y='馬名', data=combined, palette='viridis', ax=ax)
 st.pyplot(fig)
-
-# --- 散布図: 調子 × 安定性 ---
 fig2, ax2 = plt.subplots(figsize=(10,6))
-# mean, std
 df_out = summary.copy()
-x0 = df_out['平均偏差値'].mean()
-y0 = df_out['安定性'].mean()
+x0, y0 = df_out['平均偏差値'].mean(), df_out['安定性'].mean()
 ax2.scatter(df_out['平均偏差値'], df_out['安定性'], color='black')
 ax2.axvline(x0, linestyle='--', color='gray')
 ax2.axhline(y0, linestyle='--', color='gray')
-for _, r in df_out.iterrows():
-    ax2.text(r['平均偏差値'], r['安定性'], r['馬名'], fontsize=8)
-ax2.set_xlabel('平均偏差値')
-ax2.set_ylabel('安定性')
+for _, r in df_out.iterrows(): ax2.text(r['平均偏差値'], r['安定性'], r['馬名'], fontsize=8)
+ax2.set_xlabel('平均偏差値'); ax2.set_ylabel('安定性')
 st.pyplot(fig2)
 
 # --- 予想タグ表示 ---
 st.subheader('本日の予想')
-# タグ付け: 上位6頭に◎〇▲☆△△
-tag_map = {1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
+tag_map={1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
 pred = combined.reset_index(drop=True).copy()
 pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
 st.table(pred[['馬名','タグ','平均偏差値']])
 
 # --- ベット設定 ---
-# 資金配分シナリオ定義
-scenarios = {
-    '通常（堅め）': {'単勝':8,'複勝':22,'ワイド':70,'三連複':0,'三連単マルチ':0},
-    'ちょい余裕':   {'単勝':6,'複勝':19,'ワイド':50,'三連複':25,'三連単マルチ':0},
-    '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド':35,'三連複':25,'三連単マルチ':20},
-}
+scenarios = {'通常（堅め）': {'単勝':8,'複勝':22,'ワイド':70,'三連複':0,'三連単マルチ':0},
+             'ちょい余裕': {'単勝':6,'複勝':19,'ワイド':50,'三連複':25,'三連単マルチ':0},
+             '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド':35,'三連複':25,'三連単マルチ':20}}
 @st.cache_data(ttl=600)
 def allocate_budget(budget, percents):
     raw = {k: budget*v/100 for k,v in percents.items()}
     rounded = {k: int(v//100)*100 for k,v in raw.items()}
     diff = budget - sum(rounded.values())
-    if diff:
-        main = max(percents, key=lambda k: percents[k])
-        rounded[main] += diff
+    if diff: rounded[max(percents, key=lambda k: percents[k])] += diff
     return rounded
-
 with st.expander('ベット設定'):
     scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()))
     budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000)
     alloc = allocate_budget(budget, scenarios[scenario])
     st.write(f"**シナリオ：{scenario}**, **予算：{budget:,}円**")
-    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
-    alloc_df.columns=['券種','金額(円)']
+    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index(); alloc_df.columns=['券種','金額(円)']
     st.table(alloc_df)
-
-    # 組み合わせ設定
     detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist())
-    names = combined['馬名'].tolist()
-    axis = names[0] if names else ''
-    others = names[1:]
-    amt = alloc.get(detail,0)
-    combos = []
-    # ◎軸買い: 小点数固定
-    if detail == '馬連':
-        combos = [f"{axis}-{o}" for o in others]
-    elif detail == 'ワイド':
-        combos = [f"{axis}-{o}" for o in others]
-    elif detail == '馬単':
-        combos = [f"{axis}->{o}" for o in others]
-    elif detail == '三連複':
-        # ◎軸＋他2頭 の組み合わせ
-        from itertools import combinations
-        combos = [f"{axis}-{o1}-{o2}" for o1, o2 in combinations(others, 2)]
-    elif detail == '三連単マルチ':
-        from itertools import permutations
-        combos = ["→".join(p) for p in permutations(names,3)]
-    # 表示
-    if detail in ['単勝','複勝']:
-        st.write(f"{detail}：軸馬 {axis} に {amt//100*100:,}円")
+    names = combined['馬名'].tolist(); axis = names[0] if names else ''; others = names[1:]; amt=alloc.get(detail,0)
+    combos=[]
+    if detail=='馬連': from itertools import combinations; combos=[f"{a}-{b}" for a,b in combinations(names,2)]
+    elif detail=='ワイド': from itertools import combinations; combos=[f"{a}-{b}" for a,b in combinations(names,2)]
+    elif detail=='馬単': combos=[f"{axis}->{o}" for o in others]
+    elif detail=='三連複': from itertools import combinations; combos=[f"{axis}-{o1}-{o2}" for o1,o2 in combinations(others,2)]
+    elif detail=='三連単マルチ': from itertools import permutations; combos=["→".join(p) for p in permutations(names,3)]
+    if detail in ['単勝','複勝']: st.write(f"{detail}：軸馬 {axis} に {amt//100*100:,}円")
     else:
         if combos:
-            unit = (amt//len(combos))//100*100
-            dfb = pd.DataFrame({'券種':detail,'組合せ':combos,'金額':[unit]*len(combos)})
-            st.dataframe(dfb)
-        else:
-            st.write('対象の買い目がありません')
+            # 均等配分＋端数処理
+            cnt=len(combos); unit=amt//cnt//100*100; rem=amt-unit*cnt; amounts=[unit+100 if i<rem//100 else unit for i in range(cnt)]
+            st.dataframe(pd.DataFrame({'券種':detail,'組合せ':combos,'金額':amounts}))
+        else: st.write('対象の買い目がありません')
