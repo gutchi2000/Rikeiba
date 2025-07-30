@@ -159,7 +159,7 @@ pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
 st.table(pred[['馬名','タグ','平均偏差値']])
 
 # --- ベット設定 ---
-# シナリオ定義と配分関数
+# 資金配分シナリオ定義
 scenarios = {
     '通常（堅め）': {'単勝':8,'複勝':22,'ワイド':70,'三連複':0,'三連単マルチ':0},
     'ちょい余裕':   {'単勝':6,'複勝':19,'ワイド':50,'三連複':25,'三連単マルチ':0},
@@ -168,7 +168,7 @@ scenarios = {
 @st.cache_data(ttl=600)
 def allocate_budget(budget, percents):
     raw = {k: budget*v/100 for k,v in percents.items()}
-    rounded = {k: (int(v//100)*100) for k,v in raw.items()}
+    rounded = {k: int(v//100)*100 for k,v in raw.items()}
     diff = budget - sum(rounded.values())
     if diff:
         main = max(percents, key=lambda k: percents[k])
@@ -190,28 +190,30 @@ with st.expander('ベット設定'):
     axis = names[0] if names else ''
     others = names[1:]
     amt = alloc.get(detail,0)
-    combos=[]
-    # ◎軸買い: 単勝,複勝は省略
-    if detail=='馬連':
-        combos=[f"{axis}-{o}" for o in others]
-    elif detail=='ワイド':
-        combos=[f"{axis}-{o}" for o in others]
-    elif detail=='三連複':
+    combos = []
+    # ◎軸買い: 小点数固定
+    if detail == '馬連':
+        combos = [f"{axis}-{o}" for o in others]
+    elif detail == 'ワイド':
+        combos = [f"{axis}-{o}" for o in others]
+    elif detail == '馬単':
+        combos = [f"{axis}->{o}" for o in others]
+    elif detail == '三連複':
         from itertools import combinations
-        if budget>=10000:
-            combos=["-".join(c) for c in combinations(names,3)]
+        if budget >= 10000:
+            combos = ["-".join(c) for c in combinations(names,3)]
         else:
-            combos=[f"{axis}-{o1}-{o2}" for o1,o2 in combinations(others,2)]
-    elif detail=='三連単マルチ':
+            combos = [f"{axis}-{o1}-{o2}" for o1,o2 in combinations(others,2)]
+    elif detail == '三連単マルチ':
         from itertools import permutations
-        combos=["→".join(p) for p in permutations(names,3)]
+        combos = ["→".join(p) for p in permutations(names,3)]
     # 表示
     if detail in ['単勝','複勝']:
-        st.write(f"{detail}：軸馬 {axis} に {(amt//100)*100:,}円")
+        st.write(f"{detail}：軸馬 {axis} に {amt//100*100:,}円")
     else:
         if combos:
-            unit=(amt//len(combos))//100*100
-            dfb=pd.DataFrame({'券種':detail,'組合せ':combos,'金額':[unit]*len(combos)})
+            unit = (amt//len(combos))//100*100
+            dfb = pd.DataFrame({'券種':detail,'組合せ':combos,'金額':[unit]*len(combos)})
             st.dataframe(dfb)
         else:
             st.write('対象の買い目がありません')
