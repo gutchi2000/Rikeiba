@@ -191,4 +191,4 @@ with st.expander('ベット設定'):
             st.dataframe(pd.DataFrame({'券種':detail,'組合せ':combos,'金額':amounts}))
         else:
             st.write('対象の買い目がありません')
-}]}
+
