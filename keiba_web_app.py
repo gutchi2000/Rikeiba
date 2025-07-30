@@ -151,51 +151,47 @@ ax2.set_ylabel('安定性')
 st.pyplot(fig2)
 
 # --- ベット設定 ---
-# 予算配分関数を定義
+# シナリオ別資金配分関数
 @st.cache_data(ttl=600)
 def allocate_budget(budget, percents):
-    raw = {k: budget*v/100 for k,v in percents.items()}
-    rounded = {k: int(v//100)*100 for k,v in raw.items()}
+    raw = {k: budget * v / 100 for k, v in percents.items()}
+    rounded = {k: int(v // 100) * 100 for k, v in raw.items()}
     diff = budget - sum(rounded.values())
     if diff != 0:
-        max_cat = max(percents, key=lambda k: percents[k])
-        rounded[max_cat] += diff
+        # 端数は最も比率が高い項目に追加
+        main = max(percents, key=lambda k: percents[k])
+        rounded[main] += diff
     return rounded
 
 with st.expander('ベット設定'):
     # シナリオ選択
-    scenario = st.selectbox('資金配分シナリオを選択',
-                            ['通常（堅め）','ちょい余裕','余裕（攻め）'], key='scn')
-    budget = st.number_input('総ベット予算 (円)', min_value=1000, step=1000, value=10000, key='bud')
-    st.write(f"### 選択シナリオ：{scenario}、予算：{budget:,}円")
-    # シナリオごとの割合定義
-    scenarios = {
-        '通常（堅め）': {'単勝':8,'複勝':22,'ワイド等':70,'三連複':0,'三連単マルチ':0},
-        'ちょい余裕':   {'単勝':6,'複勝':19,'ワイド等':50,'三連複':25,'三連単マルチ':0},
-        '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド等':35,'三連複':25,'三連単マルチ':20},
-    }
+    scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()), key='scenario')
+    budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000, key='budget')
     # 配分計算
     alloc = allocate_budget(budget, scenarios[scenario])
-    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額(円)'])
-    alloc_df.index.name = '券種'
+    st.write(f"**シナリオ：{scenario}**, **予算：{budget:,}円**")
+    # 配分結果テーブル
+    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
+    alloc_df.columns = ['券種','金額(円)']
     st.table(alloc_df)
-
-    # 券種別詳細表示
-    bt = st.selectbox('券種別詳細', ['単勝','複勝','馬連','ワイド','三連複','三連単'], key='bt2')
-    axis = combined['馬名'].iloc[0] if not combined.empty else df['馬名'].iloc[0]
-    if bt in ['単勝','複勝']:
-        amt = alloc.get(bt, 0)
-        st.write(f"{bt} {axis} に {amt:,} 円")
+    # 詳細買い目
+    detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist(), key='detail')
+    amt = alloc.get(detail, 0)
+    if detail in ['単勝','複勝']:
+        st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
     else:
+        # 組み合わせ生成
         names = combined['馬名'].tolist()
-        if bt in ['馬連','ワイド']:
+        combos = []
+        if detail in ['馬連','ワイド']:
             combos = [f"{names[0]}-{n}" for n in names[1:]]
-        elif bt == '三連複':
+        elif detail == '三連複':
             combos = ["-".join(sorted([names[0], b, c])) for b in names[1:3] for c in names[3:]]
         else:  # 三連単
             combos = [f"{names[0]}→{i}→{j}" for i in names[1:4] for j in names[1:4] if i != j]
         if combos:
-            amt_each = alloc.get(bt,0) // len(combos) // 100 * 100
-            st.dataframe(pd.DataFrame({'券種':[bt]*len(combos),'組合せ':combos,'金額':[amt_each]*len(combos)}))
+            per = amt // len(combos) // 100 * 100
+            dfb = pd.DataFrame({'券種': detail, '組合せ': combos, '金額': [per]*len(combos)})
+            st.dataframe(dfb)
         else:
-            st.write('買い目候補がありません')
+            st.write('対象の買い目がありません')
