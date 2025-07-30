@@ -54,8 +54,24 @@ df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
 df.dropna(subset=required_cols, inplace=True)
 
 # --- 血統評価ファクター（レース毎に適用） ---
-# レースごとの血統重みは以下のマッピングで設定可能
+# ユーザー入力: 強調したい種牡馬リスト (カンマ区切り)
+ped_input = st.text_area('強調種牡馬リストを入力 (例: サクラバクシンオー,マンハッタンカフェ)', '')
+priority_sires = [s.strip() for s in ped_input.split(',') if s.strip()]
+
 def eval_pedigree(row):
+    mn = row['馬名']
+    if html_file and priority_sires:
+        try:
+            html_bytes = html_file.read()
+            tables = pd.read_html(html_bytes)
+            ped = tables[0].set_index('馬名')
+            sire = ped.at[mn, '父馬'] if mn in ped.index else ''
+            if sire in priority_sires:
+                return 1.2
+        except:
+            pass
+    return 1.0
+(row):
     mn = row['馬名']
     if html_file:
         try:
