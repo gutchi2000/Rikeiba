@@ -191,10 +191,21 @@ with st.expander('ベット設定'):
     detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist(), key='detail')
     names = combined['馬名'].tolist()
     amt = alloc.get(detail, 0)
-    if detail in ['単勝','複勝']:
-        axis = names[0] if names else ''
-        st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
+    axis = names[0] if names else ''
+    others = names[1:]
+    combos = []
+    # ◎軸買い
+    if detail in ['馬連','ワイド等','馬単','三連複']:
+        from itertools import combinations
+        if detail in ['馬連','ワイド等','馬単']:
+            combos = [f"{axis}-{o}" for o in others]
+        else:  # 三連複
+            combos = [f"{axis}-{o1}-{o2}" for o1, o2 in combinations(others,2)]
+    elif detail == '三連単マルチ':
+        from itertools import permutations
+        combos = ["→".join(p) for p in permutations(names, 3)]
     else:
+        combos = []
         # 組み合わせ生成
         if detail == '馬連':
             from itertools import combinations
@@ -203,10 +214,15 @@ with st.expander('ベット設定'):
             from itertools import combinations
             combos = [f"{a}-{b}" for a,b in combinations(names,2)]
         elif detail == '三連複':
-            from itertools import combinations
-            # C(n,3) 組み合わせ
+        # 予算に応じて買い目点数を切り替え
+        from itertools import combinations
+        if budget >= 10000:
+            # 全頭からの3頭選択 (C(n,3))
             combos = ["-".join(c) for c in combinations(names, 3)]
-        elif detail == '三連単マルチ':
+        else:
+            # ◎軸＋他2頭 (axis combinations)
+            combos = [f"{axis}-{o1}-{o2}" for o1, o2 in combinations(others, 2)]
+    elif detail == '三連単マルチ':
             from itertools import permutations
             # P(n,3) 全順列
             combos = ["→".join(p) for p in permutations(names, 3)]
