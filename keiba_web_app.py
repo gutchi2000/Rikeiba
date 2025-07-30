@@ -128,4 +128,5 @@ st.subheader('馬別 評価一覧')
 st.dataframe(summary.sort_values('バランススコア', ascending=False).reset_index(drop=True))
 top10 = summary.sort_values('平均偏差値', ascending=False).head(10)
 st.subheader('偏差値上位10頭')
-st.table(top10[['馬名','平均との差']] ), etc...
+st.table(top10[['馬名','平均偏差値']])
+# continue remaining display and bet settings as before
