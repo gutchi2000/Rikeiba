@@ -112,7 +112,6 @@ for m in metrics:
 # --- 合成偏差値化 ---
 weights = {'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,'Z_jin_norm':1,'Z_wdiff_norm':1,
            'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2}
-# 総合z計算
 total_w = sum(weights.values())
 df['total_z'] = sum(df[k]*w for k,w in weights.items())/total_w
 zmin, zmax = df['total_z'].min(), df['total_z'].max()
@@ -129,4 +128,67 @@ st.dataframe(summary.sort_values('バランススコア', ascending=False).reset
 top10 = summary.sort_values('平均偏差値', ascending=False).head(10)
 st.subheader('偏差値上位10頭')
 st.table(top10[['馬名','平均偏差値']])
-# continue remaining display and bet settings as before
+combined = summary.sort_values('バランススコア', ascending=False).head(6)
+st.subheader('偏差値10頭中の安定&調子上位6頭')
+st.table(combined)
+
+# --- 可視化 ---
+import seaborn as sns
+fig1, ax1 = plt.subplots(figsize=(8,5))
+sns.barplot(x='バランススコア', y='馬名', data=combined, palette='viridis', ax=ax1)
+st.pyplot(fig1)
+fig2, ax2 = plt.subplots(figsize=(10,6))
+df_out = summary.copy()
+x0, y0 = df_out['平均偏差値'].mean(), df_out['安定性'].mean()
+ax2.scatter(df_out['平均偏差値'], df_out['安定性'], color='black')
+ax2.axvline(x0, linestyle='--', color='gray')
+ax2.axhline(y0, linestyle='--', color='gray')
+for _, r in df_out.iterrows(): ax2.text(r['平均偏差値'], r['安定性'], r['馬名'], fontsize=8)
+ax2.set_xlabel('平均偏差値'); ax2.set_ylabel('安定性')
+st.pyplot(fig2)
+
+# --- 予想タグ表示 ---
+st.subheader('本日の予想')
+tag_map={1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
+pred = combined.reset_index(drop=True).copy()
+pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
+st.table(pred[['馬名','タグ','平均偏差値']])
+
+# --- ベット設定 ---
+scenarios = {'通常（堅め）': {'単勝':8,'複勝':22,'ワイド':70,'三連複':0,'三連単マルチ':0},
+             'ちょい余裕': {'単勝':6,'複勝':19,'ワイド':50,'三連複':25,'三連単マルチ':0},
+             '余裕（攻め）': {'単勝':5,'複勝':15,'ワイド':35,'三連複':25,'三連単マルチ':20}}
+@st.cache_data(ttl=600)
+def allocate_budget(budget, percents):
+    raw = {k: budget*v/100 for k,v in percents.items()}
+    rounded = {k: int(v//100)*100 for k,v in raw.items()}
+    diff = budget - sum(rounded.values())
+    if diff:
+        rounded[max(percents, key=lambda k: percents[k])] += diff
+    return rounded
+with st.expander('ベット設定'):
+    scenario = st.selectbox('資金配分シナリオ', list(scenarios.keys()))
+    budget = st.number_input('予算 (円)', min_value=1000, step=1000, value=10000)
+    alloc = allocate_budget(budget, scenarios[scenario])
+    st.write(f"**シナリオ：{scenario}**, **予算：{budget:,}円**")
+    alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
+    alloc_df.columns=['券種','金額(円)']
+    st.table(alloc_df)
+    detail = st.selectbox('券種別詳細', alloc_df['券種'].tolist())
+    names = combined['馬名'].tolist(); axis = names[0] if names else '';
+    amt=alloc.get(detail,0)
+    if detail in ['単勝','複勝']:
+        st.write(f"{detail}：軸馬 {axis} に {amt//100*100:,}円")
+    else:
+        if detail=='馬連': combos=[f"{a}-{b}" for a,b in combinations(names,2)]
+        elif detail=='ワイド': combos=[f"{a}-{b}" for a,b in combinations(names,2)]
+        elif detail=='馬単': combos=[f"{axis}->{o}" for o in names[1:]]
+        elif detail=='三連複': combos=[f"{axis}-{o1}-{o2}" for o1,o2 in combinations(names[1:],2)]
+        elif detail=='三連単マルチ': combos=["→".join(p) for p in permutations(names,3)]
+        if combos:
+            cnt=len(combos); unit=amt//cnt//100*100; rem=amt-unit*cnt
+            amounts=[unit+100 if i<rem//100 else unit for i in range(cnt)]
+            st.dataframe(pd.DataFrame({'券種':detail,'組合せ':combos,'金額':amounts}))
+        else:
+            st.write('対象の買い目がありません')
+}]}
