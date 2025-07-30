@@ -50,11 +50,12 @@ if any(c not in df.columns for c in required_cols):
     st.stop()
 
 # --- 前処理 ---
-df = df[required_cols].copy()
-for col in required_cols[2:]:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
-df['レース日'] = pd.to_datetime(df['レース日'], errors='coerce')
-df.dropna(subset=required_cols, inplace=True)
+# デバッグ: 列名と行数の確認
+df_columns = df.columns.tolist()
+st.write('読み込んだ列:', df_columns)
+st.write(f"読み込んだ行数: {len(df)}")
+# 欠損行を完全削除するとデータが消える可能性があるため、一時的にコメントアウト
+# df.dropna(subset=required_cols, inplace=True)
 
 # --- 血統評価ファクター ---
 ped_df = None
