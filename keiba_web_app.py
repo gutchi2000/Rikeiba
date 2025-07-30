@@ -150,6 +150,14 @@ ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
 st.pyplot(fig2)
 
+# --- 予想タグ表示 ---
+st.subheader('本日の予想')
+# タグ付け: 上位6頭に◎〇▲☆△△
+tag_map = {1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
+pred = combined.reset_index(drop=True).copy()
+pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
+st.table(pred[['馬名','タグ','平均偏差値']])
+
 # --- ベット設定 ---
 # 資金配分シナリオ定義
 scenarios = {
