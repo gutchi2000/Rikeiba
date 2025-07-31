@@ -31,6 +31,12 @@ winter_weight = st.sidebar.number_input('冬の重み', min_value=0.0, value=0.9
 
 st.sidebar.subheader('4. 斤量の重み (Z_斤量正規化)')
 w_jin = st.sidebar.number_input('斤量重み(w_jin)', min_value=0.0, value=1.0, step=0.1)
+# ヒント: 斤量影響度の調整
+with st.sidebar.expander('ヒント: 斤量の重みについて'):
+    st.write(
+        'w_jin を大きくすると斤量による影響度が強まり、'
+        '小さくすると脚質・四季・血統などの他ファクター比重が高まります。'
+    )
 
 # --- Excel アップロード ---
 uploaded_file = st.file_uploader('成績＆馬情報データをアップロード (Excel)', type=['xlsx'])
