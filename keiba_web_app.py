@@ -34,11 +34,11 @@ if not uploaded:
     st.stop()
 xls = pd.ExcelFile(uploaded)
 
-# 成績シート
+# 成績シート読み込み
 df = xls.parse(0, parse_dates=['レース日'])
 df['馬名'] = df['馬名'].astype(str).str.strip()
 
-# 馬情報シート（キーワード検出＋リネーム）
+# 馬情報シート読み込み＋動的リネーム
 stats = xls.parse(1, header=1)
 keys = ['馬名','性別','年齢','ベストタイム']
 col_map = {}
@@ -48,20 +48,28 @@ for key in keys:
             col_map[col] = key
             break
 stats = stats.rename(columns=col_map)
+
+# 存在しない列は NaN で追加
 for key in keys:
-    stats.setdefault(key, np.nan)
+    if key not in stats.columns:
+        stats[key] = np.nan
+
 stats = stats[keys].drop_duplicates('馬名')
 stats['馬名'] = stats['馬名'].astype(str).str.strip()
 
-# ベストタイム→数値
+# ベストタイム→数値化
 stats['best_dist_time'] = pd.to_numeric(
     stats['ベストタイム'].replace({'(未)': np.nan}), errors='coerce'
 )
 stats['best_dist_time'].fillna(stats['best_dist_time'].max(), inplace=True)
 
-df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
+# 成績データとマージ
+df = df.merge(
+    stats[['馬名','性別','年齢','best_dist_time']],
+    on='馬名', how='left'
+)
 
-# 脚質＆斤量入力
+# 脚質＆本斤量入力
 equines = df['馬名'].unique()
 inp = pd.DataFrame({
     '馬名': equines,
@@ -79,17 +87,20 @@ edited = st.data_editor(
 edited['馬名'] = edited['馬名'].astype(str).str.strip()
 df = df.merge(edited, on='馬名', how='left').rename(columns={'本斤量':'today_weight'})
 
-# 血統表＆優先種牡馬
+# 血統表＆強調種牡馬
 html = st.file_uploader('血統表(HTML)', type='html')
 ped = None
 if html:
-    try: ped = pd.read_html(html.read())[0].set_index('馬名')
-    except: ped = None
-priority = [s.strip() for s in st.text_area('強調種牡馬(カンマ)').split(',') if s.strip()]
+    try:
+        ped = pd.read_html(html.read())[0].set_index('馬名')
+    except:
+        ped = None
+priority = [s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()]
 
 # ファクター関数
 def ped_factor(r):
-    if ped is None or r['馬名'] not in ped.index: return 1.0
+    if ped is None or r['馬名'] not in ped.index:
+        return 1.0
     return 1.2 if ped.at[r['馬名'],'父馬'] in priority else 1.0
 
 def style_f(s): return {'逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w}.get(s,1.0)
@@ -99,39 +110,35 @@ def sea_f(dt):
     m=dt.month
     return spring_w if m in [3,4,5] else summer_w if m in [6,7,8] else autumn_w if m in [9,10,11] else winter_w
 
-# 正規化＆Z化
-tmin,tmax = df['best_dist_time'].min(), df['best_dist_time'].max()
-df['dist_n'] = (tmax - df['best_dist_time'])/(tmax-tmin)
-mu,sd      = df['dist_n'].mean(), df['dist_n'].std(ddof=1)
-df['Z_dist_n'] = (df['dist_n']-mu)/sd if sd else 0
+# 正規化＆Zスコア化
+tmin, tmax = df['best_dist_time'].min(), df['best_dist_time'].max()
+df['dist_n'] = (tmax - df['best_dist_time'])/(tmax - tmin)
+mu, sd      = df['dist_n'].mean(), df['dist_n'].std(ddof=1)
+df['Z_dist_n'] = (df['dist_n'] - mu)/sd if sd else 0
 
-df['ped_f']   = df.apply(ped_factor,axis=1)
+df['ped_f']   = df.apply(ped_factor, axis=1)
 df['style_f'] = df['脚質'].map(style_f)
 df['age_f']   = df['年齢'].map(age_f)
 df['sex_f']   = df['性別'].map(sex_f)
 df['sea_f']   = df['レース日'].map(sea_f)
 
 GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,'3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
-df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']),axis=1)
-df['raw'] *= df['ped_f']*df['style_f']*df['age_f']*df['sex_f']*df['sea_f']
+df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
+df['raw'] *= df['ped_f'] * df['style_f'] * df['age_f'] * df['sex_f'] * df['sea_f']
 
-jmax,jmin = df['斤量'].max(), df['斤量'].min()
+jmax, jmin = df['斤量'].max(), df['斤量'].min()
 df['up3_n']   = df['Ave-3F']/df['上がり3Fタイム']
 df['odds_n']  = 1/(1+np.log10(df['単勝オッズ']))
-df['jin_n']   = (jmax-df['斤量'])/(jmax-jmin)
-df['today_n'] = (jmax-df['today_weight'])/(jmax-jmin)
+df['jin_n']   = (jmax - df['斤量'])/(jmax - jmin)
+df['today_n'] = (jmax - df['today_weight'])/(jmax - jmin)
 wmean        = df['増減'].abs().mean()
-df['wd_n']   = 1 - df['増減'].abs()/wmean
+df['wd_n']    = 1 - df['増減'].abs()/wmean
 
 metrics = ['raw','up3_n','odds_n','jin_n','today_n','dist_n','wd_n','ped_f','style_f','age_f','sex_f','sea_f']
 for m in metrics:
-    mu,sd = df[m].mean(), df[m].std(ddof=1)
-    df[f'Z_{m}'] = (df[m]-mu)/sd if sd else 0
-    # NaN→0 フォールバック
+    mu, sd = df[m].mean(), df[m].std(ddof=1)
+    df[f'Z_{m}'] = (df[m] - mu)/sd if sd else 0
     df[f'Z_{m}'] = df[f'Z_{m}'].fillna(0)
-
-# デバッグ：Z列サンプル
-st.write("▶ Zスコア sample", df[['馬名'] + [f'Z_{m}' for m in metrics]].head())
 
 # 合成スコア
 weights = {
@@ -140,30 +147,26 @@ weights = {
     'Z_dist_n':w_best,'Z_wd_n':1,
     'Z_ped_f':3,'Z_age_f':2,'Z_style_f':2,'Z_sea_f':2
 }
-# 合成前に必ず全キー存在＆NaNチェック
 for k in weights:
     df[k] = df.get(k, 0).fillna(0)
 
 df['total_z'] = sum(df[k]*w for k,w in weights.items()) / sum(weights.values())
-
-# デバッグ：total_z ユニーク値
-st.write("▶ total_z unique", sorted(df['total_z'].unique())[:10])
 
 # 馬別集計＆偏差値化
 summary = df.groupby('馬名')['total_z'].agg(['mean','std']).reset_index()
 summary.columns = ['馬名','mean_z','std_z']
 summary['std_z'].fillna(0, inplace=True)
 mz, MZ = summary['mean_z'].min(), summary['mean_z'].max()
-if MZ>mz:
-    summary['偏差値'] = 30 + (summary['mean_z']-mz)/(MZ-mz)*40
+if MZ > mz:
+    summary['偏差値'] = 30 + (summary['mean_z'] - mz)/(MZ - mz)*40
 else:
     summary['偏差値'] = 50
 summary['安定性'] = summary['std_z']
 summary['バランス'] = summary['偏差値'] - summary['安定性']
 
-# 最終表示
+# 表示
 st.subheader('本日の馬別評価')
-st.dataframe(summary.sort_values('バランス',ascending=False).reset_index(drop=True))
+st.dataframe(summary.sort_values('バランス', ascending=False).reset_index(drop=True))
 
 st.subheader('上位6頭')
 st.table(summary.nlargest(6,'偏差値')[['馬名','偏差値']])
