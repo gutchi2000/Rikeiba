@@ -152,4 +152,87 @@ summary.columns=['馬名','平均偏差値','安定性']
 summary['バランススコア']=summary['平均偏差値']-summary['安定性']
 
 st.subheader('馬別 評価一覧')
-...
+st.dataframe(summary.sort_values('バランススコア',ascending=False).reset_index(drop=True))
+
+st.subheader('偏差値上位10頭')
+top10 = summary.sort_values('平均偏差値',ascending=False).head(10)
+st.table(top10[['馬名','平均偏差値']])
+
+st.subheader('本日の予想6頭')
+combined = summary.sort_values('バランススコア',ascending=False).head(6)
+st.table(combined)
+
+# 可視化: バランススコア棒グラフ
+fig1, ax1 = plt.subplots(figsize=(8,5))
+ax1.barh(combined['馬名'], combined['バランススコア'])
+ax1.invert_yaxis()
+ax1.set_xlabel('バランススコア')
+st.pyplot(fig1)
+
+# 散布図: 平均偏差値 vs 安定性
+fig2, ax2 = plt.subplots(figsize=(10,6))
+ax2.scatter(summary['平均偏差値'], summary['安定性'], alpha=0.7)
+ax2.axvline(summary['平均偏差値'].mean(), linestyle='--')
+ax2.axhline(summary['安定性'].mean(), linestyle='--')
+for _, row in summary.iterrows():
+    ax2.text(row['平均偏差値'], row['安定性'], row['馬名'], fontsize=8)
+ax2.set_xlabel('平均偏差値')
+ax2.set_ylabel('安定性')
+st.pyplot(fig2)
+
+# 予想タグ
+st.subheader('本日の予想タグ')
+tag_map = {1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
+pred = combined.reset_index(drop=True).copy()
+pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1,''))
+st.table(pred[['馬名','タグ','平均偏差値']])
+
+# ベット設定
+st.subheader('ベット設定')
+scenarios = {
+    '通常':{'単勝':8,'複勝':22,'ワイド':40,'馬連':20,'三連複':0,'三連単':0},
+    '攻め':{'単勝':5,'複勝':15,'ワイド':30,'馬連':20,'三連複':15,'三連単':15}
+}
+scenario = st.selectbox('シナリオ', list(scenarios.keys()))
+budget = st.number_input('予算 (円)', min_value=1000, value=10000, step=1000)
+
+@st.cache_data
+def allocate_budget(budget, perc):
+    raw = {k:budget*v/100 for k,v in perc.items()}
+    rnd = {k:int(v//100)*100 for k,v in raw.items()}
+    diff = budget - sum(rnd.values())
+    if diff>0:
+        rnd[max(perc, key=perc.get)] += diff
+    return rnd
+
+alloc = allocate_budget(budget, scenarios[scenario])
+alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
+alloc_df.columns = ['券種','金額(円)']
+st.table(alloc_df)
+
+detail = st.selectbox('詳細表示', alloc_df['券種'])
+names = combined['馬名'].tolist()
+axis = names[0] if names else ''
+amt = alloc.get(detail, 0)
+if detail in ['単勝','複勝']:
+    st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
+else:
+    if detail in ['馬連','ワイド']:
+        combos = [f"{a}-{b}" for a,b in combinations(names,2)]
+    elif detail=='馬連':
+        combos = [f"{axis}->{o}" for o in names if o!=axis]
+    elif detail=='三連複':
+        combos = [f"{axis}-{o1}-{o2}" for o1,o2 in combinations(names[1:],2)]
+    elif detail=='三連単':
+        combos = ["->".join(p) for p in permutations(names,3)]
+    else:
+        combos = []
+    cnt = len(combos)
+    if cnt>0:
+        unit = (amt//cnt)//100*100
+        rem = amt - unit*cnt
+        amounts = [unit+100 if i<rem//100 else unit for i in range(cnt)]
+        bet_df = pd.DataFrame({'組合せ':combos,'金額':amounts})
+        st.dataframe(bet_df)
+    else:
+        st.write('対象の買い目がありません')
