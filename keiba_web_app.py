@@ -69,7 +69,8 @@ def age_factor(age):
     return 1 + 0.2*(1 - abs(age-peak)/peak)
 
 def sex_factor(sex):
-    return {'牡':male_weight,'牝':female_weight,'せん':gelding_weight}.get(sex, 1.0)
+    # 性別: 牡, 牝, セ の略記に対応
+    return {'牡': male_weight, '牝': female_weight, 'セ': gelding_weight}.get(sex, 1.0)
 
 def summer_factor(date):
     return summer_weight if date.month in [6,7,8] else 1.0
