@@ -46,30 +46,23 @@ xls = pd.ExcelFile(uploaded_file)
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 # 2枚目: 馬情報 (header=0 行目を列名として取得)
 stats = xls.parse(sheet_name=1, header=0)
-# 列名リネーム: Unnamed列を日本語に
-# 最後の列（index -1）がベストタイムと仮定
-last_col = stats.columns[-1]
+# リネーム: Unnamed列を日本語に
+cols = list(stats.columns)
 stats.rename(columns={
-    'Unnamed: 0':'馬名',
-    'Unnamed: 1':'性別',
-    'Unnamed: 2':'年齢',
-    last_col:'ベストタイム'
+    cols[0]:'馬名',
+    cols[1]:'性別',
+    cols[2]:'年齢',
+    cols[-1]:'ベストタイム'
 }, inplace=True)
 # 必要列抽出
 stats = stats[['馬名','性別','年齢','ベストタイム']]
 # ベストタイム文字列 '(未)' を NaN、数値化
-stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'\(未\)':np.nan}), errors='coerce')
+stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'(未)':np.nan}), errors='coerce')
+# 未出走馬は最大タイムで補完
+tmax = stats['best_dist_time'].max()
+stats['best_dist_time'].fillna(tmax, inplace=True)
 # 結合
 df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
-stats = stats[['馬名','性別','年齢','ベストタイム']]
-# ベストタイム文字列 "(未)" を NaN、数値化
-stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'\(未\)':np.nan}), errors='coerce')
-# 結合
-df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
-
-# --- 欠損ベストタイム (未出走) を最大タイムで補完 --- (未出走) を最大タイムで補完 ---
-tmax = df['best_dist_time'].max()
-df['best_dist_time'] = df['best_dist_time'].fillna(tmax)
 
 # --- 脚質 & 本斤量入力 ---
 equine_list = df['馬名'].unique().tolist()
