@@ -170,16 +170,19 @@ st.dataframe(summary.sort_values('バランス',ascending=False).reset_index(dro
 st.subheader("偏差値上位10頭")
 st.table(summary.nlargest(10,'偏差値')[['馬名','偏差値']])
 
+# ── 本日の予想6頭＋印付け ──
 st.subheader("本日の予想6頭（最終バランス順）")
 top6 = summary.nlargest(6,'バランス').reset_index(drop=True)
-st.table(top6[['馬名','偏差値','RawBase偏差値','std_z','バランス']])
+tag_map = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
+top6['印'] = top6.index.to_series().map(lambda i: tag_map[i+1])
+st.table(top6[['印','馬名','偏差値','RawBase偏差値','std_z','バランス']])
 
 # ── グラフ ──
 col3, col4 = st.columns(2)
 with col3:
     st.markdown("**バランススコア棒グラフ**")
     fig1, ax1 = plt.subplots(figsize=(6,4))
-    ax1.barh(top6['馬名'], top6['バランス'])
+    ax1.barh(top6['印'] + ' ' + top6['馬名'], top6['バランス'])
     ax1.invert_yaxis()
     ax1.set_xlabel('最終バランス')
     st.pyplot(fig1)
