@@ -12,11 +12,22 @@ plt.rcParams['font.family'] = font_manager.FontProperties(fname='ipaexg.ttf').ge
 st.title('競馬予想アプリ（完成版）')
 
 # サイドバー設定
-st.sidebar.subheader('パラメータ設定')
-male_weight = st.sidebar.number_input('牡の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
-female_weight = st.sidebar.number_input('牝の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
-gelding_weight = st.sidebar.number_input('せんの重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
-summer_weight = st.sidebar.number_input('夏季重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
+st.sidebar.subheader('1. 性別の重み')
+male_weight    = st.sidebar.number_input('牡の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
+female_weight  = st.sidebar.number_input('牝の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
+gelding_weight = st.sidebar.number_input('セの重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
+
+st.sidebar.subheader('2. 脚質の重み')
+nige_weight    = st.sidebar.number_input('逃げの重み', min_value=0.0, value=1.2, step=0.01, format="%.2f")
+senko_weight   = st.sidebar.number_input('先行の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
+sashi_weight   = st.sidebar.number_input('差しの重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
+ooka_weight   = st.sidebar.number_input('追込の重み', min_value=0.0, value=0.9, step=0.01, format="%.2f")
+
+st.sidebar.subheader('3. 四季の重み')
+spring_weight  = st.sidebar.number_input('春の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
+summer_weight  = st.sidebar.number_input('夏の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
+autumn_weight  = st.sidebar.number_input('秋の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
+winter_weight  = st.sidebar.number_input('冬の重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
 
 # --- データアップロード: レース成績シートと馬情報シート ---
 # Excelファイルの1枚目を成績、2枚目を馬情報として読み込む
@@ -94,7 +105,14 @@ def eval_pedigree(row):
     return 1.2 if sire in priority_sires else 1.0
 
 def style_factor(row):
-    return {'逃げ':1.2,'先行':1.1,'差し':1.0,'追込':0.9}.get(style_map.get(row['馬名'], ''), 1.0)
+    # 脚質重みをサイドバー設定から取得
+    w = {
+        '逃げ': nige_weight,
+        '先行': senko_weight,
+        '差し': sashi_weight,
+        '追込': ooka_weight
+    }
+    return w.get(style_map.get(row['馬名'], ''), 1.0)
 
 def age_factor(age):
     peak = 5
