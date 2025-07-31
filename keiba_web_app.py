@@ -31,6 +31,11 @@ winter_weight = st.sidebar.number_input('冬の重み', min_value=0.0, value=0.9
 
 st.sidebar.subheader('4. 斤量の重み (Z_斤量正規化)')
 w_jin = st.sidebar.number_input('斤量重み(w_jin)', min_value=0.0, value=1.0, step=0.1)
+# 距離ベストタイム重み
+st.sidebar.subheader('5. 距離ベストタイム重み')
+w_best_dist = st.sidebar.number_input('距離ベストタイム重み(w_best_dist)', min_value=0.0, value=1.0, step=0.1)
+
+# --- Excel アップロード ---(w_jin)', min_value=0.0, value=1.0, step=0.1)
 # ヒント: 斤量影響度の調整
 with st.sidebar.expander('ヒント: 斤量の重みについて'):
     st.write(
@@ -51,12 +56,23 @@ df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 stats = xls.parse(sheet_name=1, header=1)
 if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
     stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
-required = ['馬名','性別','年齢']
+# 馬情報シートにベストタイム列（隣列）がある前提
+required = ['馬名','性別','年齢','ベストタイム']
 if not all(col in stats.columns for col in required):
     st.error(f"馬情報シートに必要列がありません: {stats.columns.tolist()}")
     st.stop()
-stats = stats[required]
+# ベストタイム列を数値化 ("(未)" は NaN)
+stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'], errors='coerce')
+stats = stats[['馬名','性別','年齢','best_dist_time']]
+# 成績データに結合
 df = df.merge(stats, on='馬名', how='left')
+
+# --- 欠損ベストタイム (未出走) を最大タイムで埋める ---
+# NaN を最遅タイムで補完
+tmax = df['best_dist_time'].max()
+df['best_dist_time'] = df['best_dist_time'].fillna(tmax)
+
+# --- 脚質 & 本斤量入力 ---
 
 # --- 脚質 & 本斤量入力 ---
 equine_list = df['馬名'].unique().tolist()
@@ -92,6 +108,13 @@ if html_file:
 # --- 強調種牡馬リスト ---
 ped_input = st.text_area('強調種牡馬リスト (カンマ区切り)', '')
 priority_sires = [s.strip() for s in ped_input.split(',') if s.strip()]
+
+# --- 欠損ベストタイム (未出走) を最大タイムで埋める ---
+# statsからbest_dist_timeを結合済みのdfにマージ後
+# tmax 計算
+tmax = stats['best_dist_time'].max()
+# dfマージ後欠損埋め用 (dfにbest_dist_timeがあると仮定)
+df['best_dist_time'] = df['best_dist_time'].fillna(tmax)
 
 # --- ファクター計算関数 ---
 def eval_pedigree(row):
