@@ -44,17 +44,20 @@ if not uploaded_file:
 xls = pd.ExcelFile(uploaded_file)
 # 1枚目: 成績データ
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
-# 2枚目: 馬情報 (header=0 行目を列名として取得)
-stats = xls.parse(sheet_name=1, header=0)
-# リネーム: Unnamed列を日本語に
+# 2枚目: 馬情報 (header=1 行目を列名として取得)
+stats = xls.parse(sheet_name=1, header=1)
+# 列名リネーム: Unnamed列を日本語に
 cols = list(stats.columns)
 stats.rename(columns={
-    cols[0]:'馬名',
-    cols[1]:'性別',
-    cols[2]:'年齢',
-    cols[-1]:'ベストタイム'
+    cols[0]: '馬名',
+    cols[1]: '性別',
+    cols[2]: '年齢',
+    cols[-1]: 'ベストタイム'
 }, inplace=True)
 # 必要列抽出
+stats = stats[['馬名','性別','年齢','ベストタイム']]
+# デバッグ: statsの先頭を表示
+st.write('馬情報シートプレビュー:', stats.head())
 stats = stats[['馬名','性別','年齢','ベストタイム']]
 # ベストタイム文字列 '(未)' を NaN、数値化
 stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'(未)':np.nan}), errors='coerce')
