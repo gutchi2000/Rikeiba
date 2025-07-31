@@ -18,11 +18,15 @@ female_weight = st.sidebar.number_input('牝の重み', min_value=0.0, value=1.0
 gelding_weight = st.sidebar.number_input('せんの重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
 summer_weight = st.sidebar.number_input('夏季重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
 
-# --- データアップロード ---
-uploaded_file = st.file_uploader('成績データをアップロード (Excel)', type=['xlsx'])
-if not uploaded_file:
-    st.stop()
-df = pd.read_excel(uploaded_file, parse_dates=['レース日'])
+# --- データアップロード: レース成績シートと馬情報シート ---
+# Excelファイルの1枚目を成績、2枚目を馬情報として読み込む
+xls = pd.ExcelFile(uploaded_file)
+# 成績データ (1枚目)
+df = xls.parse(sheet_name=0, parse_dates=['レース日'])
+# 馬情報 (2枚目): 馬名, 性別, 年齢 のみ使用
+stats = xls.parse(sheet_name=1, usecols=['馬名','性別','年齢'])
+# 馬情報を成績データに結合
+df = df.merge(stats, on='馬名', how='left')
 
 # --- 脚質入力テーブル ---
 equine_list = df['馬名'].unique().tolist()
