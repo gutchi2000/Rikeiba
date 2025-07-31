@@ -36,9 +36,15 @@ else:
     # 列名が異なる場合は先頭3列を馬名, 性別, 年齢と仮定
     stats = stats_all.iloc[:, :3]
     stats.columns = ['馬名','性別','年齢']
-# 馬情報を成績データに結合
-df = df.merge(stats, on='馬名', how='left')
-df = df.merge(stats, on='馬名', how='left')
+# 馬情報を成績データに結合 (一度だけ)
+# デバッグ: 馬情報シートのカラム確認
+st.write('馬情報シートのカラム:', stats_all.columns.tolist())
+# 必要な列名を確認後、merge
+if '馬名' in stats.columns and '性別' in stats.columns and '年齢' in stats.columns:
+    df = df.merge(stats, on='馬名', how='left')
+else:
+    st.error("馬情報シートに '馬名','性別','年齢' 列が見つかりませんでした。シートを確認してください。")
+    st.stop()
 
 # --- 脚質入力テーブル ---
 equine_list = df['馬名'].unique().tolist()
