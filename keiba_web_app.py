@@ -31,18 +31,17 @@ with st.sidebar:
     winter_w  = st.number_input('冬の重み',    0.0, 2.0, 0.95,0.01)
     w_jin     = st.number_input('斤量重み',       0.0, 1.0, 1.0, 0.1)
     w_best    = st.number_input('距離ベスト重み', 0.0, 1.0, 1.0, 0.1)
-    # 最終スコア重み
+
     st.subheader("最終スコア重み")
-    weight_z        = st.slider('偏差値 の重み',         0.0, 1.0, 0.7, 0.05)
-    weight_rb       = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.2, 0.05)
-    weight_pedigree = st.slider('血統偏差値 の重み',    0.0, 1.0, 0.1, 0.05)
+    weight_z  = st.slider('偏差値 の重み',        0.0, 1.0, 0.7, 0.05)
+    weight_rb = st.slider('RawBase偏差値 の重み', 0.0, 1.0, 0.3, 0.05)
 
 # ── データアップロード ──
 st.subheader("データアップロード")
-col1, col2 = st.columns(2)
-with col1:
+c1, c2 = st.columns(2)
+with c1:
     upload_xlsx = st.file_uploader('成績＆馬情報 (XLSX)', type='xlsx')
-with col2:
+with c2:
     upload_html = st.file_uploader('血統表 (HTML)', type='html')
 if not upload_xlsx:
     st.stop()
@@ -78,16 +77,13 @@ df = df.merge(
     on='馬名', how='left'
 )
 
-# ── 血統表読み込み ──
+# ── 血統表読み込み（補正は変わらず1.0/1.2のロジックがあっても無視します） ──
 ped = None
 if upload_html:
     try:
         ped = pd.read_html(upload_html.read())[0].set_index('馬名')
     except:
         ped = None
-highlight_sires = [
-    s.strip() for s in st.text_area('強調種牡馬 (カンマ区切り)').split(',') if s.strip()
-]
 
 # ── 脚質・斤量設定 ──
 st.subheader("脚質・本斤量設定")
@@ -100,21 +96,27 @@ inp = pd.DataFrame({
 edited = st.data_editor(
     inp,
     column_config={
-        '脚質': st.column_config.SelectboxColumn(label='脚質', options=['逃げ','先行','差し','追込']),
-        '本斤量': st.column_config.NumberColumn(label='本斤量', min_value=45, max_value=60, step=1)
+        '脚質': st.column_config.SelectboxColumn(
+            label='脚質', options=['逃げ','先行','差し','追込']
+        ),
+        '本斤量': st.column_config.NumberColumn(
+            label='本斤量', min_value=45, max_value=60, step=1
+        )
     },
     use_container_width=True
 )
 edited['馬名'] = edited['馬名'].astype(str).str.strip()
 df = df.merge(edited, on='馬名', how='left').rename(columns={'本斤量':'today_weight'})
 
-# ── ファクター関数 ──
+# ── ファクター関数（血統補正ロジックは残しますが最終評価には含めません） ──
 def ped_factor(r):
     if ped is None or r['馬名'] not in ped.index:
         return 1.0
-    return 1.2 if ped.at[r['馬名'],'父馬'] in highlight_sires else 1.0
+    return 1.2 if ped.at[r['馬名'],'父馬'] in [] else 1.0  # リスト空で作用せず
 
-def style_f(s): return {'逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w}.get(s,1.0)
+def style_f(s): return {
+    '逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w
+}.get(s,1.0)
 def age_f(a):   return 1 + 0.2*(1-abs(a-5)/5)
 def sex_f(sx):  return {'牡':male_w,'牝':female_w,'セ':gelding_w}.get(sx,1.0)
 def sea_f(dt):
@@ -135,7 +137,6 @@ df['RawBase'] = df.apply(
 )
 df['Raw'] = (
     df['RawBase']
-    * df.apply(ped_factor,axis=1)
     * df['脚質'].map(style_f)
     * df['年齢'].map(age_f)
     * df['性別'].map(sex_f)
@@ -155,9 +156,6 @@ df['wd_n']    = 1 - df['増減'].abs()/wabs
 df['raw_n']   = (df['Raw'] - 1)/(10*df['頭数'] - 1)
 
 metrics = ['raw_n','up3_n','odds_n','jin_n','today_n','dist_n','wd_n']
-df['ped_f'] = df.apply(ped_factor, axis=1)
-metrics.append('ped_f')
-
 for m in metrics:
     mu, sd = df[m].mean(), df[m].std(ddof=1)
     df[f'Z_{m}'] = ((df[m] - mu)/sd).fillna(0) if sd else 0
@@ -166,38 +164,29 @@ for m in metrics:
 comp_w = {
     'Z_raw_n':8, 'Z_up3_n':2, 'Z_odds_n':1,
     'Z_jin_n':w_jin, 'Z_today_n':w_jin,
-    'Z_dist_n':w_best, 'Z_wd_n':1,
-    'Z_ped_f':5
+    'Z_dist_n':w_best, 'Z_wd_n':1
 }
 totw = sum(comp_w.values())
 df['total_z'] = sum(df[k]*w for k,w in comp_w.items())/totw
 
-# ── 馬別集計＆偏差値化＋RawBase偏差値＋血統偏差値 ──
+# ── 馬別集計＆偏差値化＋RawBase偏差値 ──
 summary = df.groupby('馬名').agg(
-    mean_z        = ('total_z','mean'),
-    std_z         = ('total_z','std'),
-    RawBase_mean  = ('RawBase','mean'),
-    Z_ped_f_mean  = ('Z_ped_f','mean')
+    mean_z       = ('total_z','mean'),
+    std_z        = ('total_z','std'),
+    RawBase_mean = ('RawBase','mean')
 ).reset_index()
 summary['std_z'] = summary['std_z'].fillna(0)
 
-# 偏差値化(mean_z→偏差値)
 mz, MZ = summary['mean_z'].min(), summary['mean_z'].max()
 summary['偏差値'] = 30 + (summary['mean_z'] - mz)/(MZ - mz)*40 if MZ>mz else 50
 
-# RawBase_mean を偏差値化
 rb_min, rb_max = summary['RawBase_mean'].min(), summary['RawBase_mean'].max()
 summary['RawBase偏差値'] = 30 + (summary['RawBase_mean'] - rb_min)/(rb_max - rb_min)*40 if rb_max>rb_min else 50
-
-# 血統偏差値(Z_ped_f_mean) を偏差値化
-pd_min, pd_max = summary['Z_ped_f_mean'].min(), summary['Z_ped_f_mean'].max()
-summary['血統偏差値'] = 30 + (summary['Z_ped_f_mean'] - pd_min)/(pd_max - pd_min)*40 if pd_max>pd_min else 50
 
 # ── 最終バランス（パラメータ反映） ──
 summary['バランス'] = (
     weight_z   * summary['偏差値'] +
-    weight_rb  * summary['RawBase偏差値'] +
-    weight_pedigree * summary['血統偏差値'] -
+    weight_rb  * summary['RawBase偏差値'] -
     summary['std_z']
 )
 
@@ -206,7 +195,7 @@ st.subheader("本日の予想6頭")
 top6 = summary.nlargest(6, 'バランス').reset_index(drop=True)
 tag_map = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
 top6['印'] = top6.index.to_series().map(lambda i: tag_map[i+1])
-st.table(top6[['印','馬名','偏差値','RawBase偏差値','血統偏差値','バランス']])
+st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
 
 # ── グラフ ──
 c3, c4 = st.columns(2)
