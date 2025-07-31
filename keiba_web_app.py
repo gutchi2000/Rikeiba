@@ -30,7 +30,7 @@ df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 # 馬情報 (2枚目): 馬名, 性別, 年齢 のみ使用
 stats = xls.parse(sheet_name=1, usecols=['馬名','性別','年齢'])
 # 馬情報を成績データに結合
-df = df.merge(stats, on='馬名', how='left')(stats, on='馬名', how='left')
+df = df.merge(stats, on='馬名', how='left')
 
 # --- 脚質入力テーブル ---
 equine_list = df['馬名'].unique().tolist()
