@@ -28,8 +28,8 @@ equine_list = df['馬名'].unique().tolist()
 equine_df = pd.DataFrame({
     '馬名': equine_list,
     '年齢': [5] * len(equine_list),
-    '脚質': ['差し'] * len(equine_list),
-    '性別': ['牡'] * len(equine_list)
+    '性別': ['牡'] * len(equine_list),
+    '脚質': ['差し'] * len(equine_list)
 })
 edited = st.data_editor(
     equine_df,
