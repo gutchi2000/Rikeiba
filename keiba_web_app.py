@@ -50,7 +50,17 @@ if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
     stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
 # デバッグ: 2枚目シートのカラムを表示
 st.write('馬情報シートのカラム:', stats.columns.tolist())
-# 必要列: 馬名, 性別, 年齢, ベストタイム
+# 馬情報の必須列: 馬名, 性別, 年齢
+required = ['馬名','性別','年齢']
+if not all(col in stats.columns for col in required):
+    st.error(f"馬情報シートに必要列がありません: {stats.columns.tolist()}")
+    st.stop()
+# ベストタイムはシートの最終列と仮定し、数値化: "(未)" は NaN
+best_col = stats.columns[-1]
+stats['best_dist_time'] = pd.to_numeric(stats[best_col], errors='coerce')
+stats = stats[['馬名','性別','年齢','best_dist_time']]
+# 結合
+df = df.merge(stats, on='馬名', how='left')
 required = ['馬名','性別','年齢','ベストタイム']
 if not all(col in stats.columns for col in required):
     st.error(f"馬情報シートに必要列がありません: {stats.columns.tolist()}")
