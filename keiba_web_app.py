@@ -17,7 +17,6 @@ st.title('競馬予想アプリ（完成版）')
 # ── サイドバー：重み設定 ──
 with st.sidebar:
     st.header("重み設定")
-    # 補正系重み
     male_w    = st.number_input('牡の重み',   0.0, 2.0, 1.1, 0.01)
     female_w  = st.number_input('牝の重み',   0.0, 2.0, 1.0, 0.01)
     gelding_w = st.number_input('セの重み',   0.0, 2.0, 0.95,0.01)
@@ -77,13 +76,14 @@ df = df.merge(
     on='馬名', how='left'
 )
 
-# ── 血統表読み込み（補正は変わらず1.0/1.2のロジックがあっても無視します） ──
+# ── 血統表読み込み ──
 ped = None
 if upload_html:
     try:
         ped = pd.read_html(upload_html.read())[0].set_index('馬名')
     except:
         ped = None
+highlight_sires = [s.strip() for s in st.text_area('強調種牡馬 (カンマ区切り)').split(',') if s.strip()]
 
 # ── 脚質・斤量設定 ──
 st.subheader("脚質・本斤量設定")
@@ -96,47 +96,45 @@ inp = pd.DataFrame({
 edited = st.data_editor(
     inp,
     column_config={
-        '脚質': st.column_config.SelectboxColumn(
-            label='脚質', options=['逃げ','先行','差し','追込']
-        ),
-        '本斤量': st.column_config.NumberColumn(
-            label='本斤量', min_value=45, max_value=60, step=1
-        )
+        '脚質': st.column_config.SelectboxColumn(label='脚質', options=['逃げ','先行','差し','追込']),
+        '本斤量': st.column_config.NumberColumn(label='本斤量', min_value=45, max_value=60, step=1)
     },
     use_container_width=True
 )
 edited['馬名'] = edited['馬名'].astype(str).str.strip()
 df = df.merge(edited, on='馬名', how='left').rename(columns={'本斤量':'today_weight'})
 
-# ── ファクター関数（血統補正ロジックは残しますが最終評価には含めません） ──
+# ── ファクター関数 ──
 def ped_factor(r):
     if ped is None or r['馬名'] not in ped.index:
         return 1.0
-    return 1.2 if ped.at[r['馬名'],'父馬'] in [] else 1.0  # リスト空で作用せず
+    return 1.2 if ped.at[r['馬名'],'父馬'] in highlight_sires else 1.0
 
-def style_f(s): return {
-    '逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w
-}.get(s,1.0)
+def style_f(s): return {'逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w}.get(s,1.0)
 def age_f(a):   return 1 + 0.2*(1-abs(a-5)/5)
 def sex_f(sx):  return {'牡':male_w,'牝':female_w,'セ':gelding_w}.get(sx,1.0)
 def sea_f(dt):
     m = dt.month
-    return (spring_w if m in [3,4,5] else
-            summer_w if m in [6,7,8] else
-            autumn_w if m in [9,10,11] else
-            winter_w)
+    return (
+        spring_w if m in [3,4,5] else
+        summer_w if m in [6,7,8] else
+        autumn_w if m in [9,10,11] else
+        winter_w
+    )
 
-# ── 生スコア計算 ──
-GRADE = {
-    'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
-    '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1
-}
+# ── 生スコア計算（非線形グレード強調） ──
+base_grade = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
+              '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
+# 非線形強調版（2乗）
+grade_score = {k:v**2 for k,v in base_grade.items()}
+
 df['RawBase'] = df.apply(
-    lambda r: GRADE.get(r['クラス名'],1) * (r['頭数']+1-r['確定着順']),
+    lambda r: grade_score.get(r['クラス名'],1) * (r['頭数']+1-r['確定着順']),
     axis=1
 )
 df['Raw'] = (
     df['RawBase']
+    * df.apply(ped_factor,axis=1)
     * df['脚質'].map(style_f)
     * df['年齢'].map(age_f)
     * df['性別'].map(sex_f)
