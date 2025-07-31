@@ -41,8 +41,7 @@ if not uploaded_file:
 xls = pd.ExcelFile(uploaded_file)
 # 1枚目: 成績データ
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
- df = xls.parse(sheet_name=0, parse_dates=['レース日'])
-# 2枚目: 馬情報 (header=1行目を無視)
+# 2枚目: 馬情報 (header=1行目を無視): 馬情報 (header=1行目を無視)
 stats = xls.parse(sheet_name=1, header=1)
 if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
     stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
