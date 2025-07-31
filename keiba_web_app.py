@@ -71,6 +71,25 @@ stats['best_dist_time'] = pd.to_numeric(
 )
 df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
 
+# 脚質・本斤量設定
+st.subheader("脚質・本斤量設定")
+equines = df['馬名'].unique()
+inp = pd.DataFrame({
+    '馬名': equines,
+    '脚質': ['差し']*len(equines),
+    '本斤量': [56]*len(equines)
+})
+edited = st.data_editor(
+    inp,
+    column_config={
+        '脚質': st.column_config.SelectboxColumn(label='脚質', options=['逃げ','先行','差し','追込']),
+        '本斤量': st.column_config.NumberColumn(label='本斤量', min_value=45, max_value=60, step=1)
+    },
+    use_container_width=True
+)
+edited['馬名'] = edited['馬名'].astype(str).str.strip()
+df = df.merge(edited, on='馬名', how='left')
+
 # 血統表読み込み
 ped = None
 if upload_html:
