@@ -171,21 +171,9 @@ summary['RawBase偏差値'] = 30+(summary['RB_mean']-rbm)/(rbM-rbm)*40
 # バランス
 summary['バランス'] = weight_z*summary['偏差値']+weight_rb*summary['RawBase偏差値']-summary['std_z']
 
-# --- デバッグ: 重み変動確認用テーブル ---
-debug_list = top6['馬名'].tolist()
-sample = df[df['馬名'].isin(debug_list)].groupby('馬名').first().reset_index()
-sample['Raw_before'] = sample['RawBase'] * 1.0  # 仮にped_factor等を1.0固定する場合
-sample['Raw_after'] = sample['Raw']
-# 正規化例
-rmin, rmax = df['Raw'].min(), df['Raw'].max()
-sample['raw_n'] = (sample['Raw_after'] - rmin) / (rmax - rmin)
-mu, sd = df['raw_n'].mean(), df['raw_n'].std(ddof=1)
-sample['Z_raw_n'] = (sample['raw_n'] - mu) / sd
-st.subheader("[デバッグ] Raw 比較")
-st.dataframe(sample[['馬名','RawBase','Raw_before','Raw_after','raw_n','Z_raw_n']])
+# （デバッグ用テーブルは削除しました）
 
-# 出力
-st.subheader("本日の予想6頭")
+# 本日の予想6頭
 top6 = summary.nlargest(6,'バランス').reset_index(drop=True)
 tag = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
 top6['印'] = top6.index.map(lambda i: tag[i+1])
