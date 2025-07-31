@@ -27,9 +27,17 @@ if not uploaded_file:
 xls = pd.ExcelFile(uploaded_file)
 # 成績データ (1枚目)
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
-# 馬情報 (2枚目): 馬名, 性別, 年齢 のみ使用
-stats = xls.parse(sheet_name=1, usecols=['馬名','性別','年齢'])
+# 馬情報 (2枚目)
+stats_all = xls.parse(sheet_name=1)  # 列名が異なる場合にも対応
+# 必要な列のみ抽出
+if all(col in stats_all.columns for col in ['馬名','性別','年齢']):
+    stats = stats_all[['馬名','性別','年齢']]
+else:
+    # 列名が異なる場合は先頭3列を馬名, 性別, 年齢と仮定
+    stats = stats_all.iloc[:, :3]
+    stats.columns = ['馬名','性別','年齢']
 # 馬情報を成績データに結合
+df = df.merge(stats, on='馬名', how='left')
 df = df.merge(stats, on='馬名', how='left')
 
 # --- 脚質入力テーブル ---
