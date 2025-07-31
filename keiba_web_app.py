@@ -37,27 +37,33 @@ if not uploaded:
     st.stop()
 
 xls = pd.ExcelFile(uploaded)
-# 成績シート
-df = xls.parse(0, parse_dates=['レース日'])
 
-# 馬情報シート：列名動的検出＋リネーム
+# 1) 成績シート読み込み
+df = xls.parse(0, parse_dates=['レース日'])
+# '馬名' を文字列化＆trim
+df['馬名'] = df['馬名'].astype(str).str.strip()
+
+# 2) 馬情報シート読み込み・リネーム
 stats = xls.parse(1, header=1)
-# 取得したいカラムキーワード
+# 列名にキーワードを含むものを検出
 keys = ['馬名','性別','年齢','ベストタイム']
 col_map = {}
 for key in keys:
     for col in stats.columns:
-        if key in col:
+        if key in str(col):
             col_map[col] = key
             break
-# リネーム
 stats = stats.rename(columns=col_map)
-# 存在しないキーがあればエラー回避で空列追加
+# 足りないキーは空列追加
 for key in keys:
     if key not in stats.columns:
         stats[key] = np.nan
-# 必要列だけ抽出
+# 必要列抽出
 stats = stats[keys]
+# '馬名' を文字列化＆trim
+stats['馬名'] = stats['馬名'].astype(str).str.strip()
+# 重複があれば最初を残す
+stats = stats.drop_duplicates(subset='馬名', keep='first')
 
 # ベストタイムを数値化
 stats['best_dist_time'] = pd.to_numeric(
@@ -65,7 +71,7 @@ stats['best_dist_time'] = pd.to_numeric(
 )
 stats['best_dist_time'].fillna(stats['best_dist_time'].max(), inplace=True)
 
-# 成績データに結合
+# マージ
 df = df.merge(
     stats[['馬名','性別','年齢','best_dist_time']],
     on='馬名', how='left'
@@ -86,6 +92,7 @@ edited = st.data_editor(
     },
     use_container_width=True
 )
+edited['馬名'] = edited['馬名'].astype(str).str.strip()
 df = df.merge(edited, on='馬名', how='left').rename(columns={'本斤量':'today_weight'})
 
 # ── 血統表＆優先種牡馬 ──
@@ -129,9 +136,15 @@ df['age_factor']      = df['年齢'].map(age_factor)
 df['sex_factor']      = df['性別'].map(sex_factor)
 df['seasonal_factor'] = df['レース日'].map(seasonal)
 
-GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,'3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
+GRADE = {
+    'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
+    '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1
+}
 df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['raw'] *= df['pedigree_factor'] * df['style_factor'] * df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
+df['raw'] *= (
+    df['pedigree_factor'] * df['style_factor'] *
+    df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
+)
 
 jmax,jmin = df['斤量'].max(), df['斤量'].min()
 df['up3_norm']   = df['Ave-3F'] / df['上がり3Fタイム']
@@ -176,4 +189,4 @@ st.dataframe(summary.reset_index(drop=True))
 st.subheader('上位6頭')
 st.table(summary.head(6)[['馬名','偏差値']])
 
-# ここ以降、グラフ・ベット設定等を追記してください
+# ここ以降：グラフ描画・ベット設定などを追記してください。
