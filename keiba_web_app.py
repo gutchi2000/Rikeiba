@@ -7,7 +7,9 @@ from itertools import combinations, permutations
 
 # ── 日本語フォント設定 ──
 font_manager.fontManager.addfont("ipaexg.ttf")
-plt.rcParams['font.family'] = font_manager.FontProperties(fname='ipaexg.ttf').get_name()
+plt.rcParams['font.family'] = font_manager.FontProperties(
+    fname='ipaexg.ttf'
+).get_name()
 
 st.title('競馬予想アプリ（完成版）')
 
@@ -36,11 +38,15 @@ if not uploaded:
 
 xls = pd.ExcelFile(uploaded)
 
-# 成績シート
+# === 成績シート読み込み ===
 df = xls.parse(0, parse_dates=['レース日'])
+# 馬名を確実に文字列＆トリム
 df['馬名'] = df['馬名'].astype(str).str.strip()
 
-# 馬情報シートの読み込みと動的リネーム
+# 【デバッグ出力】行数と列名を確認
+st.write(f"▶ 成績データ：{len(df)} 行, 列名: {df.columns.tolist()}")
+
+# === 馬情報シート読み込み＋リネーム ===
 stats = xls.parse(1, header=1)
 keys = ['馬名','性別','年齢','ベストタイム']
 col_map = {}
@@ -49,6 +55,7 @@ for key in keys:
         if key in str(col):
             col_map[col] = key
             break
+
 stats = stats.rename(columns=col_map)
 for key in keys:
     if key not in stats.columns:
@@ -57,11 +64,19 @@ stats = stats[keys]
 stats['馬名'] = stats['馬名'].astype(str).str.strip()
 stats = stats.drop_duplicates('馬名', keep='first')
 
-# ベストタイム数値化
+# ベストタイムを数値化
 stats['best_dist_time'] = pd.to_numeric(
     stats['ベストタイム'].replace({'(未)': np.nan}), errors='coerce'
 ).fillna(stats['ベストタイム'].astype(str).str.extract(r'(\d+)', expand=False).astype(float).max())
-df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
+
+# 【デバッグ出力】馬情報の行数と列名を確認
+st.write(f"▶ 馬情報データ：{len(stats)} 行, 列名: {stats.columns.tolist()}")
+
+# マージ
+df = df.merge(
+    stats[['馬名','性別','年齢','best_dist_time']],
+    on='馬名', how='left'
+)
 
 # ── 脚質＆斤量入力 ──
 equines = df['馬名'].unique()
@@ -73,12 +88,8 @@ inp = pd.DataFrame({
 edited = st.data_editor(
     inp,
     column_config={
-        '脚質': st.column_config.SelectboxColumn(
-            label='脚質', options=['逃げ','先行','差し','追込']
-        ),
-        '本斤量': st.column_config.NumberColumn(
-            label='本斤量', min_value=45, max_value=60, step=1
-        )
+        '脚質': st.column_config.SelectboxColumn(label='脚質', options=['逃げ','先行','差し','追込']),
+        '本斤量': st.column_config.NumberColumn(label='本斤量', min_value=45, max_value=60, step=1)
     },
     use_container_width=True
 )
@@ -94,9 +105,7 @@ if html:
     except:
         ped_df = None
 
-priority = [
-    s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()
-]
+priority = [s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()]
 
 # ── ファクター関数 ──
 def eval_pedigree(r):
@@ -133,7 +142,7 @@ GRADE = {
     '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1
 }
 df['raw'] = df.apply(
-    lambda r: GRADE.get(r['クラス名'],1) * (r['頭数']+1-r['確定着順']),
+    lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']),
     axis=1
 ) * df['pedigree_factor'] * df['style_factor'] * df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
 
@@ -166,6 +175,11 @@ df['total_z'] = sum(df[k] * w for k, w in weights.items()) / tot_w
 # ── 今日のレース抽出＆偏差値化 ──
 today = df['レース日'].max()
 df_today = df[df['レース日'] == today].copy()
+
+if df_today.empty:
+    st.warning("⚠️ 今日のレースデータが見つかりません。成績シートの日付と列名を再確認してください。")
+    st.stop()
+
 zmin, zmax = df_today['total_z'].min(), df_today['total_z'].max()
 df_today['偏差値'] = 30 + (df_today['total_z'] - zmin) / (zmax - zmin) * 40
 
