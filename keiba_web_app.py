@@ -44,16 +44,23 @@ if not uploaded_file:
 xls = pd.ExcelFile(uploaded_file)
 # 1枚目: 成績データ
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
-# 2枚目: 馬情報 (header=1 行目を列名として取得)
-stats = xls.parse(sheet_name=1, header=1)
+# 2枚目: 馬情報 (header=0 行目を列名として取得)
+stats = xls.parse(sheet_name=1, header=0)
 # 列名リネーム: Unnamed列を日本語に
+# 最後の列（index -1）がベストタイムと仮定
+last_col = stats.columns[-1]
 stats.rename(columns={
     'Unnamed: 0':'馬名',
     'Unnamed: 1':'性別',
     'Unnamed: 2':'年齢',
-    stats.columns[-1]:'ベストタイム'
+    last_col:'ベストタイム'
 }, inplace=True)
 # 必要列抽出
+stats = stats[['馬名','性別','年齢','ベストタイム']]
+# ベストタイム文字列 '(未)' を NaN、数値化
+stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'\(未\)':np.nan}), errors='coerce')
+# 結合
+df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
 stats = stats[['馬名','性別','年齢','ベストタイム']]
 # ベストタイム文字列 "(未)" を NaN、数値化
 stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'\(未\)':np.nan}), errors='coerce')
