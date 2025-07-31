@@ -45,7 +45,25 @@ if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
 stats = stats[['馬名','性別','年齢']]
 df = df.merge(stats, on='馬名', how='left')
 
+# --- 脚質入力テーブル ---
+equine_list = df['馬名'].unique().tolist()
+style_df = pd.DataFrame({'馬名': equine_list, '脚質': ['差し']*len(equine_list)})
+edited = st.data_editor(
+    style_df,
+    column_config={'脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])},
+    use_container_width=True,
+    key='editor'
+)
+style_map = dict(zip(edited['馬名'], edited['脚質']))
+
 # --- 脚質を成績データに結合 ---
+# edited データフレームから脚質情報をマージ
+if '馬名' in edited.columns and '脚質' in edited.columns:
+    df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
+else:
+    st.error("脚質入力テーブルの設定が正しくありません。")
+    st.stop()
+
 # edited データフレームから脚質情報をマージ
 if '脚質' in edited.columns:
     df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
