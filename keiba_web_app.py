@@ -7,9 +7,7 @@ from itertools import combinations, permutations
 
 # ── 日本語フォント設定 ──
 font_manager.fontManager.addfont("ipaexg.ttf")
-plt.rcParams['font.family'] = font_manager.FontProperties(
-    fname='ipaexg.ttf'
-).get_name()
+plt.rcParams['font.family'] = font_manager.FontProperties(fname='ipaexg.ttf').get_name()
 
 st.title('競馬予想アプリ（完成版）')
 
@@ -38,14 +36,12 @@ if not uploaded:
 
 xls = pd.ExcelFile(uploaded)
 
-# 1) 成績シート読み込み
+# 成績シート
 df = xls.parse(0, parse_dates=['レース日'])
-# '馬名' を文字列化＆trim
 df['馬名'] = df['馬名'].astype(str).str.strip()
 
-# 2) 馬情報シート読み込み・リネーム
+# 馬情報シートの読み込みと動的リネーム
 stats = xls.parse(1, header=1)
-# 列名にキーワードを含むものを検出
 keys = ['馬名','性別','年齢','ベストタイム']
 col_map = {}
 for key in keys:
@@ -54,30 +50,20 @@ for key in keys:
             col_map[col] = key
             break
 stats = stats.rename(columns=col_map)
-# 足りないキーは空列追加
 for key in keys:
     if key not in stats.columns:
         stats[key] = np.nan
-# 必要列抽出
 stats = stats[keys]
-# '馬名' を文字列化＆trim
 stats['馬名'] = stats['馬名'].astype(str).str.strip()
-# 重複があれば最初を残す
-stats = stats.drop_duplicates(subset='馬名', keep='first')
+stats = stats.drop_duplicates('馬名', keep='first')
 
-# ベストタイムを数値化
+# ベストタイム数値化
 stats['best_dist_time'] = pd.to_numeric(
     stats['ベストタイム'].replace({'(未)': np.nan}), errors='coerce'
-)
-stats['best_dist_time'].fillna(stats['best_dist_time'].max(), inplace=True)
+).fillna(stats['ベストタイム'].astype(str).str.extract(r'(\d+)', expand=False).astype(float).max())
+df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
 
-# マージ
-df = df.merge(
-    stats[['馬名','性別','年齢','best_dist_time']],
-    on='馬名', how='left'
-)
-
-# ── 脚質＆本斤量入力 ──
+# ── 脚質＆斤量入力 ──
 equines = df['馬名'].unique()
 inp = pd.DataFrame({
     '馬名': equines,
@@ -87,8 +73,12 @@ inp = pd.DataFrame({
 edited = st.data_editor(
     inp,
     column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', ['逃げ','先行','差し','追込']),
-        '本斤量': st.column_config.NumberColumn('本斤量', 45, 60, 1)
+        '脚質': st.column_config.SelectboxColumn(
+            label='脚質', options=['逃げ','先行','差し','追込']
+        ),
+        '本斤量': st.column_config.NumberColumn(
+            label='本斤量', min_value=45, max_value=60, step=1
+        )
     },
     use_container_width=True
 )
@@ -104,7 +94,9 @@ if html:
     except:
         ped_df = None
 
-priority = [s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()]
+priority = [
+    s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()
+]
 
 # ── ファクター関数 ──
 def eval_pedigree(r):
@@ -125,10 +117,10 @@ def seasonal(dt):
     )
 
 # ── 正規化＆Zスコア化 ──
-tmin,tmax = df['best_dist_time'].min(), df['best_dist_time'].max()
-df['dist_norm'] = (tmax - df['best_dist_time'])/(tmax - tmin)
-mu,sd = df['dist_norm'].mean(), df['dist_norm'].std(ddof=1)
-df['Z_dist_norm'] = (df['dist_norm']-mu)/sd if sd else 0
+tmin, tmax = df['best_dist_time'].min(), df['best_dist_time'].max()
+df['dist_norm'] = (tmax - df['best_dist_time']) / (tmax - tmin)
+mu, sd = df['dist_norm'].mean(), df['dist_norm'].std(ddof=1)
+df['Z_dist_norm'] = (df['dist_norm'] - mu) / sd if sd else 0
 
 df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 df['style_factor']    = df['脚質'].map(style_factor)
@@ -140,19 +132,18 @@ GRADE = {
     'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
     '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1
 }
-df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['raw'] *= (
-    df['pedigree_factor'] * df['style_factor'] *
-    df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
-)
+df['raw'] = df.apply(
+    lambda r: GRADE.get(r['クラス名'],1) * (r['頭数']+1-r['確定着順']),
+    axis=1
+) * df['pedigree_factor'] * df['style_factor'] * df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
 
-jmax,jmin = df['斤量'].max(), df['斤量'].min()
+jmax, jmin = df['斤量'].max(), df['斤量'].min()
 df['up3_norm']   = df['Ave-3F'] / df['上がり3Fタイム']
-df['odds_norm']  = 1/(1+np.log10(df['単勝オッズ']))
-df['jin_norm']   = (jmax - df['斤量'])/(jmax - jmin)
-df['today_norm'] = (jmax - df['today_weight'])/(jmax - jmin)
+df['odds_norm']  = 1 / (1 + np.log10(df['単勝オッズ']))
+df['jin_norm']   = (jmax - df['斤量']) / (jmax - jmin)
+df['today_norm'] = (jmax - df['today_weight']) / (jmax - jmin)
 wmean = df['増減'].abs().mean()
-df['wdiff_norm']= 1 - df['増減'].abs()/wmean
+df['wdiff_norm']= 1 - df['増減'].abs() / wmean
 
 metrics = [
     'raw','up3_norm','odds_norm','jin_norm','today_norm',
@@ -160,8 +151,8 @@ metrics = [
     'style_factor','age_factor','sex_factor','seasonal_factor'
 ]
 for m in metrics:
-    mu,sd = df[m].mean(), df[m].std(ddof=1)
-    df[f'Z_{m}'] = (df[m]-mu)/sd if sd else 0
+    mu, sd = df[m].mean(), df[m].std(ddof=1)
+    df[f'Z_{m}'] = (df[m] - mu) / sd if sd else 0
 
 weights = {
     'Z_raw':8,'Z_up3_norm':2,'Z_odds_norm':1,
@@ -170,16 +161,16 @@ weights = {
     'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2,'Z_seasonal_factor':2
 }
 tot_w = sum(weights.values())
-df['total_z'] = sum(df[k]*w for k,w in weights.items())/tot_w
+df['total_z'] = sum(df[k] * w for k, w in weights.items()) / tot_w
 
 # ── 今日のレース抽出＆偏差値化 ──
 today = df['レース日'].max()
-df_today = df[df['レース日']==today].copy()
-zmin,zmax = df_today['total_z'].min(), df_today['total_z'].max()
-df_today['偏差値'] = 30 + (df_today['total_z']-zmin)/(zmax-zmin)*40
+df_today = df[df['レース日'] == today].copy()
+zmin, zmax = df_today['total_z'].min(), df_today['total_z'].max()
+df_today['偏差値'] = 30 + (df_today['total_z'] - zmin) / (zmax - zmin) * 40
 
 # ── 表示 ──
-summary = df_today[['馬名','偏差値']].sort_values('偏差値',ascending=False)
+summary = df_today[['馬名','偏差値']].sort_values('偏差値', ascending=False)
 summary['安定性']   = df_today.groupby('馬名')['total_z'].transform('std').fillna(0)
 summary['バランス'] = summary['偏差値'] - summary['安定性']
 
@@ -188,5 +179,3 @@ st.dataframe(summary.reset_index(drop=True))
 
 st.subheader('上位6頭')
 st.table(summary.head(6)[['馬名','偏差値']])
-
-# ここ以降：グラフ描画・ベット設定などを追記してください。
