@@ -28,7 +28,8 @@ xls = pd.ExcelFile(uploaded_file)
 # 成績データ (1枚目)
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 # 馬情報 (2枚目)
-stats_all = xls.parse(sheet_name=1)  # 列名が異なる場合にも対応
+# 馬情報 (2枚目): 1行目が項目名行、2行目が実際の列名（性別、年齢）のため header=1 で読み込み
+stats_all = xls.parse(sheet_name=1, header=1)
 # 必要な列のみ抽出
 if all(col in stats_all.columns for col in ['馬名','性別','年齢']):
     stats = stats_all[['馬名','性別','年齢']]
