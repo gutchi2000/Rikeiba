@@ -171,17 +171,6 @@ summary['RawBase偏差値'] = 30+(summary['RB_mean']-rbm)/(rbM-rbm)*40
 # バランス
 summary['バランス'] = weight_z*summary['偏差値']+weight_rb*summary['RawBase偏差値']-summary['std_z']
 
-# --- デバッグ: 指標別平均Zスコアチェック ---
-st.subheader("[デバッグ] 生スコア系 Zスコア平均")
-debug_df = pd.DataFrame({
-    '指標': ['Z_raw_n','Z_up3_n','Z_odds_n','Z_jin_n','Z_today_n','Z_dist_n','Z_wd_n'],
-    '平均Z': [df[m].mean() for m in ['Z_raw_n','Z_up3_n','Z_odds_n','Z_jin_n','Z_today_n','Z_dist_n','Z_wd_n']("_")[1]}'].mean() for m in ['Z_raw_n','Z_up3_n','Z_odds_n','Z_jin_n','Z_today_n','Z_dist_n','Z_wd_n']]
-})
-st.table(debug_df)
-
-
-# （デバッグ用テーブルは削除しました）
-
 # 本日の予想6頭
 top6 = summary.nlargest(6,'バランス').reset_index(drop=True)
 tag = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
