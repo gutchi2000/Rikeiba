@@ -63,7 +63,7 @@ for k in keys:
     if k not in stats.columns:
         stats[k] = np.nan
 stats = stats[keys].drop_duplicates('馬名').drop_duplicates('馬名')
-stats['馬名'] = stats['馬名'].str.strip()
+stats['馬名'] = stats['馬名'].astype(str).str.strip()
 stats['best_dist_time'] = pd.to_numeric(
     stats['ベストタイム'].replace({'(未)':np.nan}), errors='coerce'
 ).fillna(
