@@ -45,6 +45,11 @@ if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
 stats = stats[['馬名','性別','年齢']]
 df = df.merge(stats, on='馬名', how='left')
 
+# --- 脚質を成績データに結合 ---
+# edited データフレームから脚質情報をマージ
+if '脚質' in edited.columns:
+    df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
+
 # --- ファクター関数 ---
 def eval_pedigree(row, ped_df, priority_sires):
     sire = ''
