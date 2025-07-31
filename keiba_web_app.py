@@ -30,7 +30,16 @@ df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 # 馬情報 (2枚目)
 # 馬情報 (2枚目): 1行目が項目名行、2行目が実際の列名（性別、年齢）のため header=1 で読み込み
 stats_all = xls.parse(sheet_name=1, header=1)
+# horse name 列が 'Unnamed: 0' になっている場合は '馬名' にリネーム
+if 'Unnamed: 0' in stats_all.columns and '馬名' not in stats_all.columns:
+    stats_all = stats_all.rename(columns={'Unnamed: 0':'馬名'})
 # 必要な列のみ抽出
+if all(col in stats_all.columns for col in ['馬名','性別','年齢']):
+    stats = stats_all[['馬名','性別','年齢']]
+else:
+    # 列名が異なる場合は先頭3列を馬名, 性別, 年齢と仮定
+    stats = stats_all.iloc[:, :3]
+    stats.columns = ['馬名','性別','年齢']
 if all(col in stats_all.columns for col in ['馬名','性別','年齢']):
     stats = stats_all[['馬名','性別','年齢']]
 else:
