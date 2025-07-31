@@ -36,20 +36,36 @@ uploaded = st.file_uploader('成績＆馬情報(XLSX)', type='xlsx')
 if not uploaded:
     st.stop()
 
-xls   = pd.ExcelFile(uploaded)
-df    = xls.parse(0, parse_dates=['レース日'])
-stats = xls.parse(1, header=1).rename(columns={
-    lambda c: '馬名' if '馬名' in c else c: '馬名',
-    lambda c: '性別' if '性別' in c else c: '性別',
-    lambda c: '年齢' if '年齢' in c else c: '年齢',
-    lambda c: 'ベストタイム' if 'ベストタイム' in c else c: 'ベストタイム'
-}).loc[:,['馬名','性別','年齢','ベストタイム']]
+xls = pd.ExcelFile(uploaded)
+# 成績シート
+df = xls.parse(0, parse_dates=['レース日'])
 
-# ベストタイム数値化
+# 馬情報シート：列名動的検出＋リネーム
+stats = xls.parse(1, header=1)
+# 取得したいカラムキーワード
+keys = ['馬名','性別','年齢','ベストタイム']
+col_map = {}
+for key in keys:
+    for col in stats.columns:
+        if key in col:
+            col_map[col] = key
+            break
+# リネーム
+stats = stats.rename(columns=col_map)
+# 存在しないキーがあればエラー回避で空列追加
+for key in keys:
+    if key not in stats.columns:
+        stats[key] = np.nan
+# 必要列だけ抽出
+stats = stats[keys]
+
+# ベストタイムを数値化
 stats['best_dist_time'] = pd.to_numeric(
-    stats['ベストタイム'].replace({'(未)':np.nan}), errors='coerce'
-).fillna(method='ffill').fillna(method='bfill')
+    stats['ベストタイム'].replace({'(未)': np.nan}), errors='coerce'
+)
+stats['best_dist_time'].fillna(stats['best_dist_time'].max(), inplace=True)
 
+# 成績データに結合
 df = df.merge(
     stats[['馬名','性別','年齢','best_dist_time']],
     on='馬名', how='left'
@@ -72,52 +88,64 @@ edited = st.data_editor(
 )
 df = df.merge(edited, on='馬名', how='left').rename(columns={'本斤量':'today_weight'})
 
-# ── 血統表 & 種牡馬リスト ──
+# ── 血統表＆優先種牡馬 ──
 html = st.file_uploader('血統表(HTML)', type='html')
 ped_df = None
 if html:
-    try: ped_df = pd.read_html(html.read())[0].set_index('馬名')
-    except: ped_df = None
+    try:
+        ped_df = pd.read_html(html.read())[0].set_index('馬名')
+    except:
+        ped_df = None
 
 priority = [s.strip() for s in st.text_area('強調種牡馬(カンマ区切り)').split(',') if s.strip()]
 
 # ── ファクター関数 ──
 def eval_pedigree(r):
-    if ped_df is None or r['馬名'] not in ped_df.index: return 1.0
+    if ped_df is None or r['馬名'] not in ped_df.index:
+        return 1.0
     return 1.2 if ped_df.at[r['馬名'],'父馬'] in priority else 1.0
 
 def style_factor(s): return {'逃げ':nige_weight,'先行':senko_weight,'差し':sashi_weight,'追込':ooka_weight}.get(s,1.0)
 def age_factor(a):   return 1+0.2*(1-abs(a-5)/5)
 def sex_factor(sx):  return {'牡':male_weight,'牝':female_weight,'セ':gelding_weight}.get(sx,1.0)
 def seasonal(dt):
-    m=dt.month
-    return spring_weight if m in [3,4,5] else summer_weight if m in [6,7,8] else autumn_weight if m in [9,10,11] else winter_weight
+    m = dt.month
+    return (
+        spring_weight if m in [3,4,5] else
+        summer_weight if m in [6,7,8] else
+        autumn_weight if m in [9,10,11] else
+        winter_weight
+    )
 
-# ── 正規化 & Zスコア化 ──
+# ── 正規化＆Zスコア化 ──
 tmin,tmax = df['best_dist_time'].min(), df['best_dist_time'].max()
 df['dist_norm'] = (tmax - df['best_dist_time'])/(tmax - tmin)
 mu,sd = df['dist_norm'].mean(), df['dist_norm'].std(ddof=1)
 df['Z_dist_norm'] = (df['dist_norm']-mu)/sd if sd else 0
 
-df['pedigree_factor'] = df.apply(eval_pedigree,axis=1)
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
 df['style_factor']    = df['脚質'].map(style_factor)
 df['age_factor']      = df['年齢'].map(age_factor)
 df['sex_factor']      = df['性別'].map(sex_factor)
 df['seasonal_factor'] = df['レース日'].map(seasonal)
 
-GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リス':5,'オー':4,'3勝':3,'2勝':2,'1勝':1,'新馬':1,'未勝利':1}
-df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'][:2],1)*(r['頭数']+1-r['確定着順']),axis=1)
-df['raw'] *= df['pedigree_factor']*df['style_factor']*df['age_factor']*df['sex_factor']*df['seasonal_factor']
+GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,'3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
+df['raw'] = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
+df['raw'] *= df['pedigree_factor'] * df['style_factor'] * df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
 
 jmax,jmin = df['斤量'].max(), df['斤量'].min()
-df['up3_norm']   = df['Ave-3F']/df['上がり3Fタイム']
+df['up3_norm']   = df['Ave-3F'] / df['上がり3Fタイム']
 df['odds_norm']  = 1/(1+np.log10(df['単勝オッズ']))
-df['jin_norm']   = (jmax-df['斤量'])/(jmax-jmin)
-df['today_norm'] = (jmax-df['today_weight'])/(jmax-jmin)
+df['jin_norm']   = (jmax - df['斤量'])/(jmax - jmin)
+df['today_norm'] = (jmax - df['today_weight'])/(jmax - jmin)
 wmean = df['増減'].abs().mean()
 df['wdiff_norm']= 1 - df['増減'].abs()/wmean
 
-metrics = ['raw','up3_norm','odds_norm','jin_norm','today_norm','dist_norm','wdiff_norm','pedigree_factor','style_factor','age_factor','sex_factor','seasonal_factor']
+metrics = [
+    'raw','up3_norm','odds_norm','jin_norm','today_norm',
+    'dist_norm','wdiff_norm','pedigree_factor',
+    'style_factor','age_factor','sex_factor','seasonal_factor'
+]
 for m in metrics:
     mu,sd = df[m].mean(), df[m].std(ddof=1)
     df[f'Z_{m}'] = (df[m]-mu)/sd if sd else 0
@@ -131,24 +159,21 @@ weights = {
 tot_w = sum(weights.values())
 df['total_z'] = sum(df[k]*w for k,w in weights.items())/tot_w
 
-# ── ★ここから「今日のレース」だけを抽出して偏差値化★ ──
+# ── 今日のレース抽出＆偏差値化 ──
 today = df['レース日'].max()
 df_today = df[df['レース日']==today].copy()
-
-# 偏差値振り直し
-zmin, zmax = df_today['total_z'].min(), df_today['total_z'].max()
+zmin,zmax = df_today['total_z'].min(), df_today['total_z'].max()
 df_today['偏差値'] = 30 + (df_today['total_z']-zmin)/(zmax-zmin)*40
 
-# ── 馬別評価一覧 ──
+# ── 表示 ──
 summary = df_today[['馬名','偏差値']].sort_values('偏差値',ascending=False)
-summary['安定性']    = df_today.groupby('馬名')['total_z'].transform('std').fillna(0)
-summary['バランス']  = summary['偏差値'] - summary['安定性']
+summary['安定性']   = df_today.groupby('馬名')['total_z'].transform('std').fillna(0)
+summary['バランス'] = summary['偏差値'] - summary['安定性']
 
 st.subheader('本日の馬別評価')
-st.dataframe(summary[['馬名','偏差値','安定性','バランス']].reset_index(drop=True))
+st.dataframe(summary.reset_index(drop=True))
 
-st.subheader('本日の上位6頭')
-top6 = summary.head(6)
-st.table(top6[['馬名','偏差値']])
+st.subheader('上位6頭')
+st.table(summary.head(6)[['馬名','偏差値']])
 
-# 以下、グラフ描画やベット設定ロジックは前回と同様に追記してください。
+# ここ以降、グラフ・ベット設定等を追記してください
