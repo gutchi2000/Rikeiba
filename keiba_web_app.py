@@ -44,23 +44,21 @@ if not uploaded_file:
 xls = pd.ExcelFile(uploaded_file)
 # 1枚目: 成績データ
 df = xls.parse(sheet_name=0, parse_dates=['レース日'])
-# 2枚目: 馬情報 (header=1 行を列名とする)
+# 2枚目: 馬情報 (header=1 行目を列名として取得)
 stats = xls.parse(sheet_name=1, header=1)
-if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
-    stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
-# デバッグ: 2枚目シートのカラムを表示
-st.write('馬情報シートのカラム:', stats.columns.tolist())
-# 馬情報の必須列: 馬名, 性別, 年齢
-required = ['馬名','性別','年齢']
-if not all(col in stats.columns for col in required):
-    st.error(f"馬情報シートに必要列がありません: {stats.columns.tolist()}")
-    st.stop()
-# ベストタイムはシートの最終列と仮定し、数値化: "(未)" は NaN
-best_col = stats.columns[-1]
-stats['best_dist_time'] = pd.to_numeric(stats[best_col], errors='coerce')
-stats = stats[['馬名','性別','年齢','best_dist_time']]
+# 列名リネーム: Unnamed列を日本語に
+stats.rename(columns={
+    'Unnamed: 0':'馬名',
+    'Unnamed: 1':'性別',
+    'Unnamed: 2':'年齢',
+    stats.columns[-1]:'ベストタイム'
+}, inplace=True)
+# 必要列抽出
+stats = stats[['馬名','性別','年齢','ベストタイム']]
+# ベストタイム文字列 "(未)" を NaN、数値化
+stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'].replace({'\(未\)':np.nan}), errors='coerce')
 # 結合
-df = df.merge(stats, on='馬名', how='left')
+df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名', how='left')
 
 # --- 欠損ベストタイム (未出走) を最大タイムで補完 --- (未出走) を最大タイムで補完 ---
 tmax = df['best_dist_time'].max()
