@@ -169,6 +169,7 @@ fig2,ax2=plt.subplots(figsize=(10,6))
 ax2.scatter(summary['平均偏差値'],summary['安定性'],alpha=0.7)
 ax2.axvline(summary['平均偏差値'].mean(),linestyle='--')
 ax2.axhline(summary['安定性'].mean(),linestyle='--')
-for_,row in summary.iterrows():ax2.text(row['平均偏差値'],row['安定性'],row['馬名'],fontsize=8)
+for _, row in summary.iterrows():
+    ax2.text(row['平均偏差値'], row['安定性'], row['馬名'], fontsize=8)
 ax2.set_xlabel('平均偏差値')
 ax2.set_ylabel('安定性')
