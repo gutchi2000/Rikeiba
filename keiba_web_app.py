@@ -30,6 +30,12 @@ with st.sidebar:
     winter_w  = st.number_input('冬の重み',    0.0, 2.0, 0.95,0.01)
     w_jin     = st.number_input('斤量重み',       0.0, 1.0, 1.0, 0.1)
     w_best    = st.number_input('距離ベスト重み', 0.0, 1.0, 1.0, 0.1)
+    # ここから新規パラメータ
+    st.subheader("最終バランス重み")
+    weight_z  = st.slider('偏差値 の重み',          0.0, 1.0, 0.7, 0.05)
+    weight_rb = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.3, 0.05)
+    # std_z は常に引く、合計1にしたいなら:
+    # assert weight_z + weight_rb <= 1.0
 
 # ── データアップロード ──
 st.subheader("データアップロード")
@@ -160,8 +166,12 @@ summary['偏差値'] = 30 + (summary['mean_z']-mz)/(MZ-mz)*40 if MZ>mz else 50
 rb_min, rb_max = summary['RawBase_mean'].min(), summary['RawBase_mean'].max()
 summary['RawBase偏差値'] = 30 + (summary['RawBase_mean']-rb_min)/(rb_max-rb_min)*40 if rb_max>rb_min else 50
 
-# 最終バランス
-summary['バランス'] = summary['偏差値']*0.8 + summary['RawBase偏差値']*0.2 - summary['std_z']
+# ── 最終バランス（調整可能） ──
+summary['バランス'] = (
+    weight_z  * summary['偏差値'] +
+    weight_rb * summary['RawBase偏差値'] -
+    summary['std_z']
+)
 
 # ── 結果表示 ──
 st.subheader("馬別 評価一覧")
