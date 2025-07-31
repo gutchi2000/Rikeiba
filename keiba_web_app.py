@@ -61,17 +61,8 @@ stats['best_dist_time'] = pd.to_numeric(stats[best_col], errors='coerce')
 stats = stats[['馬名','性別','年齢','best_dist_time']]
 # 結合
 df = df.merge(stats, on='馬名', how='left')
-required = ['馬名','性別','年齢','ベストタイム']
-if not all(col in stats.columns for col in required):
-    st.error(f"馬情報シートに必要列がありません: {stats.columns.tolist()}")
-    st.stop()
-# 数値化: "(未)" は NaN
-stats['best_dist_time'] = pd.to_numeric(stats['ベストタイム'], errors='coerce')
-stats = stats[['馬名','性別','年齢','best_dist_time']]
-# 結合
-df = df.merge(stats, on='馬名', how='left')
 
-# --- 欠損ベストタイム (未出走) を最大タイムで補完 ---
+# --- 欠損ベストタイム (未出走) を最大タイムで補完 --- (未出走) を最大タイムで補完 ---
 tmax = df['best_dist_time'].max()
 df['best_dist_time'] = df['best_dist_time'].fillna(tmax)
 
