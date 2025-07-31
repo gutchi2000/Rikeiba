@@ -58,17 +58,29 @@ if not all(col in stats.columns for col in required):
 stats = stats[required]
 df = df.merge(stats, on='馬名', how='left')
 
-# --- 脚質入力 ---
+# --- 脚質 & 本斤量入力 ---
 equine_list = df['馬名'].unique().tolist()
-style_df = pd.DataFrame({'馬名': equine_list, '脚質': ['差し']*len(equine_list)})
+# 脚質と本レース斤量を同時に編集
+input_df = pd.DataFrame({
+    '馬名': equine_list,
+    '脚質': ['差し'] * len(equine_list),
+    '本斤量': [56] * len(equine_list)
+})
 edited = st.data_editor(
-    style_df,
-    column_config={'脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])},
-    use_container_width=True
+    input_df,
+    column_config={
+        '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ', '先行', '差し', '追込']),
+        '本斤量': st.column_config.NumberColumn('本斤量 (kg)', min_value=45, max_value=60, step=1)
+    },
+    use_container_width=True,
+    key='style_weight_editor'
 )
-df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
+# データ結合
+df = df.merge(edited[['馬名','脚質','本斤量']], on='馬名', how='left')
+# 本レース斤量カラム名を today_weight に統一
+df.rename(columns={'本斤量':'today_weight'}, inplace=True)
 
-# --- 本レースの斤量入力 ---
+# --- 血統表 (HTML) ---
 st.subheader('本レースの斤量入力 (kg)')
 today_df = pd.DataFrame({'馬名': equine_list, '本斤量': [56]*len(equine_list)})
 edited_today = st.data_editor(
