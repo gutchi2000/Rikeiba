@@ -80,19 +80,7 @@ df = df.merge(edited[['馬名','脚質','本斤量']], on='馬名', how='left')
 # 本レース斤量カラム名を today_weight に統一
 df.rename(columns={'本斤量':'today_weight'}, inplace=True)
 
-# --- 血統表 (HTML) ---
-st.subheader('本レースの斤量入力 (kg)')
-today_df = pd.DataFrame({'馬名': equine_list, '本斤量': [56]*len(equine_list)})
-edited_today = st.data_editor(
-    today_df,
-    column_config={'本斤量': st.column_config.NumberColumn('本斤量', min_value=45, max_value=60, step=1)},
-    use_container_width=True,
-    key='today_weight'
-)
-today_map = dict(zip(edited_today['馬名'], edited_today['本斤量']))
-df['today_weight'] = df['馬名'].map(today_map)
-
-# --- 血統表 (HTML) ---
+# --- 血統表 (HTML) ---# --- 血統表 (HTML) ---
 html_file = st.file_uploader('血統表をアップロード (HTML)', type=['html'])
 ped_df = None
 if html_file:
