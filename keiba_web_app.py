@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from itertools import combinations, permutations
-from bs4 import BeautifulSoup
+# 日本語フォント設定
 
 # 日本語フォント設定
 font_manager.fontManager.addfont("ipaexg.ttf")
@@ -78,11 +78,9 @@ df = df.merge(stats[['馬名','性別','年齢','best_dist_time']], on='馬名',
 ped = None
 if upload_html:
     try:
-        html = upload_html.read().decode('utf-8')
-        soup = BeautifulSoup(html, 'html.parser')
-        table = soup.find('table')
-        ped = pd.read_html(str(table))[0].set_index('馬名')
-    except:
+        ped_table = pd.read_html(upload_html.read())[0]
+        ped = ped_table.set_index('馬名')
+    except Exception:
         ped = None
 user_terms = [t.strip() for t in highlight_inputs.split(',') if t.strip()]
 
