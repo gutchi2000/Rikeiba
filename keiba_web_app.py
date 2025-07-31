@@ -48,6 +48,8 @@ df = xls.parse(sheet_name=0, parse_dates=['レース日'])
 stats = xls.parse(sheet_name=1, header=1)
 if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
     stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
+# デバッグ: 2枚目シートのカラムを表示
+st.write('馬情報シートのカラム:', stats.columns.tolist())
 # 必要列: 馬名, 性別, 年齢, ベストタイム
 required = ['馬名','性別','年齢','ベストタイム']
 if not all(col in stats.columns for col in required):
