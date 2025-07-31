@@ -11,90 +11,59 @@ plt.rcParams['font.family'] = font_manager.FontProperties(fname='ipaexg.ttf').ge
 
 st.title('競馬予想アプリ（完成版）')
 
-# サイドバー設定
+# --- サイドバー: パラメータ設定 ---
 st.sidebar.subheader('1. 性別の重み')
-male_weight    = st.sidebar.number_input('牡の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
-female_weight  = st.sidebar.number_input('牝の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
-gelding_weight = st.sidebar.number_input('セの重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
+male_weight    = st.sidebar.number_input('牡の重み', min_value=0.0, value=1.1, step=0.01)
+female_weight  = st.sidebar.number_input('牝の重み', min_value=0.0, value=1.0, step=0.01)
+gelding_weight = st.sidebar.number_input('セの重み', min_value=0.0, value=0.95, step=0.01)
 
 st.sidebar.subheader('2. 脚質の重み')
-nige_weight  = st.sidebar.number_input('逃げの重み', min_value=0.0, value=1.2, step=0.01, format="%.2f")
-senko_weight = st.sidebar.number_input('先行の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
-sashi_weight = st.sidebar.number_input('差しの重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
-ooka_weight = st.sidebar.number_input('追込の重み', min_value=0.0, value=0.9, step=0.01, format="%.2f")
+nige_weight   = st.sidebar.number_input('逃げの重み', min_value=0.0, value=1.2, step=0.01)
+senko_weight  = st.sidebar.number_input('先行の重み', min_value=0.0, value=1.1, step=0.01)
+sashi_weight  = st.sidebar.number_input('差しの重み', min_value=0.0, value=1.0, step=0.01)
+ooka_weight  = st.sidebar.number_input('追込の重み', min_value=0.0, value=0.9, step=0.01)
 
 st.sidebar.subheader('3. 四季の重み')
-spring_weight = st.sidebar.number_input('春の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
-summer_weight = st.sidebar.number_input('夏の重み', min_value=0.0, value=1.1, step=0.01, format="%.2f")
-autumn_weight = st.sidebar.number_input('秋の重み', min_value=0.0, value=1.0, step=0.01, format="%.2f")
-winter_weight = st.sidebar.number_input('冬の重み', min_value=0.0, value=0.95, step=0.01, format="%.2f")
+spring_weight = st.sidebar.number_input('春の重み', min_value=0.0, value=1.0, step=0.01)
+summer_weight = st.sidebar.number_input('夏の重み', min_value=0.0, value=1.1, step=0.01)
+autumn_weight = st.sidebar.number_input('秋の重み', min_value=0.0, value=1.0, step=0.01)
+winter_weight = st.sidebar.number_input('冬の重み', min_value=0.0, value=0.95, step=0.01)
 
-st.sidebar.subheader('4. 斤量の重み')
-w_jin = st.sidebar.number_input('Z_斤量正規化 重み', min_value=0.0, value=1.0, step=0.1, format="%.1f")
+st.sidebar.subheader('4. 斤量の重み (Z_斤量正規化)')
+w_jin = st.sidebar.number_input('斤量重み(w_jin)', min_value=0.0, value=1.0, step=0.1)
 
-# --- データアップロード ---
-uploaded_file = st.file_uploader('成績&馬情報データをアップロード (Excel)', type=['xlsx'])
+# --- Excel アップロード ---
+uploaded_file = st.file_uploader('成績＆馬情報データをアップロード (Excel)', type=['xlsx'])
 if not uploaded_file:
     st.stop()
-# シート読み込み
+
+# --- シート読み込みと結合 ---
 xls = pd.ExcelFile(uploaded_file)
-df = xls.parse(sheet_name=0, parse_dates=['レース日'])
+# 1枚目: 成績データ
+ df = xls.parse(sheet_name=0, parse_dates=['レース日'])
+# 2枚目: 馬情報 (header=1行目を無視)
 stats = xls.parse(sheet_name=1, header=1)
 if 'Unnamed: 0' in stats.columns and '馬名' not in stats.columns:
-    stats = stats.rename(columns={'Unnamed: 0':'馬名'})
+    stats.rename(columns={'Unnamed: 0':'馬名'}, inplace=True)
+if not all(col in stats.columns for col in ['馬名','性別','年齢']):
+    st.error(f"馬情報シートに['馬名','性別','年齢']がありません: {stats.columns.tolist()}")
+    st.stop()
 stats = stats[['馬名','性別','年齢']]
+# 成績データと馬情報を結合
 df = df.merge(stats, on='馬名', how='left')
 
-# --- 脚質入力テーブル ---
+# --- 脚質入力 ---
 equine_list = df['馬名'].unique().tolist()
 style_df = pd.DataFrame({'馬名': equine_list, '脚質': ['差し']*len(equine_list)})
 edited = st.data_editor(
     style_df,
     column_config={'脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])},
-    use_container_width=True,
-    key='editor'
+    use_container_width=True
 )
-style_map = dict(zip(edited['馬名'], edited['脚質']))
+# 脚質情報を結合
+df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
 
-# --- 脚質を成績データに結合 ---
-# edited データフレームから脚質情報をマージ
-if '馬名' in edited.columns and '脚質' in edited.columns:
-    df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
-else:
-    st.error("脚質入力テーブルの設定が正しくありません。")
-    st.stop()
-
-# edited データフレームから脚質情報をマージ
-if '脚質' in edited.columns:
-    df = df.merge(edited[['馬名','脚質']], on='馬名', how='left')
-
-# --- ファクター関数 ---
-def eval_pedigree(row, ped_df, priority_sires):
-    sire = ''
-    try:
-        sire = ped_df.at[row['馬名'], '父馬']
-    except:
-        pass
-    return 1.2 if sire in priority_sires else 1.0
-
-def style_factor(style):
-    return {'逃げ':nige_weight,'先行':senko_weight,'差し':sashi_weight,'追込':ooka_weight}.get(style, 1.0)
-
-def age_factor(age):
-    peak = 5
-    return 1 + 0.2 * (1 - abs(age - peak) / peak)
-
-def sex_factor(sex):
-    return {'牡':male_weight,'牝':female_weight,'セ':gelding_weight}.get(sex, 1.0)
-
-def seasonal_factor(date):
-    m = date.month
-    if m in [3,4,5]: return spring_weight
-    if m in [6,7,8]: return summer_weight
-    if m in [9,10,11]: return autumn_weight
-    return winter_weight
-
-# 血統表（HTML）アップロード
+# --- 血統表 (HTML) ---
 html_file = st.file_uploader('血統表をアップロード (HTML)', type=['html'])
 ped_df = None
 if html_file:
@@ -103,46 +72,174 @@ if html_file:
     except:
         ped_df = None
 
-# 強調種牡馬リスト
-ped_input = st.text_area('強調種牡馬リストを入力 (カンマ区切り)', '')
+# --- 強調種牡馬リスト ---
+ped_input = st.text_area('強調種牡馬リスト (カンマ区切り)', '')
 priority_sires = [s.strip() for s in ped_input.split(',') if s.strip()]
 
-# --- 各ファクター適用 ---
-df['pedigree_factor'] = df.apply(lambda r: eval_pedigree(r, ped_df, priority_sires), axis=1)
-df['style_factor']    = df['脚質'] .apply(style_factor)
-df['age_factor']      = df['年齢'] .apply(age_factor)
-df['sex_factor']      = df['性別'] .apply(sex_factor)
-df['seasonal_factor'] = df['レース日'] .apply(seasonal_factor)
+# --- ファクター計算関数 ---
+def eval_pedigree(row):
+    sire = ped_df.at[row['馬名'],'父馬'] if ped_df is not None and row['馬名'] in ped_df.index else ''
+    return 1.2 if sire in priority_sires else 1.0
 
-# --- 基本スコア計算 ---
-GRADE={'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
-       '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
+def style_factor(style):
+    return {'逃げ':nige_weight,'先行':senko_weight,'差し':sashi_weight,'追込':ooka_weight}.get(style,1.0)
+
+def age_factor(age):
+    peak = 5
+    return 1 + 0.2 * (1 - abs(age-peak)/peak)
+
+def sex_factor(sex):
+    return {'牡':male_weight,'牝':female_weight,'セ':gelding_weight}.get(sex,1.0)
+
+def seasonal_factor(dt):
+    m = dt.month
+    if m in [3,4,5]:
+        return spring_weight
+    elif m in [6,7,8]:
+        return summer_weight
+    elif m in [9,10,11]:
+        return autumn_weight
+    else:
+        return winter_weight
+
+# --- ファクター適用 ---
+df['pedigree_factor'] = df.apply(eval_pedigree, axis=1)
+df['style_factor']    = df['脚質'].apply(style_factor)
+df['age_factor']      = df['年齢'].apply(age_factor)
+df['sex_factor']      = df['性別'].apply(sex_factor)
+df['seasonal_factor'] = df['レース日'].apply(seasonal_factor)
+
+# --- 基本スコア ---
+GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
+         '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
 raw = df.apply(lambda r: GRADE.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
 df['raw'] = raw * df['pedigree_factor'] * df['style_factor'] * df['age_factor'] * df['sex_factor'] * df['seasonal_factor']
 
 # --- 正規化 ---
-jmax,jmin=df['斤量'].max(),df['斤量'].min()
+jmax,jmin = df['斤量'].max(), df['斤量'].min()
 df['raw_norm'] = (df['raw'] - 1) / (10 * df['頭数'] - 1)
-df['up3_norm'] = df['Ave-3F'] / df['上がり3Fタイム']
+df['up3_norm']  = df['Ave-3F'] / df['上がり3Fタイム']
 df['odds_norm'] = 1 / (1 + np.log10(df['単勝オッズ']))
 df['jin_norm']  = (jmax - df['斤量']) / (jmax - jmin)
 wmean = df['増減'].abs().mean()
 df['wdiff_norm'] = 1 - df['増減'].abs() / wmean
 
 # --- Zスコア化 ---
-metrics=['raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm',
-         'pedigree_factor','style_factor','age_factor','sex_factor','seasonal_factor']
+metrics = [
+    'raw_norm','up3_norm','odds_norm','jin_norm','wdiff_norm',
+    'pedigree_factor','style_factor','age_factor','sex_factor','seasonal_factor'
+]
 for m in metrics:
-    mu,sd = df[m].mean(), df[m].std(ddof=1)
-    df[f'Z_{m}'] = (df[m] - mu) / sd if sd!=0 else 0
+    mu, sd = df[m].mean(), df[m].std(ddof=1)
+    df[f'Z_{m}'] = (df[m] - mu) / sd if sd != 0 else 0
 
 # --- 合成偏差値化 ---
-weights={'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,
-         'Z_jin_norm':w_jin,'Z_wdiff_norm':1,
-         'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2,'Z_seasonal_factor':2}
-tot_w=sum(weights.values())
-df['total_z']=sum(df[k]*w for k,w in weights.items())/tot_w
-zmin,zmax=df['total_z'].min(),df['total_z'].max()
-df['偏差値']=30+(df['total_z']-zmin)/(zmax-zmin)*40
+weights = {
+    'Z_raw_norm':8,'Z_up3_norm':2,'Z_odds_norm':1,
+    'Z_jin_norm':w_jin,'Z_wdiff_norm':1,
+    'Z_pedigree_factor':3,'Z_age_factor':2,'Z_style_factor':2,'Z_seasonal_factor':2
+}
+tot_w = sum(weights.values())
+df['total_z'] = sum(df[k] * w for k, w in weights.items()) / tot_w
+zmin, zmax = df['total_z'].min(), df['total_z'].max()
+df['偏差値'] = 30 + (df['total_z'] - zmin) / (zmax - zmin) * 40
 
-# --- 馬別集計・表示以下省略（既存コードを継続） ---
+# --- 馬別集計 & 表示 ---
+# 馬別に偏差値の平均と標準偏差を計算
+summary = df.groupby('馬名')['偏差値'].agg(['mean','std']).reset_index()
+summary.columns = ['馬名','平均偏差値','安定性']
+# バランススコア：平均偏差値−安定性
+tsummary = summary.copy()
+summary['バランススコア'] = summary['平均偏差値'] - summary['安定性']
+
+# 1) 馬別評価一覧
+st.subheader('馬別 評価一覧')
+st.dataframe(summary.sort_values('バランススコア', ascending=False).reset_index(drop=True))
+
+# 2) 偏差値上位10頭
+st.subheader('偏差値上位10頭')
+top10 = summary.sort_values('平均偏差値', ascending=False).head(10)
+st.table(top10[['馬名','平均偏差値']])
+
+# 3) 本日の予想6頭
+combined = summary.sort_values('バランススコア', ascending=False).head(6)
+st.subheader('本日の予想6頭')
+st.table(combined)
+
+# --- 可視化 ---
+# バランススコアの棒グラフ
+fig1, ax1 = plt.subplots(figsize=(8,5))
+ax1.barh(combined['馬名'], combined['バランススコア'])
+ax1.invert_yaxis()
+ax1.set_xlabel('バランススコア')
+st.pyplot(fig1)
+
+# 偏差値 vs 安定性の散布図
+fig2, ax2 = plt.subplots(figsize=(10,6))
+ax2.scatter(summary['平均偏差値'], summary['安定性'], alpha=0.7)
+ax2.axvline(summary['平均偏差値'].mean(), linestyle='--')
+ax2.axhline(summary['安定性'].mean(), linestyle='--')
+for _, row in summary.iterrows():
+    ax2.text(row['平均偏差値'], row['安定性'], row['馬名'], fontsize=8)
+ax2.set_xlabel('平均偏差値')
+ax2.set_ylabel('安定性')
+st.pyplot(fig2)
+
+# 予想タグ
+st.subheader('本日の予想タグ')
+# タグマッピング
+tag_map = {1:'◎',2:'〇',3:'▲',4:'☆',5:'△',6:'△'}
+pred = combined.reset_index(drop=True).copy()
+pred['タグ'] = pred.index.map(lambda i: tag_map.get(i+1, ''))
+st.table(pred[['馬名','タグ','平均偏差値']])
+
+# --- ベット設定 ---
+st.subheader('ベット設定')
+scenarios = {
+    '通常':{'単勝':8,'複勝':22,'ワイド':40,'馬連':20,'三連複':0,'三連単':0},
+    '余裕':{'単勝':5,'複勝':15,'ワイド':20,'馬連':15,'三連複':25,'三連単':5}
+}
+# 予算・シナリオ選択
+scenario = st.selectbox('シナリオ', list(scenarios.keys()))
+budget = st.number_input('予算 (円)', min_value=1000, value=10000, step=1000)
+# 配分計算
+def allocate_budget(budget, perc):
+    raw = {k:budget*v/100 for k,v in perc.items()}
+    rnd = {k:int(v//100)*100 for k,v in raw.items()}
+    diff = budget - sum(rnd.values())
+    if diff>0:
+        key = max(perc, key=perc.get)
+        rnd[key] += diff
+    return rnd
+alloc = allocate_budget(budget, scenarios[scenario])
+# 表示
+alloc_df = pd.DataFrame.from_dict(alloc, orient='index', columns=['金額']).reset_index()
+alloc_df.columns = ['券種','金額(円)']
+st.table(alloc_df)
+# 詳細
+detail = st.selectbox('詳細表示', alloc_df['券種'])
+names = combined['馬名'].tolist()
+axis = names[0] if names else ''
+amt = alloc.get(detail, 0)
+if detail in ['単勝','複勝']:
+    st.write(f"{detail}：軸馬 {axis} に {amt:,}円")
+else:
+    if detail in ['馬連','ワイド']:
+        combos = [f"{a}-{b}" for a,b in combinations(names,2)]
+    elif detail=='馬連':
+        combos = [f"{axis}->{o}" for o in names if o!=axis]
+    elif detail=='三連複':
+        combos = [f"{axis}-{o1}-{o2}" for o1,o2 in combinations(names[1:],2)]
+    elif detail=='三連単':
+        combos = ["->".join(p) for p in permutations(names,3)]
+    else:
+        combos = []
+    cnt = len(combos)
+    if cnt>0:
+        unit = (amt//cnt)//100*100
+        rem = amt - unit*cnt
+        amounts=[unit+100 if i<rem//100 else unit for i in range(cnt)]
+        combo_df = pd.DataFrame({'組合せ':combos,'金額':amounts})
+        st.dataframe(combo_df)
+    else:
+        st.write('対象の買い目がありません')
