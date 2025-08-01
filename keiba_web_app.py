@@ -207,7 +207,7 @@ bet_share = {p: rem / len(parts) for p in parts}
 
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
-st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))（円）")
+st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額'])))
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
 st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
 
