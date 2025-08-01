@@ -182,4 +182,4 @@ top6 = summary.nlargest(6, 'バランス').reset_index(drop=True)
 tag_map = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
 top6['印'] = top6.index.to_series().map(lambda i: tag_map[i+1])
 st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
-```
+
