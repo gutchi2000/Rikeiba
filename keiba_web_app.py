@@ -207,8 +207,6 @@ parts = {
 raw_share = rem / len(parts)
 bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
 
-# --- 買い目と配分 ---
-st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
 rem  = total_budget - (pur1 + pur2)  # 残り予算
 with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
