@@ -100,7 +100,14 @@ GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
 grade_score = {k:v**2 for k,v in GRADE.items()}
 
 df['RawBase'] = df.apply(lambda r: grade_score.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['Raw']     = df['RawBase'] * df['枠'].map(gate_f)
+df['Raw'] = (
+    df['RawBase']
+    * df['脚質'].map(style_f)
+    * df['年齢'].map(age_f)
+    * df['性別'].map(sex_f)
+    * df['レース日'].map(sea_f)
+    * df['枠'].map(gate_f)
+)
 
 # --- 正規化＆Z化 ---
 df['Z_Raw']            = (df['Raw'] - df['Raw'].mean()) / df['Raw'].std(ddof=1)
