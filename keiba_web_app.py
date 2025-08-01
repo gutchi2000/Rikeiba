@@ -86,8 +86,9 @@ def split_frame(x):
         return pd.Series({'枠':np.nan, '番':np.nan, '馬名':str(x).strip()})
 stats = stats.join(stats['馬名'].apply(split_frame))
 # NaN枠は1に置換
-df = df.merge(
-    stats[['枠','番','馬名','性別','年齢','best_dist_time']].fillna({'枠':1}),
+# マージ
+stats = stats[['枠','番','馬名','性別','年齢','best_dist_time']].fillna({'枠':1})
+df = df.merge(stats, on='馬名', how='left'),
     on='馬名', how='left'
 )
 (
