@@ -65,6 +65,9 @@ frame_w = {str(i): st.sidebar.slider(f'{i}枠', 0.0, 2.0, 1.0, 0.1) for i in ran
 
 besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.1)
 
+# 斤量効果強度
+weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0, 0.1)
+
 total_budget = st.sidebar.slider("合計予算 (円)", 500, 50000, 10000, 500)
 scenario = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
 
@@ -82,10 +85,8 @@ if not excel_file or not html_file:
 # Excelデータ読み込み
 df1 = pd.read_excel(excel_file, sheet_name=0)
 df2 = pd.read_excel(excel_file, sheet_name=1)
-# 属性データを位置指定で取得（枠:col0, 番:col1, 馬名:col2, 性別:col3, 年齢:col4）
 attrs = df2.iloc[:, [0,2,3,4]].copy()
 attrs.columns = ['枠','馬名','性別','年齢']
-# 結合
 df = pd.merge(df1, attrs, on='馬名', how='left')
 
 # HTML血統データ読み込み（正規表現でパース）
@@ -99,7 +100,6 @@ for row in rows:
         kin  = re.sub(r'<.*?>', '', cells[1]).strip()
         blood.append((name, kin))
 blood_df = pd.DataFrame(blood, columns=['馬名', '血統'])
-# 結合
 df = pd.merge(df, blood_df, on='馬名', how='left')
 
 # 血統キーワード入力
@@ -107,13 +107,21 @@ st.subheader("血統キーワード")
 keywords = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
-# 馬一覧編集
+# 馬一覧編集（シート2の脚質・斤量参照）
 st.subheader("馬一覧と補正設定")
-base_cols = ['枠','馬名','性別','年齢']
+base_cols = ['枠','馬名','性別','年齢','脚質','斤量']
 df_edit = df[base_cols].copy()
-df_edit['脚質'] = ''
-df_edit['斤量'] = 0
-edited = st.data_editor(df_edit, num_rows='dynamic')
+edited = st.data_editor(
+    df_edit,
+    column_config={
+        '脚質': st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
+        '斤量': st.column_config.NumberColumn('斤量')
+    },
+    num_rows='static'
+)
+
+# 平均斤量算出
+avg_wt = edited['斤量'].mean()
 
 # スコア計算（各レース行）
 def calc_score(row):
@@ -129,19 +137,23 @@ def calc_score(row):
     fw = frame_w.get(str(row['枠']), 1.0)
     aw = age_w
     bt = besttime_w
+    # 斤量補正
+    wt = edited.loc[edited['馬名']==row['馬名'], '斤量'].values[0]
+    weight_factor = (wt / avg_wt) ** weight_coeff if avg_wt>0 else 1.0
     blood_bonus = bonus_point if any(k in str(row['血統']) for k in keywords) else 0
-    return raw * sw * gw * stw * fw * aw * bt + blood_bonus
+    return raw * sw * gw * stw * fw * aw * bt * weight_factor + blood_bonus
 
+# 各レース行にスコア適用
 df['score_raw'] = df.apply(calc_score, axis=1)
 df['score_norm'] = (df['score_raw'] - df['score_raw'].min())/(df['score_raw'].max()-df['score_raw'].min())*100
 
-# 馬ごとの統計
+# 馬統計
 agg = df.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
 agg.columns = ['馬名','AvgZ','Stdev']
 agg['Stability'] = -agg['Stdev']
 agg['RankZ'] = z_score(agg['AvgZ'])
 
-# 散布図
+# 散布図表示
 st.subheader("偏差値 vs 安定度 散布図")
 fig, ax = plt.subplots()
 ax.scatter(agg['RankZ'], agg['Stability'])
@@ -153,13 +165,13 @@ ax.text(60, avg_st-max(agg['Stability'])*0.1,'鉄板級')
 ax.text(40, avg_st-max(agg['Stability'])*0.1,'堅実型')
 st.pyplot(fig)
 
-# 上位6頭
-st.subheader("上位6頭")
+# 上位6頭表示
 top6 = agg.sort_values('RankZ',ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
+st.subheader("上位6頭")
 st.table(top6[['馬名','印']])
 
-# 買い目／配分
+# 買い目と配分
 pur1 = total_budget*0.25
 pur2 = total_budget*0.75
 rem = total_budget-(pur1+pur2)
