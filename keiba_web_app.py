@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,9 +30,9 @@ with st.sidebar:
     w_best    = st.number_input('距離ベスト重み',0.0, 1.0, 1.0, 0.1)
 
     st.subheader("最終スコア重み")
-    weight_z    = st.slider('偏差値 の重み',     0.0, 1.0, 0.7, 0.05)
-    weight_rb   = st.slider('RawBase偏差値 の重み', 0.0, 1.0, 0.2, 0.05)
-    weight_gate = st.slider('枠偏差値 の重み',    0.0, 1.0, 0.1, 0.05)
+    weight_z    = st.slider('偏差値 の重み',         0.0, 1.0, 0.7, 0.05)
+    weight_rb   = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.2, 0.05)
+    weight_gate = st.slider('枠偏差値 の重み',      0.0, 1.0, 0.1, 0.05)
 
 # ── キャッシュクリア注意 ──
 st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
@@ -109,7 +108,6 @@ def sex_f(sx): return {'牡':male_w,'牝':female_w,'セ':gelding_w}.get(sx,1.0)
 def sea_f(dt): m=dt.month; return spring_w if m in [3,4,5] else summer_w if m in [6,7,8] else autumn_w if m in [9,10,11] else winter_w
 
 def gate_factor(r):
-    # stats からマージされた '枠' 列を使用
     return gate_weights.get(r['枠'], 1.0)
 
 # ── 生スコア計算（非線形グレード強調²乗） ──
