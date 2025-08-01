@@ -8,18 +8,11 @@ import re
 
 # --- ヘルパー関数 ---
 def z_score(series: pd.Series) -> pd.Series:
-    """
-    与えられたSeriesを偏差値（平均50, 標準偏差10）に変換して返す
-    """
     mu = series.mean()
     sigma = series.std(ddof=0)
     return 50 + 10 * (series - mu) / sigma
 
-
 def grade_mark(z: float) -> str:
-    """
-    偏差値に基づき印（◎〇▲☆△×）を返す
-    """
     if z >= 70:
         return "◎"
     if z >= 60:
@@ -32,11 +25,7 @@ def grade_mark(z: float) -> str:
         return "△"
     return "×"
 
-
 def season_of(month: int) -> str:
-    """
-    月から四季を判定して文字列を返す
-    """
     if 3 <= month <= 5:
         return '春'
     if 6 <= month <= 8:
@@ -91,16 +80,27 @@ if not excel_file or not html_file:
     st.stop()
 
 # Excelデータ読み込み
-# Excelデータ読み込み
-# 1枚目シート: 基本成績データ
 df1 = pd.read_excel(excel_file, sheet_name=0)
-# 2枚目シート: 属性データ (枠, 番, 馬名, 性別, 年齢, ベストタイムなど)
 df2 = pd.read_excel(excel_file, sheet_name=1)
-# 必要な列: 枠, 馬名, 性別, 年齢 を df2 から取得
-attrs = df2[['枠','馬名','性別','年齢']]
-# 基本データ(df1)と属性データを馬名で結合
+# 属性データを位置指定で取得（枠:col0, 番:col1, 馬名:col2, 性別:col3, 年齢:col4）
+attrs = df2.iloc[:, [0,2,3,4]].copy()
+attrs.columns = ['枠','馬名','性別','年齢']
+# 結合
 df = pd.merge(df1, attrs, on='馬名', how='left')
-df = df.merge(blood_df, on='馬名', how='left')
+
+# HTML血統データ読み込み（正規表現でパース）
+content = html_file.read().decode(errors='ignore')
+rows = re.findall(r'<tr[\s\S]*?<\/tr>', content)
+blood = []
+for row in rows:
+    cells = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', row)
+    if len(cells) >= 2:
+        name = re.sub(r'<.*?>', '', cells[0]).strip()
+        kin  = re.sub(r'<.*?>', '', cells[1]).strip()
+        blood.append((name, kin))
+blood_df = pd.DataFrame(blood, columns=['馬名', '血統'])
+# 結合
+df = pd.merge(df, blood_df, on='馬名', how='left')
 
 # 血統キーワード入力
 st.subheader("血統キーワード")
@@ -109,7 +109,7 @@ bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # 馬一覧編集
 st.subheader("馬一覧と補正設定")
-base_cols = ['枠', '馬名', '性別', '年齢']
+base_cols = ['枠','馬名','性別','年齢']
 df_edit = df[base_cols].copy()
 df_edit['脚質'] = ''
 df_edit['斤量'] = 0
@@ -122,64 +122,55 @@ def calc_score(row):
     gp = GP_map.get(row['クラス名'], 1)
     N, p = row['頭数'], row['確定着順']
     raw = gp * (N + 1 - p) + lambda_part * gp
-    # 季節判定
     date = pd.to_datetime(row['レース日'], errors='coerce')
     sw = season_w[season_of(date.month)]
-    # 属性補正
     gw = gender_w.get(row['性別'], 1.0)
     stw = style_w.get(edited.loc[edited['馬名']==row['馬名'], '脚質'].values[0], 1.0)
     fw = frame_w.get(str(row['枠']), 1.0)
     aw = age_w
     bt = besttime_w
-    # 血統補正
     blood_bonus = bonus_point if any(k in str(row['血統']) for k in keywords) else 0
     return raw * sw * gw * stw * fw * aw * bt + blood_bonus
 
-# レース結果ごとにスコア計算
 df['score_raw'] = df.apply(calc_score, axis=1)
-# 正規化 → 偏差値化
-df['score_norm'] = (df['score_raw'] - df['score_raw'].min()) / (df['score_raw'].max() - df['score_raw'].min()) * 100
+df['score_norm'] = (df['score_raw'] - df['score_raw'].min())/(df['score_raw'].max()-df['score_raw'].min())*100
 
-# 馬ごとの統計（平均偏差値、標準偏差）
+# 馬ごとの統計
 agg = df.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
-agg.columns = ['馬名', 'AvgZ', 'Stdev']
+agg.columns = ['馬名','AvgZ','Stdev']
 agg['Stability'] = -agg['Stdev']
 agg['RankZ'] = z_score(agg['AvgZ'])
 
-# 散布図描画
+# 散布図
 st.subheader("偏差値 vs 安定度 散布図")
 fig, ax = plt.subplots()
 ax.scatter(agg['RankZ'], agg['Stability'])
-# 四象限線・ラベル
 avg_st = agg['Stability'].mean()
 ax.axvline(50, color='gray'); ax.axhline(avg_st, color='gray')
-ax.text(60, avg_st + max(agg['Stability']) * 0.1, '一発警戒')
-ax.text(40, avg_st + max(agg['Stability']) * 0.1, '警戒必須')
-ax.text(60, avg_st - max(agg['Stability']) * 0.1, '鉄板級')
-ax.text(40, avg_st - max(agg['Stability']) * 0.1, '堅実型')
+ax.text(60, avg_st+max(agg['Stability'])*0.1,'一発警戒')
+ax.text(40, avg_st+max(agg['Stability'])*0.1,'警戒必須')
+ax.text(60, avg_st-max(agg['Stability'])*0.1,'鉄板級')
+ax.text(40, avg_st-max(agg['Stability'])*0.1,'堅実型')
 st.pyplot(fig)
 
-# 上位6頭印付け
-top6 = agg.sort_values('RankZ', ascending=False).head(6)
-top6['印'] = ['◎','〇','▲','☆','△','△']
+# 上位6頭
 st.subheader("上位6頭")
-st.table(top6[['馬名', '印']])
+top6 = agg.sort_values('RankZ',ascending=False).head(6)
+top6['印'] = ['◎','〇','▲','☆','△','△']
+st.table(top6[['馬名','印']])
 
-# 資金配分 and 買い目生成
-pur1 = total_budget * 0.25  # 単勝
-pur2 = total_budget * 0.75  # 複勝
-rem = total_budget - (pur1 + pur2)
-if scenario == '通常':
-    parts = ['馬連','ワイド','馬単']
-elif scenario == 'ちょい余裕':
-    parts = ['馬連','ワイド','馬単','三連複']
-else:
-    parts = ['馬連','ワイド','馬単','三連複','三連単']
-bet_share = {p: rem / len(parts) for p in parts}
+# 買い目／配分
+pur1 = total_budget*0.25
+pur2 = total_budget*0.75
+rem = total_budget-(pur1+pur2)
+if scenario=='通常': parts=['馬連','ワイド','馬単']
+elif scenario=='ちょい余裕': parts=['馬連','ワイド','馬単','三連複']
+else: parts=['馬連','ワイド','馬単','三連複','三連単']
+bet_share={p:rem/len(parts) for p in parts}
 
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
-st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
+st.table(pd.DataFrame.from_dict(bet_share,orient='index',columns=['金額']))
 
 st.subheader("推奨買い目例")
 st.write("単勝:", top6.iloc[0]['馬名'])
