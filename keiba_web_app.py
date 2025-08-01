@@ -77,7 +77,7 @@ keys = st.text_area("血統系統",height=100).splitlines()
 bp   = st.slider("血統ボーナス",0,20,5)
 
 # 平均斤量算
-avg_wt = horses['斤量'].mean()
+avg_wt = horses['input_wt'].mean()
 # スタイルマップ
 style_map = dict(zip(horses['馬名'],horses['脚質']))
 
