@@ -273,17 +273,19 @@ if choice in three:
             '金額': share_each
         })
 
-# 三連複（シナリオに含まれる場合）
+# --- 三連複（◎-〇▲☆△△ 10点買い） ---
 if '三連複' in parts:
-    n = len(others_names)
-    share_each = int(round(rem / n / 100) * 100)
-    for nm, mk in zip(others_names, others_symbols):
+    # ◎軸の残り5頭から2頭選ぶ組み合わせはC(5,2)=10通り
+    trio_pairs = list(combinations(others_names, 2))
+    n_trio = len(trio_pairs)  # 10
+    share_each = int(round(rem / n_trio / 100) * 100)
+    for pair in trio_pairs:
         bets.append({
-            '券種':'三連複',
-            '印':f'◎–{mk}',
-            '馬':h1,
-            '相手':nm,
-            '金額':share_each
+            '券種': '三連複',
+            '印': '◎-〇▲☆△△',
+            '馬':  h1,
+            '相手': '／'.join(pair),
+            '金額': share_each
         })
 
 # 三連単（シナリオ「余裕」の場合）
