@@ -264,21 +264,31 @@ if scenario == '通常':
 # — ちょい余裕 —  
 elif scenario == 'ちょい余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 で消費します")
-    # ワイド：◎–相手 で5通り
+    # ワイドの行数
     n_w = len(others_names)
-    share_w = int(round(rem / (n_w +  comb_n := len(list(combinations(others_names,2)))) / 100) * 100)
-    # まずワイド
+    # 三連複の組み合わせ数 C(5,2)=10
+    n_t = len(list(combinations(others_names, 2)))
+    # 合計行数で等分
+    share_each = int(round(rem / (n_w + n_t) / 100) * 100)
+    # ワイド
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
-            '券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_w
+            '券種':'ワイド',
+            '印':  f'◎–{mk}',
+            '馬':   h1,
+            '相手': nm,
+            '金額': share_each
         })
-    # 次に三連複10通り
-    trio = list(combinations(others_names,2))
-    for pair in trio:
+    # 三連複
+    for pair in combinations(others_names, 2):
         bets.append({
-            '券種':'三連複','印':'◎-〇▲☆△△','馬':h1,
-            '相手':'／'.join(pair),'金額':share_w
+            '券種':'三連複',
+            '印':  '◎-〇▲☆△△',
+            '馬':   h1,
+            '相手':'／'.join(pair),
+            '金額': share_each
         })
+
 
 # — 余裕 —  
 elif scenario == '余裕':
