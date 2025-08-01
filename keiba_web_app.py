@@ -165,55 +165,83 @@ top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭")
 st.table(top6[['馬名','印']])
 
-# --- 資金配分計算 ---
+# --- 資金配分＆組み合わせ生成 ---
+# ① 単勝・複勝の合計額算出
 main_share = 0.5
 pur_win   = round((total_budget * main_share * 0.25) / 100) * 100  # 単勝合計
 pur_place = round((total_budget * main_share * 0.75) / 100) * 100  # 複勝合計
-rem       = total_budget - (pur_win + pur_place)
 
-# 単複は◎と〇の２頭ずつ
-win_horses   = [top6.iloc[0]['馬名'], top6.iloc[1]['馬名']]  # ◎, 〇
-place_horses = [top6.iloc[0]['馬名'], top6.iloc[1]['馬名']]
+# ② 残りをシナリオに応じた券種に均等配分
+rem = total_budget - (pur_win + pur_place)
+parts_map = {
+    '通常':     ['choice'],
+    'ちょい余裕': ['choice', 'trifecta'],      # 三連複
+    '余裕':     ['choice', 'trifecta', 'trifecta_s'],  # 三連複・三連単
+}
+parts = parts_map[scenario]
+share_each = rem / len(parts)
+alloc = {
+    '単勝': pur_win,
+    '複勝': pur_place,
+}
+# choice は後で選ぶ馬連／ワイド／馬単の placeholder
+alloc.update({p: int(round(share_each/100))*100 for p in parts})
 
-# メイン券種はラジオ選択で１つだけ
+# ③ ◎＝１着、〇＝２着、他５頭を取得
+tansho  = top6.iloc[0]['馬名']  # ◎
+fukusho = top6.iloc[1]['馬名']  # 〇
+others5 = list(top6.iloc[1:6]['馬名'])
+
+# ④ 購入券種（馬連／ワイド／馬単）を選択
 with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
     choice = st.radio(
         "購入する券種を選択してください",
         ['馬連','ワイド','馬単'],
         index=1,
-        key="purchase_choice_main"
+        key="purchase_choice"
     )
-    st.write(f"▶︎ 選択された券種：{choice} に {rem:.0f}円")
+    st.write(f"▶︎ 選択された券種：{choice} に {alloc['choice']:.0f}円")
 
-# --- 組み合わせリスト作成 ---
-others5 = list(top6.iloc[1:6]['馬名'])  # 〇～△②
-
+# ⑤ 各券種の組み合わせリストを作成
 combos = {
-    '単勝':   win_horses,
-    '複勝':   place_horses,
-    choice:   [f"{top6.iloc[0]['馬名']}-{m}" 
-               if choice!='馬単' 
-               else f"{top6.iloc[0]['馬名']}>{m}" 
-               for m in others5],
+    '単勝':   [tansho, fukusho],
+    '複勝':   [tansho, fukusho],
+    'choice': [f"{tansho}-{m}" if choice!='馬単' else f"{tansho}>{m}" for m in others5],
+    'trifecta':  [f"{tansho}-{fukusho}-{m}" for m in others5],
+    'trifecta_s':[f"{tansho}>{fukusho}>{m}" for m in others5],
 }
 
-alloc = {
-    '単勝': pur_win,
-    '複勝': pur_place,
-    choice: rem,
-}
-
-# --- 各組み合わせに均等割り振って bets に格納 ---
+# ⑥ 全部を DataFrame 用に平らに並べ替え
 bets = []
-for kind, total in alloc.items():
-    combo_list = combos[kind]
-    n = len(combo_list)
-    amt_each = (total // n) // 100 * 100
-    remnant = total - amt_each * n
-    for i, comb in enumerate(combo_list):
-        amount = amt_each + (remnant if i==0 else 0)
-        bets.append({"券種": kind, "組み合わせ": comb, "金額": amount})
+# 単勝・複勝
+for kind, horses in [('単勝',combos['単勝']), ('複勝',combos['複勝'])]:
+    total = alloc[kind]
+    n = len(horses)
+    amt = (total//n)//100*100
+    remnant = total - amt*n
+    for i,h in enumerate(horses):
+        bets.append({
+            "券種": kind,
+            "組み合わせ": h,
+            "金額": amt + (remnant if i==0 else 0)
+        })
 
-# --- テーブル表示 ---
+# choice, trifecta, trifecta_s をシナリオに応じて
+for key in parts:
+    combo_list = combos[key]
+    total = alloc[key]
+    n = len(combo_list)
+    amt = (total//n)//100*100
+    remnant = total - amt*n
+    label = choice if key=='choice' else ('三連複' if key=='trifecta' else '三連単')
+    for i,c in enumerate(combo_list):
+        bets.append({
+            "券種": label,
+            "組み合わせ": c,
+            "金額": amt + (remnant if i==0 else 0)
+        })
+
+# ⑦ 表示
 st.subheader("推奨買い目一覧と配分（円）")
 st.table(pd.DataFrame(bets, columns=["券種","組み合わせ","金額"]))
+
