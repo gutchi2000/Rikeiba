@@ -109,15 +109,30 @@ df_score['score_norm']=(df_score['score_raw']-df_score['score_raw'].min())/(df_s
 df_agg=df_score.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
 df_agg.columns=['馬名','AvgZ','Stdev']; df_agg['Stability']=-df_agg['Stdev']; df_agg['RankZ']=z_score(df_agg['AvgZ'])
 
-# 散布図 st
+# 散布図表示
 st.subheader("散布図")
-fig,ax=plt.subplots();ax.scatter(df_agg['RankZ'],df_agg['Stability'])
-avg_st=df_agg['Stability'].mean(); ax.axvline(50); ax.axhline(avg_st)
-ax.text(60,avg_st+0.1,'一発警戒'); ax.text(40,avg_st+0.1,'警戒必須')
-ax.text(60,avg_st-0.1,'鉄板級'); ax.text(40,avg_st-0.1,'堅実型')
+fig, ax = plt.subplots()
+# プロットと馬名ラベルを追加
+for _, row in df_agg.iterrows():
+    x, y, name = row['RankZ'], row['Stability'], row['馬名']
+    ax.scatter(x, y)
+    ax.text(x + 0.5, y + 0.5, name, fontsize=8)
+# 背景グリッドを表示（方眼紙風）
+ax.grid(which='both', linestyle='--', linewidth=0.5)
+# 四象限線
+avg_st = df_agg['Stability'].mean()
+ax.axvline(50, color='gray')
+ax.axhline(avg_st, color='gray')
+# ラベル配置
+ax.text(60, avg_st + max(df_agg['Stability']) * 0.1, '一発警戒')
+ax.text(40, avg_st + max(df_agg['Stability']) * 0.1, '警戒必須')
+ax.text(60, avg_st - max(df_agg['Stability']) * 0.1, '鉄板級')
+ax.text(40, avg_st - max(df_agg['Stability']) * 0.1, '堅実型')
+
 st.pyplot(fig)
 
-# 上位6頭
+# 上位6頭表示
+
 top6=df_agg.sort_values('RankZ',ascending=False).head(6)
 top6['印']=['◎','〇','▲','☆','△','△']
 st.table(top6[['馬名','印']])
