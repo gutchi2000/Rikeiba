@@ -105,7 +105,7 @@ keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # --- スコア計算 ---
-avg_wt = horses['斤量'].mean()
+
 style_map = dict(zip(horses['馬名'], horses['脚質']))
 def calc_score(r):
     GP = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
@@ -118,10 +118,10 @@ def calc_score(r):
     fw  = frame_w.get(str(r['枠']), 1)
     aw  = age_w
     bt  = besttime_w
-    # 斤量補正: data_editorで入力した「斤量」列を使用
-    wt = r.get('斤量', np.nan)
-    weight_factor = ((wt / avg_wt) ** weight_coeff) if not np.isnan(wt) and avg_wt > 0 else 1
+    # 斤量補正なし
+    weight_factor = 1
     # 血統ボーナス
+    bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
     bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
     # 最終スコア
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
