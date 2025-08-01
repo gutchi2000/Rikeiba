@@ -32,9 +32,9 @@ with st.sidebar:
     with st.expander("枠順の重み (1〜8)", expanded=False):
         gate_w = {i: st.number_input(f'{i}枠重み', 0.0, 2.0, 1.0, 0.01) for i in range(1,9)}
     with st.expander("最終スコア重み", expanded=True):
-        weight_z    = st.slider('偏差値重み', 0.0, 1.0, 0.7, 0.05)
-        weight_rb   = st.slider('実績偏差値重み', 0.0, 1.0, 0.2, 0.05)
-        weight_gate = st.slider('枠順偏差値重み', 0.0, 1.0, 0.1, 0.05)
+        weight_z    = st.slider('偏差値重み',          0.0, 1.0, 0.7, 0.05)
+        weight_rb   = st.slider('実績偏差値重み',      0.0, 1.0, 0.2, 0.05)
+        weight_gate = st.slider('枠順偏差値重み',      0.0, 1.0, 0.1, 0.05)
 
 st.write("**設定変更後は『…』→『Clear cache』で再実行してください。**")
 
@@ -78,13 +78,12 @@ stats['best_dist_time'] = pd.to_numeric(
 )
 
 # merge
-
 df = df.merge(
     stats[['馬名','性別','年齢','best_dist_time','枠']],
     on='馬名', how='left'
 )
 
-# --- デフォルト脚質・斤量 ---
+# --- 脚質・斤量（デフォルト） ---
 df['脚質'] = df.get('脚質', '差し')
 df['today_weight'] = df.get('本斤量', 56)
 
@@ -104,7 +103,7 @@ df['Raw'] = (
     df['RawBase']
     * df['脚質'].map(style_f)
     * df['年齢'].map(age_f)
-    * df['性別'].map(sex_f)
+    * df['性別'].map(sx:=sex_f)
     * df['レース日'].map(sea_f)
     * df['枠'].map(gate_f)
 )
@@ -133,7 +132,7 @@ mn, mx = summary['mean_z'].min(), summary['mean_z'].max()
 if mx > mn:
     summary['偏差値'] = 30 + (summary['mean_z'] - mn) / (mx - mn) * 40
 else:
-    summary['偏差値'] = 50
+    summary['偏差値'] = summary['RawBase_mean']  # フォールバック
 
 a, b = summary['RawBase_mean'].min(), summary['RawBase_mean'].max()
 if b > a:
