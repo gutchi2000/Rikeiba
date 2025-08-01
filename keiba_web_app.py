@@ -70,8 +70,14 @@ attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 st.subheader("馬一覧と脚質入力")
 edited = st.data_editor(
     attrs,
+    column_order=['枠','馬名','性別','年齢','脚質','input_wt'],
     column_config={
         '脚質': st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
+        'input_wt': st.column_config.NumberColumn('斤量'),
+        '枠': st.column_config.NumberColumn('枠')
+    },
+    num_rows='static'
+))),
         '枠':  st.column_config.NumberColumn('枠')
     }, num_rows='static'
 )
