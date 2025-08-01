@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-import altair as alt
+import matplotlib.pyplot as plt
 
 # --- ヘルパー関数 ---
 def z_score(s: pd.Series) -> pd.Series:
@@ -19,6 +19,7 @@ st.sidebar.header("パラメータ設定")
 lambda_part    = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
 orig_weight    = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
 hist_weight    = 1 - orig_weight
+
 gender_w       = {g: st.sidebar.slider(g, 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
 style_w        = {s: st.sidebar.slider(s, 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
 season_w       = {s: st.sidebar.slider(s, 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
@@ -29,10 +30,11 @@ weight_coeff   = st.sidebar.slider("斤量効果強度",0.0,2.0,1.0)
 total_budget   = st.sidebar.slider("合計予算",500,50000,10000,500)
 scenario       = st.sidebar.selectbox("シナリオ",['通常','ちょい余裕','余裕'])
 
-# --- メイン ---
+# --- メイン画面 ---
 st.title("競馬予想アプリ（完成版）")
 
 # --- ファイルアップロード ---
+st.subheader("ファイルアップロード")
 excel_file = st.file_uploader("Excel (成績＆属性)", type='xlsx')
 html_file  = st.file_uploader("HTML (血統)", type='html')
 if not excel_file or not html_file:
@@ -92,23 +94,41 @@ def calc_score(r):
     bonus = bp if any(k in str(r.get('血統','')) for k in keys) else 0
     return raw*sw*gw*stw*fw*aw*bt*wfac + bonus
 
-df_score['score_raw'] = df_score.apply(calc_score, axis=1)
-df_score['score_norm']=((df_score['score_raw']-df_score['score_raw'].min())/(df_score['score_raw'].max()-df_score['score_raw'].min())*100)
+# スコア適用
+df_score['score_raw']  = df_score.apply(calc_score, axis=1)
+df_score['score_norm'] = ((df_score['score_raw'] - df_score['score_raw'].min()) / (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100)
 
 df_agg = df_score.groupby('馬名').agg(AvgZ=('score_norm','mean'),Stdev=('score_norm','std')).reset_index()
 df_agg['Stability'] = -df_agg['Stdev']
 df_agg['RankZ']     = z_score(df_agg['AvgZ'])
 
-# --- インタラクティブ散布図 (Altair) ---
-st.subheader("偏差値 vs 安定度 インタラクティブチャート")
-chart = alt.Chart(df_agg).mark_circle(size=60).encode(
-    x=alt.X('RankZ:Q', title='偏差値'),
-    y=alt.Y('Stability:Q', title='安定度'),
-    tooltip=['馬名','AvgZ','Stability']
-).properties(width=600, height=400)
-# 四象限線
-vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x')
-hline = alt.Chart(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y')
-st.altair_chart((chart + vline + hline).interactive(), use_container_width=True)
+# --- 散布図 ---
+st.subheader("偏差値 vs 安定度 散布図")
+fig, ax = plt.subplots(figsize=(10,8))
+ax.scatter(df_agg['RankZ'], df_agg['Stability'], s=50)
+avg_st = df_agg['Stability'].mean()
+# ラベル配置（四象限ごとにオフセット）
+for x, y, name in zip(df_agg['RankZ'], df_agg['Stability'], df_agg['馬名']):
+    if x >= 50 and y >= avg_st:
+        dx, dy = 2, 2
+    elif x < 50 and y >= avg_st:
+        dx, dy = -8, 2
+    elif x < 50 and y < avg_st:
+        dx, dy = -8, -6
+    else:
+        dx, dy = 2, -6
+    ax.text(x+dx, y+dy, name, fontsize=8)
+# グリッドと中心線
+ax.set_facecolor('#fafafa')
+ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+ax.axvline(50, color='gray', linewidth=1)
+ax.axhline(avg_st, color='gray', linewidth=1)
+# 四象限ラベル
+ax.text(60, avg_st+0.1, '一発警戒')
+ax.text(40, avg_st+0.1, '警戒必須')
+ax.text(60, avg_st-0.1, '鉄板級')
+ax.text(40, avg_st-0.1, '堅実型')
+plt.tight_layout()
+st.pyplot(fig)
 
 # --- 上位6頭印付け & 買い目生成省略 ---
