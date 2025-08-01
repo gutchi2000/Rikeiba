@@ -92,8 +92,8 @@ def calc_score(r):
     bonus = bp if any(k in str(r.get('血統','')) for k in keys) else 0
     return raw*sw*gw*stw*fw*aw*bt*wfac + bonus
 
-=df_score['score_raw'] = df_score.apply(calc_score, axis=1)
-=df_score['score_norm']=((df_score['score_raw']-df_score['score_raw'].min())/(df_score['score_raw'].max()-df_score['score_raw'].min())*100)
+df_score['score_raw'] = df_score.apply(calc_score, axis=1)
+df_score['score_norm']=((df_score['score_raw']-df_score['score_raw'].min())/(df_score['score_raw'].max()-df_score['score_raw'].min())*100)
 
 df_agg = df_score.groupby('馬名').agg(AvgZ=('score_norm','mean'),Stdev=('score_norm','std')).reset_index()
 df_agg['Stability'] = -df_agg['Stdev']
