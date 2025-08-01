@@ -109,22 +109,37 @@ bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # 馬一覧編集（シート2参照で属性を取得）
 st.subheader("馬一覧と補正設定")
-# df2の列名を確認
-st.write("シート2 の列名：", df2.columns.tolist())
-# sheet2から属性データを取得（ここを適切な列名に修正してください）
-# 以下は例です。列名が異なる場合はdf2.columnsの出力を参照して修正を。
-df2_attrs = df2.copy()
-# attrs = df2_attrs[['枠','馬番','馬名','性別','年齢','脚質']]
-# ここでは一旦すべての列を表示
-edited_attrs = st.data_editor(df2_attrs, num_rows='static')
+# 2枚目シートをマルチヘッダーで読み込み（勝率系は不要、属性列のみ）
+df2 = pd.read_excel(excel_file, sheet_name=1, header=[0,1])
+# ヘッダーを平坦化
+cols = []
+for a,b in df2.columns:
+    if pd.isna(a): cols.append(b)
+    elif pd.isna(b): cols.append(a)
+    else: cols.append(f"{a}_{b}")
+df2.columns = cols
+# 必要な属性列を抽出
+# シート2に含まれる: 枠, 馬名, 性別, 年齢, ベストタイム
+attrs = df2[['枠','馬名','性別','年齢','ベストタイム']].copy()
+# シート1から斤量を取得
+df1 = pd.read_excel(excel_file, sheet_name=0)
+f1_wt = df1[['馬名','斤量']]
+# 属性と斤量を結合
+df_edit = pd.merge(attrs, f1_wt, on='馬名', how='left')
+# 脚質は手動選択用に空欄追加
+df_edit['脚質'] = ''
+# 編集用テーブル
+edited = st.data_editor(
+    df_edit,
+    column_config={
+        '脚質': st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
+        '斤量': st.column_config.NumberColumn('斤量')
+    },
+    num_rows='static'
+)
 
-# 以下は斤量マージ用例です
-st.write("シート1 の馬名と斤量を参照します。")
-# 以降、実際の列名を確認後に修正をお願いします。
-# df1_wt = pd.read_excel(excel_file, sheet_name=0)[['馬名','斤量']]
-# df_edit = pd.merge(attrs, df1_wt, on='馬名', how='left')
-
-# 平均斤量算出例（要修正）
+# 平均斤量算出
+avg_wt = edited['斤量'].mean()例（要修正）
 # avg_wt = edited['斤量'].mean()
 
 # ※ まずは列名をご確認の上、こちらのコードを修正してください。
