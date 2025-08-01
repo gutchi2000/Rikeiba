@@ -5,6 +5,7 @@ import re
 import matplotlib.pyplot as plt
 import altair as alt
 from itertools import combinations
+from itertools import product
 
 # 日本語フォント設定（matplotlib用）
 plt.rcParams['font.family'] = 'sans-serif'
@@ -289,17 +290,27 @@ if '三連複' in parts:
             '金額': share_each
         })
 
-# 三連単（シナリオ「余裕」の場合）
+# --- 三連単フォーメーション（◎-〇▲-〇▲☆△△ 8点買い） ---
 if '三連単' in parts:
-    n = len(others_names)
-    share_each = int(round(rem / n / 100) * 100)
-    for nm, mk in zip(others_names, others_symbols):
+    # 2着候補：top6[1] (〇), top6[2] (▲)
+    second_opts = others_names[:2]                   # [h2, h3]
+    # 3着候補：残り5頭すべて（〇,▲,☆,△,△）
+    third_opts  = others_names                      # [h2, h3, h4, h5, h6]
+    combos = []
+    for s in second_opts:
+        for t in third_opts:
+            if t != s:
+                combos.append((s, t))
+    # combos の長さは 2×4 = 8
+    n_combo = len(combos)
+    share_each = int(round(rem / n_combo / 100) * 100)
+    for s, t in combos:
         bets.append({
-            '券種':'三連単マルチ',
-            '印':f'◎–{mk}',
-            '馬':h1,
-            '相手':nm,
-            '金額':share_each
+            '券種': '三連単フォーメーション',
+            '印':   '◎-〇▲-〇▲☆△△',
+            '馬':    h1,
+            '相手':  f"{s}／{t}",
+            '金額':  share_each
         })
 
 # DataFrame にして見やすく整形
