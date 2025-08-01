@@ -29,12 +29,18 @@ with st.sidebar:
     w_jin     = st.number_input('斤量重み',      0.0, 1.0, 1.0, 0.1)
     w_best    = st.number_input('距離ベスト重み',0.0, 1.0, 1.0, 0.1)
 
+    st.subheader("枠順重み設定 (1～8) それぞれの枠の重みを入力")
+    gate_weights = {}
+    for gate in range(1,9):
+        gate_weights[gate] = st.number_input(f'{gate}枠の重み', 0.0, 2.0, 1.0, 0.01)
+
     st.subheader("最終スコア重み")
     weight_z    = st.slider('偏差値 の重み',         0.0, 1.0, 0.7, 0.05)
     weight_rb   = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.2, 0.05)
     weight_gate = st.slider('枠偏差値 の重み',      0.0, 1.0, 0.1, 0.05)
 
 # ── キャッシュクリア注意 ──
+st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 
 # ── データアップロード ──
@@ -182,4 +188,4 @@ top6 = summary.nlargest(6, 'バランス').reset_index(drop=True)
 tag_map = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
 top6['印'] = top6.index.to_series().map(lambda i: tag_map[i+1])
 st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
-
+```
