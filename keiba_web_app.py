@@ -160,6 +160,10 @@ hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y
 chart = (points + labels + quad + vline + hline)
 st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
 
+# --- 散布図下に馬名＆偏差値テーブル ---
+st.subheader("馬名と偏差値一覧")
+st.table(df_agg[['馬名','RankZ']].rename(columns={'RankZ':'偏差値'}))
+
 # --- 上位6頭印付け & 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
