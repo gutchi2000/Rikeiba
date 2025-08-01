@@ -53,8 +53,14 @@ if not excel_file or not html_file:
 # --- データ読み込み ---
 df_score = pd.read_excel(excel_file, sheet_name=0)
 sheet2   = pd.read_excel(excel_file, sheet_name=1)
-attrs    = sheet2.iloc[:, [0,2,5,3,4]].copy()
+attrs = sheet2.iloc[:, [0,2,5,3,4]].copy()
 attrs.columns = ['枠','馬名','脚質','性別','年齢']
+# シート1から斤量取得
+initial_wt = pd.read_excel(excel_file, sheet_name=0)[['馬名','斤量']]
+# 編集前テーブルに斤量列を追加
+attrs = attrs.merge(initial_wt, on='馬名', how='left')
+attrs.rename(columns={'斤量':'input_wt'}, inplace=True)
+# 編集用カラム名調整: 表示は斤量とする
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質入力")
