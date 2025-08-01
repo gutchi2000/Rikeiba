@@ -125,22 +125,40 @@ df_agg.columns     = ['馬名','AvgZ','Stdev']
 df_agg['Stability'] = -df_agg['Stdev']
 df_agg['RankZ']     = z_score(df_agg['AvgZ'])
 
-# --- 散布図（Altair テキスト付き） ---
+# --- 散布図（Altair テキスト付き + 象限ラベル） ---
 st.subheader("偏差値 vs 安定度 散布図")
-# Altairで散布図 + テキストラベル
-chart = alt.Chart(df_agg).mark_circle(size=100).encode(
+# 四象限ラベル用データ
+avg_st = df_agg['Stability'].mean()
+quad_labels = pd.DataFrame([
+    {'RankZ':75, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'一発警戒'},
+    {'RankZ':25, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'警戒必須'},
+    {'RankZ':75, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'鉄板級'},
+    {'RankZ':25, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'堅実型'}
+])
+# 基本散布図
+points = alt.Chart(df_agg).mark_circle(size=100).encode(
     x=alt.X('RankZ:Q', title='偏差値'),
-    y=alt.Y('Stability:Q', title='安定度')
+    y=alt.Y('Stability:Q', title='安定度'),
+    tooltip=['馬名','AvgZ','Stdev']
 )
+# 馬名テキスト
 labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').encode(
     x='RankZ:Q',
     y='Stability:Q',
     text='馬名:N'
 )
+# 象限ラベル
+quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='black').encode(
+    x='RankZ:Q',
+    y='Stability:Q',
+    text='label:N'
+)
+# 中心線
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
-hline = alt.Chart(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y:Q')
-st.altair_chart((chart + labels + vline + hline).properties(width=600, height=400).interactive(), use_container_width=True)
-
+hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y='y:Q')
+# 合成
+chart = (points + labels + quad + vline + hline)
+st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
 
 # --- 上位6頭印付け & 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
