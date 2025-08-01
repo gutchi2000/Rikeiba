@@ -132,7 +132,11 @@ chart = alt.Chart(df_agg).mark_circle(size=100).encode(
     x=alt.X('RankZ:Q', title='偏差値'),
     y=alt.Y('Stability:Q', title='安定度')
 )
-labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10).encode(
+labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').encode(
+    x='RankZ:Q',
+    y='Stability:Q',
+    text='馬名:N'
+)(
     x='RankZ:Q',
     y='Stability:Q',
     text='馬名:N'
