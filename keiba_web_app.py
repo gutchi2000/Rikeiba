@@ -61,31 +61,23 @@ sheet2 = sheet2.drop_duplicates(subset=sheet2.columns[2], keep='first').reset_in
 sheet2 = pd.read_excel(excel_file, sheet_name=1)
 attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
 attrs.columns = ['枠','番','馬名','性別','年齢']
-# 脚質と斤量の入力用列を追加
+# 脚質の入力用列を追加
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
 
 # --- 馬一覧編集 ---
-st.subheader("馬一覧と脚質・斤量入力")
-# 編集用テーブルを定義
+st.subheader("馬一覧と脚質入力")
 edited = st.data_editor(
     attrs,
-    column_order=['枠','馬名','性別','年齢','脚質','斤量'],
+    column_order=['枠','番','馬名','性別','年齢','脚質'],
     column_config={
-        '脚質': st.column_config.SelectboxColumn(
-            '脚質', options=['逃げ','先行','差し','追込'],
-            help='脚質を選択してください'
-        ),
-        '斤量': st.column_config.NumberColumn(
-            '斤量', format="0.0",
-            help='馬の斤量を入力してください'
-        ),
-        '枠': st.column_config.NumberColumn(
-            '枠', help='枠順'
-        )
+        '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])
     },
     use_container_width=True,
     num_rows='static'
+)
+# 編集後のテーブルを horses に反映
+horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質']]
 )
 # 編集後のテーブルを horses に反映
 # 編集後のテーブルを horses に反映
