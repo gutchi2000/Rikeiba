@@ -1,149 +1,179 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from bs4 import BeautifulSoup
+import datetime
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 
-# 日本語フォント設定
-font_manager.fontManager.addfont("ipaexg.ttf")
-plt.rcParams['font.family'] = font_manager.FontProperties(fname='ipaexg.ttf').get_name()
+# --- ヘルパー関数 ---
+def z_score(series: pd.Series) -> pd.Series:
+    mu = series.mean()
+    sigma = series.std(ddof=0)
+    return 50 + 10 * (series - mu) / sigma
 
-st.set_page_config(layout="wide")
-st.title('競馬予想アプリ（完成版）')
+def grade_mark(z: float) -> str:
+    if z >= 70:
+        return "◎"
+    if z >= 60:
+        return "〇"
+    if z >= 50:
+        return "▲"
+    if z >= 40:
+        return "☆"
+    if z >= 30:
+        return "△"
+    return "×"
 
-# --- サイドバー：重み設定 ---
-with st.sidebar:
-    st.header("重み設定")
-    with st.expander("性別の重み", expanded=False):
-        male_w    = st.number_input('牡馬重み',   0.0, 2.0, 1.1, 0.01)
-        female_w  = st.number_input('牝馬重み',   0.0, 2.0, 1.0, 0.01)
-        gelding_w = st.number_input('せん馬重み', 0.0, 2.0, 0.95,0.01)
-    with st.expander("脚質の重み", expanded=False):
-        nige_w    = st.number_input('逃げ', 0.0, 2.0, 1.2, 0.01)
-        senko_w   = st.number_input('先行', 0.0, 2.0, 1.1, 0.01)
-        sashi_w   = st.number_input('差し', 0.0, 2.0, 1.0, 0.01)
-        ooka_w    = st.number_input('追込', 0.0, 2.0, 0.9, 0.01)
-    with st.expander("四季の重み", expanded=False):
-        spring_w  = st.number_input('春', 0.0, 2.0, 1.0, 0.01)
-        summer_w  = st.number_input('夏', 0.0, 2.0, 1.1, 0.01)
-        autumn_w  = st.number_input('秋', 0.0, 2.0, 1.0, 0.01)
-        winter_w  = st.number_input('冬', 0.0, 2.0, 0.95,0.01)
-    w_best   = st.number_input('ベストタイム重み', 0.0, 1.0, 1.0, 0.1)
-    with st.expander("枠順の重み (1〜8)", expanded=False):
-        gate_w = {i: st.number_input(f'{i}枠重み', 0.0, 2.0, 1.0, 0.01) for i in range(1,9)}
-    with st.expander("最終スコア重み", expanded=True):
-        weight_z    = st.slider('偏差値重み',          0.0, 1.0, 0.7, 0.05)
-        weight_rb   = st.slider('実績偏差値重み',      0.0, 1.0, 0.2, 0.05)
-        weight_gate = st.slider('枠順偏差値重み',      0.0, 1.0, 0.1, 0.05)
+def season_of(month: int) -> str:
+    if 3 <= month <= 5:
+        return '春'
+    if 6 <= month <= 8:
+        return '夏'
+    if 9 <= month <= 11:
+        return '秋'
+    return '冬'
 
-st.write("**設定変更後は『…』→『Clear cache』で再実行してください。**")
+# --- サイドバー設定 ---
+st.sidebar.header("パラメータ設定")
+lambda_part = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
+orig_weight = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
+hist_weight = 1.0 - orig_weight
 
-# --- データアップロード ---
-upload = st.file_uploader('成績＆馬情報 (XLSX)', type='xlsx')
-if not upload:
+st.sidebar.subheader("性別重み")
+gender_w = {
+    '牡': st.sidebar.slider('牡馬', 0.0, 2.0, 1.0, 0.1),
+    '牝': st.sidebar.slider('牝馬', 0.0, 2.0, 1.0, 0.1),
+    'セ': st.sidebar.slider('せん馬', 0.0, 2.0, 1.0, 0.1)
+}
+
+st.sidebar.subheader("脚質重み")
+style_w = {
+    '逃げ': st.sidebar.slider('逃げ', 0.0, 2.0, 1.0, 0.1),
+    '先行': st.sidebar.slider('先行', 0.0, 2.0, 1.0, 0.1),
+    '差し': st.sidebar.slider('差し', 0.0, 2.0, 1.0, 0.1),
+    '追込': st.sidebar.slider('追込', 0.0, 2.0, 1.0, 0.1)
+}
+
+st.sidebar.subheader("四季重み")
+season_w = {
+    s: st.sidebar.slider(f'{s}', 0.0, 2.0, 1.0, 0.1)
+    for s in ['春','夏','秋','冬']
+}
+
+age_w = st.sidebar.number_input("年齢重み（全馬共通）", 0.0, 5.0, 1.0, 0.1)
+
+st.sidebar.subheader("枠順重み")
+frame_w = {str(i): st.sidebar.slider(f'{i}枠',0.0,2.0,1.0,0.1) for i in range(1,10)}
+
+besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.1)
+
+total_budget = st.sidebar.slider("合計予算 (円)",500,50000,10000,500)
+scenario = st.sidebar.selectbox("シナリオ",['通常','ちょい余裕','余裕'])
+
+# --- メイン画面 ---
+st.title("競馬予想アプリ")
+
+# ファイルアップロード
+st.subheader("ファイルアップロード")
+excel_file = st.file_uploader("成績アップロード（Excel）", type=['xlsx'])
+html_file = st.file_uploader("血統アップロード（HTML）", type=['html'])
+if not excel_file or not html_file:
+    st.info("Excel と HTML を両方アップロードしてください。")
     st.stop()
-xls = pd.ExcelFile(upload)
 
-# --- 成績データ読み込み ---
-df = xls.parse(0, parse_dates=['レース日'])
-df['馬名'] = df['馬名'].astype(str).str.strip()
+# データ読み込み
+df = pd.read_excel(excel_file, sheet_name=0)
+# 血統読み込み
+soup = BeautifulSoup(html_file.read(), 'html.parser')
+blood = []
+for tr in soup.find_all('tr'):
+    td = tr.find_all(['td','th'])
+    if len(td)>=2:
+        blood.append((td[0].get_text(strip=True), td[1].get_text(strip=True)))
+blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
+df = df.merge(blood_df, on='馬名', how='left')
 
-# --- 馬情報シート読み込み＆整形 ---
-stats = xls.parse(1, header=1)
-col_map = {}
-for c in stats.columns:
-    s = str(c)
-    if '馬名' in s:      col_map[c] = '馬名'
-    if '性別' in s:      col_map[c] = '性別'
-    if '年齢' in s:      col_map[c] = '年齢'
-    if 'ベストタイム' in s: col_map[c] = 'ベストタイム'
-stats = stats.rename(columns=col_map)[['馬名','性別','年齢','ベストタイム']]
-stats['馬名'] = stats['馬名'].astype(str)
+# 血統キーワード入力
+st.subheader("血統キーワード")
+keywords = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
+bonus_point = st.slider("血統ボーナス点数",0,20,5)
 
-# 「枠-番-馬名」分割
-if stats['馬名'].str.contains('-').any():
-    sp = stats['馬名'].str.split('-', 2, expand=True)
-    stats['枠']   = pd.to_numeric(sp[0], errors='coerce').fillna(1).astype(int)
-    stats['番']   = pd.to_numeric(sp[1], errors='coerce')
-    stats['馬名'] = sp[2].str.strip()
+# 馬一覧編集
+st.subheader("馬一覧と補正設定")
+base_cols = ['枠','馬名','性別','年齢']
+df_edit = df[base_cols].copy()
+df_edit['脚質'] = ''
+df_edit['斤量'] = 0
+edited = st.experimental_data_editor(df_edit, num_rows='dynamic')
+
+# スコア計算 per race-record
+def calc_score(row):
+    GP_map = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,"オープン特別":4,
+              "3勝クラス":3,"2勝クラス":2,"1勝クラス":1,"新馬・未勝利":1}
+    gp = GP_map.get(row['クラス名'],1)
+    N = row['頭数']; p = row['確定着順']
+    raw = gp*(N+1-p) + lambda_part*gp
+    # Season
+    date = pd.to_datetime(row['レース日'], errors='coerce')
+    sw = season_w[season_of(date.month)]
+    # Attribute weights
+    gw = gender_w.get(row['性別'],1.0)
+    stw = style_w.get(edited.loc[edited['馬名']==row['馬名'],'脚質'].values[0],1.0)
+    fw = frame_w.get(str(row['枠']),1.0)
+    aw = age_w
+    # BestTime placeholder: 全レース共通1.0
+    bt = besttime_w
+    return raw*sw*gw*stw*fw*aw*bt
+
+# 各レース行にスコア
+df['score_raw'] = df.apply(calc_score, axis=1)
+# 正規化0-100→偏差値化
+df['score_norm'] = (df['score_raw'] - df['score_raw'].min())/(df['score_raw'].max()-df['score_raw'].min())*100
+# 馬ごとの平均偏差値と安定度(標準偏差)
+agg = df.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
+agg.columns=['馬名','AvgZ','Stdev']
+agg['Stability']= -agg['std']
+agg['RankZ']= z_score(agg['AvgZ'])
+
+# 散布図描画
+st.subheader("偏差値 vs 安定度 散布図")
+fig, ax = plt.subplots()
+ax.scatter(agg['RankZ'], agg['Stability'])
+# 四象限線
+ax.axvline(50, color='gray'); ax.axhline(agg['Stability'].mean(), color='gray')
+# ラベル
+ax.text(60, agg['Stability'].mean()+agg['Stability'].max()*0.1, '一発警戒')
+ax.text(40, agg['Stability'].mean()+agg['Stability'].max()*0.1, '警戒必須')
+ax.text(60, agg['Stability'].mean()-agg['Stability'].max()*0.1, '鉄板級')
+ax.text(40, agg['Stability'].mean()-agg['Stability'].max()*0.1, '堅実型')
+st.pyplot(fig)
+
+# 上位6頭印付け
+top6 = agg.sort_values('RankZ', ascending=False).head(6)
+top6['印'] = ['◎','〇','▲','☆','△','△']
+st.subheader("上位6頭")
+st.table(top6[['馬名','印']])
+
+# 資金配分
+pur1 = total_budget*0.25  # 単勝
+pur2 = total_budget*0.75  # 複勝
+rem = total_budget - (pur1+pur2)
+if scenario=='通常':
+    parts = ['馬連','ワイド','馬単']
+elif scenario=='ちょい余裕':
+    parts = ['馬連','ワイド','馬単','三連複']
 else:
-    stats['枠'] = 1
-    stats['番'] = np.nan
+    parts = ['馬連','ワイド','馬単','三連複','三連単']
+bet_share = {p: rem/len(parts) for p in parts}
 
-# ベストタイム数値化
-stats['best_dist_time'] = pd.to_numeric(
-    stats['ベストタイム'].str.extract(r'(\d+)')[0], errors='coerce'
-).fillna(
-    stats['ベストタイム'].str.extract(r'(\d+)')[0].astype(float).max()
-)
+st.subheader("買い目と配分（円）")
+st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
+st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
 
-# merge
-df = df.merge(
-    stats[['馬名','性別','年齢','best_dist_time','枠']],
-    on='馬名', how='left'
-)
-
-# --- 脚質・斤量（デフォルト） ---
-df['脚質'] = df.get('脚質', '差し')
-df['today_weight'] = df.get('本斤量', 56)
-
-# --- ファクター関数 ---
-def style_f(s): return {'逃げ':nige_w,'先行':senko_w,'差し':sashi_w,'追込':ooka_w}.get(s,1)
-def age_f(a):   return 1+0.2*(1-abs(a-5)/5)
-def sex_f(sx):  return {'牡':male_w,'牝':female_w,'セ':gelding_w}.get(sx,1)
-def sea_f(dt):  m=dt.month; return spring_w if m in [3,4,5] else summer_w if m in [6,7,8] else autumn_w if m in [9,10,11] else winter_w
-def gate_f(x): return gate_w.get(x,1)
-
-# --- スコア計算 ---
-GRADE = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,'3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬':1,'未勝利':1}
-grade_score = {k:v**2 for k,v in GRADE.items()}
-
-df['RawBase'] = df.apply(lambda r: grade_score.get(r['クラス名'],1)*(r['頭数']+1-r['確定着順']), axis=1)
-df['Raw'] = (
-    df['RawBase']
-    * df['脚質'].map(style_f)
-    * df['年齢'].map(age_f)
-    * df['性別'].map(sx:=sex_f)
-    * df['レース日'].map(sea_f)
-    * df['枠'].map(gate_f)
-)
-
-# --- 正規化＆Z化 ---
-df['Z_Raw']            = (df['Raw'] - df['Raw'].mean()) / df['Raw'].std(ddof=1)
-df['Z_best_dist_time'] = (df['best_dist_time'] - df['best_dist_time'].mean()) / df['best_dist_time'].std(ddof=1)
-df['Z_枠']             = (df['枠'].map(gate_f) - df['枠'].map(gate_f).mean()) / df['枠'].map(gate_f).std(ddof=1)
-
-# --- 合成スコア ---
-df['total_z'] = (
-      df['Z_Raw']            * 8
-    + df['Z_best_dist_time'] * w_best
-    + df['Z_枠']             * weight_gate
-) / (8 + w_best + weight_gate)
-
-# --- 馬別集計＆偏差値化 ---
-summary = df.groupby('馬名').agg(
-    mean_z       = ('total_z','mean'),
-    std_z        = ('total_z','std'),
-    RawBase_mean = ('RawBase','mean')
-).reset_index()
-summary['std_z'] = summary['std_z'].fillna(0)
-
-mn, mx = summary['mean_z'].min(), summary['mean_z'].max()
-if mx > mn:
-    summary['偏差値'] = 30 + (summary['mean_z'] - mn) / (mx - mn) * 40
-else:
-    summary['偏差値'] = summary['RawBase_mean']  # フォールバック
-
-a, b = summary['RawBase_mean'].min(), summary['RawBase_mean'].max()
-if b > a:
-    summary['実績偏差値'] = 30 + (summary['RawBase_mean'] - a) / (b - a) * 40
-else:
-    summary['実績偏差値'] = 50
-
-summary['バランス'] = weight_z*summary['偏差値'] + weight_rb*summary['実績偏差値'] - summary['std_z']
-
-# --- 結果表示 ---
-st.subheader('本日の予想6頭')
-top6 = summary.nlargest(6,'バランス').reset_index(drop=True)
-top6['印'] = ['◎','〇','▲','△','△','△']
-st.table(top6[['印','馬名','偏差値','実績偏差値','バランス']])
+# 買い目例表示（簡易）
+st.subheader("推奨買い目")
+st.write("単勝:", top6.iloc[0]['馬名'])
+st.write("複勝:", top6.iloc[1]['馬名'])
+st.write("馬連/ワイド/馬単:", f"{top6.iloc[0]['馬名']}-{top6.iloc[1]['馬名']}")
+st.write("三連複:", f"{top6.iloc[0]['馬名']}-{','.join(top6.iloc[1:5]['馬名'].tolist())}")
+st.write("三連単マルチ:", f"{top6.iloc[0]['馬名']} 軸 → {','.join(top6.iloc[1:6]['馬名'].tolist())}")
