@@ -4,6 +4,7 @@ import numpy as np
 import datetime
 import matplotlib.pyplot as plt
 import io
+import re
 
 # --- ヘルパー関数 ---
 def z_score(series: pd.Series) -> pd.Series:
@@ -17,7 +18,7 @@ def z_score(series: pd.Series) -> pd.Series:
 
 def grade_mark(z: float) -> str:
     """
-    偏差値に基づき印（◎◯▲☆△×）を返す
+    偏差値に基づき印（◎〇▲☆△×）を返す
     """
     if z >= 70:
         return "◎"
@@ -71,7 +72,7 @@ season_w = {s: st.sidebar.slider(f'{s}', 0.0, 2.0, 1.0, 0.1) for s in ['春','�
 age_w = st.sidebar.number_input("年齢重み（全馬共通）", 0.0, 5.0, 1.0, 0.1)
 
 st.sidebar.subheader("枠順重み")
-frame_w = {str(i): st.sidebar.slider(f'{i}枠', 0.0, 2.0, 1.0, 0.1) for i in range(1,10)}
+frame_w = {str(i): st.sidebar.slider(f'{i}枠', 0.0, 2.0, 1.0, 0.1) for i in range(1,9)}
 
 besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.1)
 
@@ -92,11 +93,17 @@ if not excel_file or not html_file:
 # Excelデータ読み込み
 df = pd.read_excel(excel_file, sheet_name=0)
 
-# HTML血統データ読み込み（pandas.read_htmlで直接抽出）
-# read_htmlはファイル-likeオブジェクトも受け付ける
-blood_tables = pd.read_html(html_file)
-blood_df = blood_tables[0].iloc[:, :2]
-blood_df.columns = ['馬名', '血統']
+# HTML血統データ読み込み（正規表現でパース）
+content = html_file.read().decode(errors='ignore')
+rows = re.findall(r'<tr[\s\S]*?<\/tr>', content)
+blood = []
+for row in rows:
+    cells = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', row)
+    if len(cells) >= 2:
+        name = re.sub(r'<.*?>', '', cells[0]).strip()
+        kin  = re.sub(r'<.*?>', '', cells[1]).strip()
+        blood.append((name, kin))
+blood_df = pd.DataFrame(blood, columns=['馬名', '血統'])
 
 # データ結合
 df = df.merge(blood_df, on='馬名', how='left')
