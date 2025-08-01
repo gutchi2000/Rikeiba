@@ -63,6 +63,10 @@ initial_wt = df1.sort_values('レース日').groupby('馬名').tail(1)[['馬名'
 initial_wt.rename(columns={'斤量':'input_wt'}, inplace=True)
 # 編集前テーブルに斤量列を追加
 attrs = attrs.merge(initial_wt, on='馬名', how='left')
+# 列名をユーザー向けに調整: input_wt -> 斤量
+attrs.rename(columns={'input_wt':'斤量'}, inplace=True)
+# 列順: 枠, 馬名, 性別, 年齢, 脚質, 斤量
+attrs = attrs[['枠','馬名','性別','年齢','脚質','斤量']]
 # 追加後に列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
 attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 
