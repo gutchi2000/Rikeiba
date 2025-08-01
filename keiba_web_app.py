@@ -133,7 +133,7 @@ def calc_score(r):
     # 血統ボーナス
     bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
     # 最終スコア
-    return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus*gw*stw*fw*aw*bt*wfac + bonus
+    return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
 
 # スコア適用
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
