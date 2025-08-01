@@ -218,20 +218,25 @@ with st.expander("馬連・ワイド・馬単から推奨券種を選択", expan
 tansho = top6.iloc[0]['馬名']
 fukusho = top6.iloc[1]['馬名']
 main_share = 0.5
-pur1 = round((total_budget*main_share*0.25)/100)*100
-pur2 = round((total_budget*main_share*0.75)/100)*100
-rem   = total_budget - (pur1+pur2)
+pur1 = round((total_budget * main_share * 0.25) / 100) * 100
+pur2 = round((total_budget * main_share * 0.75) / 100) * 100
+rem   = total_budget - (pur1 + pur2)
 others5 = list(top6.iloc[1:6]['馬名'])
-umaren   = [f"{tansho}-{h}" for h in others5]
-bets=[]
+umaren = [f"{tansho}-{h}" for h in others5]
+bets = []
 # 単勝・複勝
 bets.append({"券種":"単勝","組み合わせ":tansho,"金額":pur1})
 bets.append({"券種":"複勝","組み合わせ":fukusho,"金額":pur2})
-# 馬連・ワイド・馬単は常に
+# 選択した券種に残り予算を全額配分
+# (馬連, ワイド, 馬単いずれかを選択)
+with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
+    choice = st.radio("購入する券種を選択してください", ['馬連','ワイド','馬単'], index=1)
+
 for c in umaren:
-    bets.append({"券種":"馬連","組み合わせ":c,"金額":rem})
-    bets.append({"券種":"ワイド","組み合わせ":c,"金額":rem})
-    bets.append({"券種":"馬単","組み合わせ":f"{tansho}>{c.split('-')[1]}","金額":rem})
+    bets.append({"券種": choice, "組み合わせ": (
+        f"{tansho}>{c.split('-')[1]}" if choice=='馬単' else c
+    ), "金額": rem})
+
 # 三連複、三連単はシナリオに応じて追加
 if scenario in ['ちょい余裕','余裕']:
     for c in umaren:
@@ -239,7 +244,13 @@ if scenario in ['ちょい余裕','余裕']:
 if scenario == '余裕':
     for c in umaren:
         bets.append({"券種":"三連単マルチ","組み合わせ":c,"金額":rem})
+if scenario in ['ちょい余裕','余裕']:
+    for c in umaren:
+        bets.append({"券種":"三連複","組み合わせ":c,"金額":rem})
+if scenario == '余裕':
+    for c in umaren:
+        bets.append({"券種":"三連単マルチ","組み合わせ":c,"金額":rem})
 # テーブル表示
-df_bets = pd.DataFrame(bets,columns=["券種","組み合わせ","金額"])
+df_bets = pd.DataFrame(bets, columns=["券種","組み合わせ","金額"])
 st.subheader("推奨買い目一覧と配分（円）")
 st.table(df_bets)
