@@ -254,15 +254,18 @@ bets += [
     {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
 ]
 
-# 馬連／ワイド／馬単：◎–相手 を一行ずつ、残り全額 rem を使用
+# --- 馬連／ワイド／馬単（選択券種のみ） ---
 if choice in parts:
+    # 行数分で等分
+    n_rows = len(others_names)
+    share_each = int(round(rem / n_rows / 100) * 100)
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
             '券種': choice,
             '印': f'◎–{mk}',
             '馬': h1,
             '相手': nm,
-            '金額': rem
+            '金額': share_each
         })
 
 # 三連複／三連単（シナリオに応じて出力）
