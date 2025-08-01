@@ -55,6 +55,8 @@ df_score = pd.read_excel(excel_file, sheet_name=0)
 sheet2   = pd.read_excel(excel_file, sheet_name=1)
 attrs = sheet2.iloc[:, [0,2,5,3,4]].copy()
 attrs.columns = ['枠','馬名','脚質','性別','年齢']
+# 列の順序を変更: 枠, 馬名, 性別, 年齢, 脚質, 斤量
+attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 # シート1から最新レースの斤量を取得
 # sheet1のレース日でソートして最新の斤量を馬名ごとに抽出
 df1 = pd.read_excel(excel_file, sheet_name=0)
