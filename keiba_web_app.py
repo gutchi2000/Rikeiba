@@ -89,12 +89,30 @@ if upload_html:
     except: ped=None
 else: ped=None
 
-# --- 脚質・斤量 ---
+# --- 脚質・斤量設定 ---
 st.subheader("脚質・斤量設定")
-input_df=pd.DataFrame({'馬名':df['馬名'].unique(),'脚質':['差し']*len(df),'本斤量':[56]*len(df)})
-ed=st.data_editor(input_df,column_config={'脚質':st.column_config.SelectboxColumn('脚質',['逃げ','先行','差し','追込']),'本斤量':st.column_config.NumberColumn('本斤量',45,60,1)},use_container_width=True)
-ed['馬名']=ed['馬名'].astype(str).str.strip()
-df=df.merge(ed.rename(columns={'本斤量':'today_weight'}),on='馬名',how='left')
+# 馬名の重複排除したリストを取得
+horses = df['馬名'].unique()
+# 初期値用データフレーム
+input_df = pd.DataFrame({
+    '馬名': horses,
+    '脚質': ['差し'] * len(horses),
+    '本斤量': [56] * len(horses)
+})
+# 編集可能なテーブル
+ed = st.data_editor(
+    input_df,
+    column_config={
+        '脚質': st.column_config.SelectboxColumn('脚質', ['逃げ','先行','差し','追込']),
+        '本斤量': st.column_config.NumberColumn('本斤量', min_value=45, max_value=60, step=1)
+    },
+    use_container_width=True
+)
+ed['馬名'] = ed['馬名'].astype(str).str.strip()
+df = df.merge(
+    ed.rename(columns={'本斤量':'today_weight'}),
+    on='馬名', how='left'
+)
 
 # --- ファクター ---
 def ped_factor(r): return 1.0
