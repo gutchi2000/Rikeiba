@@ -223,46 +223,51 @@ others = list(top6.iloc[2:]['馬名'])  # ▲以下
 win_each   = int(round((pur1 / 2) / 100) * 100)
 place_each = int(round((pur2 / 2) / 100) * 100)
 
-# --- 買い目一覧テーブル作成 ---
+# --- 買い目一覧テーブル作成（整形版） ---
 bets = []
 
-# 単勝・複勝（◎／〇 各2頭ずつ）
+# ◎／〇の単勝・複勝
 bets.append({'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each})
 bets.append({'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each})
 bets.append({'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each})
 bets.append({'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each})
 
-# 馬連・ワイド・馬単（選択券種のみ）
+# 馬連・ワイド・馬単
 if choice in ['馬連','ワイド','馬単']:
     bets.append({
         '券種': choice,
         '印': '◎→〇',
         '馬': h1,
-        '相手': ','.join(others),
+        '相手': '／'.join(others),
         '金額': bet_share[choice]
     })
 
-# 三連複
+# 三連複／三連単
 if '三連複' in parts:
     bets.append({
-        '券種': '三連複',
-        '印': '◎→〇▲☆△△',
-        '馬': h1,
-        '相手': ','.join(others),
-        '金額': bet_share.get('三連複', 0)
+        '券種':'三連複',
+        '印':'◎→〇▲☆△△',
+        '馬':h1,
+        '相手':'／'.join(others),
+        '金額': bet_share.get('三連複',0)
     })
-
-# 三連単
 if '三連単' in parts:
     bets.append({
-        '券種': '三連単マルチ',
-        '印': '◎→〇▲☆△△',
-        '馬': h1,
-        '相手': ','.join(others),
-        '金額': bet_share.get('三連単', 0)
+        '券種':'三連単マルチ',
+        '印':'◎→〇▲☆△△',
+        '馬':h1,
+        '相手':'／'.join(others),
+        '金額': bet_share.get('三連単',0)
     })
 
-# DataFrame化して表示
 df_bets = pd.DataFrame(bets)
+
+# 金額を「カンマ区切り＋円」で文字列化、0円は空文字に
+df_bets['金額'] = df_bets['金額'].map(
+    lambda x: f"{int(x):,}円" if x and x>0 else ""
+)
+
+# インデックスを消してMarkdownテーブルとして出力
+table_md = df_bets[['券種','印','馬','相手','金額']].to_markdown(index=False)
 st.subheader("■ 最終買い目一覧")
-st.table(df_bets[['券種','印','馬','相手','金額']])
+st.markdown(table_md)
