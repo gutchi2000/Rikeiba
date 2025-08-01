@@ -53,6 +53,9 @@ if not excel_file or not html_file:
 # --- データ読み込み ---
 df_score = pd.read_excel(excel_file, sheet_name=0)
 sheet2   = pd.read_excel(excel_file, sheet_name=1)
+# 重複行を削除して、出走メンバー18頭のみ取得
+# "馬名"列で一意化（月並みに最初に出現した順）
+sheet2 = sheet2.drop_duplicates(subset=sheet2.columns[2], keep='first').reset_index(drop=True)
 attrs = sheet2.iloc[:, [0,2,5,3,4]].copy()
 attrs.columns = ['枠','馬名','脚質','性別','年齢']
 # シート1から最新レースの斤量を取得
@@ -71,18 +74,17 @@ attrs = attrs[['枠','馬名','性別','年齢','脚質','斤量']]
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質・斤量入力")
-# 編集用テーブルを定義
+# ここでattrsには列 ['枠','馬名','性別','年齢','脚質','斤量'] が入っている
 edited = st.data_editor(
     attrs,
     column_order=['枠','馬名','性別','年齢','脚質','斤量'],
     column_config={
-        '脚質':    st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
-        '斤量': st.column_config.NumberColumn('斤量'),
-        '枠':       st.column_config.NumberColumn('枠')
+        '脚質':    st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込']),
+        '斤量':    st.column_config.NumberColumn('斤量', format="0.0"),
     },
+    use_container_width=True,
     num_rows='static'
 )
-
 # 編集後のテーブルを horses に反映
 horses = edited.copy()
 
@@ -109,7 +111,7 @@ keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # --- スコア計算 ---
-avg_wt    = horses['input_wt'].mean()
+avg_wt = horses['斤量'].mean()
 style_map = dict(zip(horses['馬名'], horses['脚質']))
 def calc_score(r):
     GP = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
