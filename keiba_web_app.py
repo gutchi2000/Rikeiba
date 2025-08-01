@@ -15,31 +15,39 @@ st.title('競馬予想アプリ（完成版）')
 # ── サイドバー：重み設定 ──
 with st.sidebar:
     st.header("重み設定")
-    male_w    = st.number_input('牡の重み',   0.0, 2.0, 1.1, 0.01)
-    female_w  = st.number_input('牝の重み',   0.0, 2.0, 1.0, 0.01)
-    gelding_w = st.number_input('セの重み',   0.0, 2.0, 0.95,0.01)
-    nige_w    = st.number_input('逃げの重み', 0.0, 2.0, 1.2, 0.01)
-    senko_w   = st.number_input('先行の重み', 0.0, 2.0, 1.1, 0.01)
-    sashi_w   = st.number_input('差しの重み', 0.0, 2.0, 1.0, 0.01)
-    ooka_w    = st.number_input('追込の重み', 0.0, 2.0, 0.9, 0.01)
-    spring_w  = st.number_input('春の重み',   0.0, 2.0, 1.0, 0.01)
-    summer_w  = st.number_input('夏の重み',   0.0, 2.0, 1.1, 0.01)
-    autumn_w  = st.number_input('秋の重み',   0.0, 2.0, 1.0, 0.01)
-    winter_w  = st.number_input('冬の重み',   0.0, 2.0, 0.95,0.01)
+    # 性別補正
+    with st.expander("性別の重み", expanded=False):
+        male_w    = st.number_input('牡の重み',   0.0, 2.0, 1.1, 0.01)
+        female_w  = st.number_input('牝の重み',   0.0, 2.0, 1.0, 0.01)
+        gelding_w = st.number_input('セの重み',   0.0, 2.0, 0.95,0.01)
+    # 脚質補正
+    with st.expander("脚質の重み", expanded=False):
+        nige_w    = st.number_input('逃げの重み', 0.0, 2.0, 1.2, 0.01)
+        senko_w   = st.number_input('先行の重み', 0.0, 2.0, 1.1, 0.01)
+        sashi_w   = st.number_input('差しの重み', 0.0, 2.0, 1.0, 0.01)
+        ooka_w    = st.number_input('追込の重み', 0.0, 2.0, 0.9, 0.01)
+    # 四季補正
+    with st.expander("四季の重み", expanded=False):
+        spring_w  = st.number_input('春の重み',   0.0, 2.0, 1.0, 0.01)
+        summer_w  = st.number_input('夏の重み',   0.0, 2.0, 1.1, 0.01)
+        autumn_w  = st.number_input('秋の重み',   0.0, 2.0, 1.0, 0.01)
+        winter_w  = st.number_input('冬の重み',   0.0, 2.0, 0.95,0.01)
+    # その他指標
     w_jin     = st.number_input('斤量重み',      0.0, 1.0, 1.0, 0.1)
     w_best    = st.number_input('距離ベスト重み',0.0, 1.0, 1.0, 0.1)
-
-    st.subheader("枠順重み設定 (1～8) それぞれの枠の重みを入力")
-    gate_weights = {}
-    for gate in range(1,9):
-        gate_weights[gate] = st.number_input(f'{gate}枠の重み', 0.0, 2.0, 1.0, 0.01)
-
-    st.subheader("最終スコア重み")
-    weight_z    = st.slider('偏差値 の重み',         0.0, 1.0, 0.7, 0.05)
-    weight_rb   = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.2, 0.05)
-    weight_gate = st.slider('枠偏差値 の重み',      0.0, 1.0, 0.1, 0.05)
+    # 枠順補正
+    with st.expander("枠順の重み (1〜8)", expanded=False):
+        gate_weights = {}
+        for gate in range(1,9):
+            gate_weights[gate] = st.number_input(f'{gate}枠の重み', 0.0, 2.0, 1.0, 0.01)
+    # 最終スコア重み
+    with st.expander("最終スコア重み", expanded=True):
+        weight_z    = st.slider('偏差値 の重み',         0.0, 1.0, 0.7, 0.05)
+        weight_rb   = st.slider('RawBase偏差値 の重み',  0.0, 1.0, 0.2, 0.05)
+        weight_gate = st.slider('枠偏差値 の重み',      0.0, 1.0, 0.1, 0.05)
 
 # ── キャッシュクリア注意 ──
+st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 
