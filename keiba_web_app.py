@@ -107,11 +107,15 @@ st.subheader("血統キーワード")
 keywords = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
-# 馬一覧編集（脚質は新規、斤量はsheet1から取得）
+# 馬一覧編集（シート2参照で脚質・属性、シート1で斤量を取得）
 st.subheader("馬一覧と補正設定")
-# dfから枠・馬名・性別・年齢・斤量を取得し、脚質は空欄で追加
-df_edit = df[['枠','馬名','性別','年齢','斤量']].copy()
-df_edit['脚質'] = ''  # プルダウンで選択するための空欄列
+# sheet2から属性データを取得
+df2 = pd.read_excel(excel_file, sheet_name=1)
+attrs = df2[['枠','馬名','脚質','性別','年齢']].copy()
+# sheet1から斤量のみ取得
+df1_wt = pd.read_excel(excel_file, sheet_name=0)[['馬名','斤量']]
+# 属性と斤量をマージ
+df_edit = pd.merge(attrs, df1_wt, on='馬名', how='left')
 # 編集用テーブル
 edited = st.data_editor(
     df_edit,
@@ -123,6 +127,8 @@ edited = st.data_editor(
 )
 
 # 平均斤量算出
+avg_wt = edited['斤量'].mean()
+
 avg_wt = edited['斤量'].mean()
 
 avg_wt = edited['斤量'].mean()
