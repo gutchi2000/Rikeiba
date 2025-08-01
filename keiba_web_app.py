@@ -192,81 +192,100 @@ top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭")
 st.table(top6[['馬名','印']])
 
-# 資金配分
-# 単勝:複勝 を 1:3 の比率で合計予算の50%を使用し、残り50%を他券種に配分
-main_share = 0.5  # 単複に使う合計割合
-pur1 = round((total_budget * main_share * (1/4)) / 100) * 100  # 単勝 (100円単位切り上げ)
-pur2 = round((total_budget * main_share * (3/4)) / 100) * 100  # 複勝 (100円単位切り上げ)
-rem  = total_budget - (pur1 + pur2)       # 残り予算
+# --- サイドバーからの変数取得は省略 ---
+# total_budget, scenario, top6, etc. が定義済みとします
+
+# ◎／〇の馬名リスト準備
+h1 = top6.iloc[0]['馬名']     # ◎
+h2 = top6.iloc[1]['馬名']     # 〇
+others = list(top6.iloc[2:]['馬名'])  # ▲以下
+
+# --- 資金配分 ---
+main_share = 0.5  # 単複に使う割合
+pur1 = int(round((total_budget * main_share * 1/4) / 100) * 100)  # 単勝合計
+pur2 = int(round((total_budget * main_share * 3/4) / 100) * 100)  # 複勝合計
+rem  = total_budget - (pur1 + pur2)                               # 残り予算
+
 parts = {
     '通常': ['馬連','ワイド','馬単'],
     'ちょい余裕': ['馬連','ワイド','馬単','三連複'],
     '余裕': ['馬連','ワイド','馬単','三連複','三連単']
 }[scenario]
-# 他券種は残り予算を100円単位で均等分割
+
 raw_share = rem / len(parts)
 bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
 
-st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
-rem  = total_budget - (pur1 + pur2)  # 残り予算
-with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
-    choice = st.radio("購入する券種を選択してください", ['馬連','ワイド','馬単'], index=1)
-    # 残り予算を全額その券種に充当
-    st.write(f"{choice}: {rem:.0f}円")
+# --- 資金配分表示 ---
+st.subheader("■ 資金配分")
+st.write(f"合計予算：{total_budget:,}円")
+st.write(f"単勝合計：{pur1:,}円  ／  複勝合計：{pur2:,}円  （残：{rem:,}円）")
 
-# --- 変数準備 ---
-h1 = top6.iloc[0]['馬名']     # ◎
-h2 = top6.iloc[1]['馬名']     # 〇
-others = list(top6.iloc[2:]['馬名'])  # ▲以下
+share_df = (
+    pd.DataFrame.from_dict(bet_share, orient='index', columns=['使⽤額'])
+    .rename_axis('券種')
+    .reset_index()
+)
+share_df['使⽤額'] = share_df['使⽤額'].map(lambda x: f"{x:,}円")
+st.table(share_df)
 
-# 単勝／複勝の各頭割り当て金額
+# --- 券種選択 ---
+with st.expander("馬連／ワイド／馬単 から１券種を選択", expanded=False):
+    choice = st.radio("購入する券種", options=parts[:3], index=1)
+    st.write(f"▶ {choice}：{bet_share[choice]:,}円 を充当")
+
+# --- 単勝・複勝（◎／〇 各2頭ずつ） ---
 win_each   = int(round((pur1 / 2) / 100) * 100)
 place_each = int(round((pur2 / 2) / 100) * 100)
 
-# --- 買い目一覧テーブル作成（Streamlit 表示版） ---
+st.subheader("■ 単勝 (◎／〇 各2頭ずつ)")
+st.write(f"◎ {h1} → {win_each:,}円")
+st.write(f"〇 {h2} → {win_each:,}円")
+
+st.subheader("■ 複勝 (◎／〇 各2頭ずつ)")
+st.write(f"◎ {h1} → {place_each:,}円")
+st.write(f"〇 {h2} → {place_each:,}円")
+
+# --- 最終買い目一覧テーブル作成 ---
 bets = []
 
-# ◎／〇の単勝・複勝
-bets.append({'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each})
-bets.append({'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each})
-bets.append({'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each})
-bets.append({'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each})
+# 単勝・複勝
+bets += [
+    {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
+    {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
+    {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
+    {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
+]
 
-# 馬連・ワイド・馬単
+# 馬連／ワイド／馬単（選択券種のみ）
 if choice in ['馬連','ワイド','馬単']:
     bets.append({
         '券種': choice,
-        '印': '◎→〇',
+        '印': '◎-〇▲☆△△',
         '馬': h1,
         '相手': '／'.join(others),
         '金額': bet_share[choice]
     })
 
-# 三連複／三連単
+# 三連複／三連単（シナリオに応じて）
 if '三連複' in parts:
     bets.append({
         '券種':'三連複',
-        '印':'◎→〇▲☆△△',
+        '印':'◎-〇▲☆△△',
         '馬':h1,
         '相手':'／'.join(others),
-        '金額': bet_share.get('三連複',0)
+        '金額':bet_share.get('三連複',0)
     })
 if '三連単' in parts:
     bets.append({
         '券種':'三連単マルチ',
-        '印':'◎→〇▲☆△△',
+        '印':'◎-〇▲☆△△',
         '馬':h1,
         '相手':'／'.join(others),
-        '金額': bet_share.get('三連単',0)
+        '金額':bet_share.get('三連単',0)
     })
 
 df_bets = pd.DataFrame(bets)
+df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
 
-# 金額を「カンマ区切り＋円」で文字列化、0円は空文字に
-df_bets['金額'] = df_bets['金額'].map(
-    lambda x: f"{int(x):,}円" if x and x>0 else ""
-)
-
-# Streamlit の st.table で表示
 st.subheader("■ 最終買い目一覧")
 st.table(df_bets[['券種','印','馬','相手','金額']])
