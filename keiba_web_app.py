@@ -56,7 +56,11 @@ sheet2   = pd.read_excel(excel_file, sheet_name=1)
 # 重複行を削除して、出走メンバー18頭のみ取得
 # "馬名"列で一意化（月並みに最初に出現した順）
 sheet2 = sheet2.drop_duplicates(subset=sheet2.columns[2], keep='first').reset_index(drop=True)
-attrs = sheet2.iloc[:, [0,2,5,3,4]].copy()
+# シート2の属性から「枠」「馬名」「性別」「年齢」を取得し、脚質と斤量は入力用に空欄を作成
+attrs = sheet2.iloc[:, [0, 2, 3, 4]].copy()
+attrs.columns = ['枠','馬名','性別','年齢']
+# 脚質は完全新規入力、勝率等は使わない
+attrs['脚質'] = ''
 attrs.columns = ['枠','馬名','脚質','性別','年齢']
 # シート1から最新レースの斤量を取得
 # sheet1のレース日でソートして最新の斤量を馬名ごとに抽出
