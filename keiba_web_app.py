@@ -223,7 +223,7 @@ others = list(top6.iloc[2:]['馬名'])  # ▲以下
 win_each   = int(round((pur1 / 2) / 100) * 100)
 place_each = int(round((pur2 / 2) / 100) * 100)
 
-# --- 買い目一覧テーブル作成（整形版） ---
+# --- 買い目一覧テーブル作成（Streamlit 表示版） ---
 bets = []
 
 # ◎／〇の単勝・複勝
@@ -267,7 +267,6 @@ df_bets['金額'] = df_bets['金額'].map(
     lambda x: f"{int(x):,}円" if x and x>0 else ""
 )
 
-# インデックスを消してMarkdownテーブルとして出力
-table_md = df_bets[['券種','印','馬','相手','金額']].to_markdown(index=False)
+# Streamlit の st.table で表示
 st.subheader("■ 最終買い目一覧")
-st.markdown(table_md)
+st.table(df_bets[['券種','印','馬','相手','金額']])
