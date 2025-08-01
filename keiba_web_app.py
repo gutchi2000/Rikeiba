@@ -78,7 +78,6 @@ stats = stats[keys].drop_duplicates('馬名')
 stats['馬名'] = stats['馬名'].astype(str).str.strip()
 
 # 分割
-import pandas as pd as pd_funcs
 
 def split_frame(x):
     parts = str(x).split('-', 2)
@@ -92,7 +91,11 @@ stats = pd.concat([stats.drop(columns='馬名'), splits], axis=1)
 
 df = df.merge(stats[['枠','番','馬名','性別','年齢']], on='馬名', how='left')
 
-# (以下省略：同じ実装が続きます)
+# 以下、既存のデータ加工とスコア計算処理
+# ...
+
+# 最後のテーブル表示
+st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
 
 # 最後のテーブル表示
 st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
