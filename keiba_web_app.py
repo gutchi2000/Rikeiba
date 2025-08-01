@@ -113,7 +113,7 @@ base_cols = ['枠','馬名','性別','年齢']
 df_edit = df[base_cols].copy()
 df_edit['脚質'] = ''
 df_edit['斤量'] = 0
-edited = st.experimental_data_editor(df_edit, num_rows='dynamic')
+edited = st.data_editor(df_edit, num_rows='dynamic')
 
 # スコア計算（各レース行）
 def calc_score(row):
