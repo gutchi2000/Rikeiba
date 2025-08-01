@@ -218,11 +218,7 @@ with st.expander("馬連・ワイド・馬単から推奨券種を選択", expan
     choice = st.radio("券種を選んでください", ['馬連','ワイド','馬単'], index=1)
     st.write(f"選択中: {choice}")
 
-# --- 買い目例 ---("買い目と配分（円）")
-st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
-st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
-
-# 買い目例
+# --- 買い目例 ---
 st.subheader("推奨買い目例")
 st.write("単勝:", top6.iloc[0]['馬名'])
 st.write("複勝:", top6.iloc[1]['馬名'])
