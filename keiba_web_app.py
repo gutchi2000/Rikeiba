@@ -214,22 +214,23 @@ with st.expander("馬連・ワイド・馬単から推奨券種を選択", expan
     # 残り予算を全額その券種に充当
     st.write(f"{choice}: {rem:.0f}円")
 
+# --- 変数準備 ---
+h1 = top6.iloc[0]['馬名']     # ◎
+h2 = top6.iloc[1]['馬名']     # 〇
+others = list(top6.iloc[2:]['馬名'])  # ▲以下
+
+# 単勝／複勝の各頭割り当て金額
+win_each   = int(round((pur1 / 2) / 100) * 100)
+place_each = int(round((pur2 / 2) / 100) * 100)
+
 # --- 買い目一覧テーブル作成 ---
 bets = []
 
 # 単勝・複勝（◎／〇 各2頭ずつ）
-bets.append({
-    '券種': '単勝', '印': '◎', '馬': h1, '相手': '', '金額': win_each
-})
-bets.append({
-    '券種': '単勝', '印': '〇', '馬': h2, '相手': '', '金額': win_each
-})
-bets.append({
-    '券種': '複勝', '印': '◎', '馬': h1, '相手': '', '金額': place_each
-})
-bets.append({
-    '券種': '複勝', '印': '〇', '馬': h2, '相手': '', '金額': place_each
-})
+bets.append({'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each})
+bets.append({'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each})
+bets.append({'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each})
+bets.append({'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each})
 
 # 馬連・ワイド・馬単（選択券種のみ）
 if choice in ['馬連','ワイド','馬単']:
