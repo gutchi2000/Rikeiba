@@ -218,8 +218,28 @@ with st.expander("馬連・ワイド・馬単から推奨券種を選択", expan
 
 # --- 買い目例 ---
 st.subheader("推奨買い目例")
-st.write("単勝:", top6.iloc[0]['馬名'])
-st.write("複勝:", top6.iloc[1]['馬名'])
-st.write("馬連:", f"{top6.iloc[0]['馬名']}-{top6.iloc[1]['馬名']}")
-st.write("三連複:", f"{top6.iloc[0]['馬名']}-{','.join(top6.iloc[1:5]['馬名'])}")
-st.write("三連単:", f"{top6.iloc[0]['馬名']}→{','.join(top6.iloc[1:6]['馬名'])}")
+# 単勝・複勝
+st.markdown(f"**単勝:** {top6.iloc[0]['馬名']} (◎)  ㊙️  
+**複勝:** {top6.iloc[1]['馬名']} (〇)")
+
+# 馬連・ワイド・馬単 (◎ー〇▲☆△△ 軸一頭流し)
+with st.expander("馬連・ワイド・馬単 (◎ー〇▲☆△△ 軸一頭流し)", expanded=False):
+    base = top6.iloc[0]['馬名']
+    others = top6.iloc[1:]
+    st.write("軸馬:", base)
+    st.write("相手:", "、".join(list(others['馬名'])))
+    st.write("フォーメーション:", [f"{base}-{h}" for h in others['馬名']])
+
+# 三連複 (◎ー〇▲☆△△ 軸一頭流し)
+st.subheader("三連複 (◎ー〇▲☆△△ 軸一頭流し)")
+base = top6.iloc[0]['馬名']
+others = top6.iloc[1:]
+st.write(f"軸馬: {base}")
+st.write(f"相手: {', '.join(list(others['馬名']))}")
+
+# 三連単マルチ (◎ー〇▲☆△△ 軸一頭マルチ)
+st.subheader("三連単マルチ (◎ー〇▲☆△△ 軸一頭マルチ)")
+base = top6.iloc[0]['馬名']
+others = top6.iloc[1:]
+st.write(f"軸馬: {base}")
+st.write(f"流し相手: {', '.join(list(others['馬名']))}")
