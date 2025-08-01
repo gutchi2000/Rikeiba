@@ -66,18 +66,18 @@ attrs = attrs.merge(initial_wt, on='馬名', how='left')
 # 列名をユーザー向けに調整: input_wt -> 斤量
 attrs.rename(columns={'input_wt':'斤量'}, inplace=True)
 # 列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
+# 列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
 attrs = attrs[['枠','馬名','性別','年齢','脚質','斤量']]
-attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質・斤量入力")
 # 編集用テーブルを定義
 edited = st.data_editor(
     attrs,
-    column_order=['枠','馬名','性別','年齢','脚質','input_wt'],
+    column_order=['枠','馬名','性別','年齢','脚質','斤量'],
     column_config={
         '脚質':    st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
-        'input_wt': st.column_config.NumberColumn('斤量'),
+        '斤量': st.column_config.NumberColumn('斤量'),
         '枠':       st.column_config.NumberColumn('枠')
     },
     num_rows='static'
