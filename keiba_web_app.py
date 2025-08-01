@@ -77,19 +77,20 @@ for k in keys:
 stats = stats[keys].drop_duplicates('馬名')
 stats['馬名'] = stats['馬名'].astype(str).str.strip()
 # 馬情報列に『枠-番-馬名』が入っている場合の分割
-tmp = stats['馬名'].str.split('-', n=2, expand=True)
-stats['枠'] = tmp[0].astype(int)
-stats['番'] = tmp[1].astype(int)
-stats['馬名'] = tmp[2].str.strip()
-
-stats['best_dist_time'] = pd.to_numeric(
-    stats['ベストタイム'].replace({'(未)':np.nan}), errors='coerce'
-).fillna(
-    stats['ベストタイム'].astype(str)
-         .str.extract(r"(\d+)", expand=False).astype(float).max()
-)
-# マージ
+# 馬情報列に『枠-番-馬名』が入っている場合の安全分割
+def split_frame(x):
+    parts = str(x).split('-', 2)
+    if len(parts)==3 and parts[0].isdigit() and parts[1].isdigit():
+        return pd.Series({'枠':int(parts[0]), '番':int(parts[1]), '馬名':parts[2].strip()})
+    else:
+        return pd.Series({'枠':np.nan, '番':np.nan, '馬名':str(x).strip()})
+stats = stats.join(stats['馬名'].apply(split_frame))
+# NaN枠は1に置換
 df = df.merge(
+    stats[['枠','番','馬名','性別','年齢','best_dist_time']].fillna({'枠':1}),
+    on='馬名', how='left'
+)
+(
     stats[['枠','番','馬名','性別','年齢','best_dist_time']],
     on='馬名', how='left'
 )
