@@ -4,6 +4,7 @@ import numpy as np
 import re
 import matplotlib.pyplot as plt
 import altair as alt
+from itertools import combinations
 
 # 日本語フォント設定（matplotlib用）
 plt.rcParams['font.family'] = 'sans-serif'
