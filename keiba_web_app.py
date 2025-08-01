@@ -74,19 +74,28 @@ attrs = attrs[['枠','馬名','性別','年齢','脚質','斤量']]
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質・斤量入力")
-# ここでattrsには列 ['枠','馬名','性別','年齢','脚質','斤量'] が入っている
+# 編集用テーブルを定義
 edited = st.data_editor(
     attrs,
     column_order=['枠','馬名','性別','年齢','脚質','斤量'],
     column_config={
-        '脚質':    st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込']),
-        '斤量':    st.column_config.NumberColumn('斤量', format="0.0"),
+        '脚質': st.column_config.SelectboxColumn(
+            '脚質', options=['逃げ','先行','差し','追込'],
+            help='脚質を選択してください'
+        ),
+        '斤量': st.column_config.NumberColumn(
+            '斤量', format="0.0",
+            help='馬の斤量を入力してください'
+        ),
+        '枠': st.column_config.NumberColumn(
+            '枠', help='枠順'
+        )
     },
     use_container_width=True,
     num_rows='static'
 )
 # 編集後のテーブルを horses に反映
-horses = edited.copy()
+horses = edited.copy()()
 
 # --- 血統HTMLパース ---
 cont = html_file.read().decode(errors='ignore')
