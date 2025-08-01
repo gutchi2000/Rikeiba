@@ -207,7 +207,18 @@ parts = {
 raw_share = rem / len(parts)
 bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
 
+# --- 買い目と配分 ---
 st.subheader("買い目と配分（円）")
+st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
+# ワイドのみを表示
+wide_amt = bet_share.get('ワイド', 0)
+st.write(f"ワイド: {wide_amt}円")
+# 折り畳みで馬連・ワイド・馬単選択
+with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
+    choice = st.radio("券種を選んでください", ['馬連','ワイド','馬単'], index=1)
+    st.write(f"選択中: {choice}")
+
+# --- 買い目例 ---("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
 st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
 
