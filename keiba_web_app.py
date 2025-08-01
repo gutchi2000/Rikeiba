@@ -109,26 +109,17 @@ bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # 馬一覧編集（シート2参照で属性を取得）
 st.subheader("馬一覧と補正設定")
-# 2枚目シートをマルチヘッダーで読み込み（勝率系は不要、属性列のみ）
-df2 = pd.read_excel(excel_file, sheet_name=1, header=[0,1])
-# ヘッダーを平坦化
-cols = []
-for a,b in df2.columns:
-    if pd.isna(a): cols.append(b)
-    elif pd.isna(b): cols.append(a)
-    else: cols.append(f"{a}_{b}")
-df2.columns = cols
-# 必要な属性列を抽出
-# シート2に含まれる: 枠, 馬名, 性別, 年齢, ベストタイム
-attrs = df2[['枠','馬名','性別','年齢','ベストタイム']].copy()
-# シート1から斤量を取得
+# df2を2枚目シートとして読み込み
+sheet2 = pd.read_excel(excel_file, sheet_name=1)
+# 列名が不定のため位置指定で『枠(0), 馬名(2), 性別(3), 年齢(4), 脚質(5)』を取得
+attrs = sheet2.iloc[:, [0, 2, 3, 4, 5]].copy()
+attrs.columns = ['枠','馬名','性別','年齢','脚質']
+# sheet1から斤量を取得
 df1 = pd.read_excel(excel_file, sheet_name=0)
 f1_wt = df1[['馬名','斤量']]
 # 属性と斤量を結合
 df_edit = pd.merge(attrs, f1_wt, on='馬名', how='left')
-# 脚質は手動選択用に空欄追加
-df_edit['脚質'] = ''
-# 編集用テーブル
+# 編集用テーブル（脚質はプルダウン、斤量は数値入力）
 edited = st.data_editor(
     df_edit,
     column_config={
@@ -139,6 +130,8 @@ edited = st.data_editor(
 )
 
 # 平均斤量算出
+avg_wt = edited['斤量'].mean()
+
 avg_wt = edited['斤量'].mean()
 
 # スコア計算（各レース行）（各レース行）
