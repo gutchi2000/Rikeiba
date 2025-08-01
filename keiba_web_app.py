@@ -63,7 +63,7 @@ attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
 attrs.columns = ['枠','番','馬名','性別','年齢']
 # 脚質と斤量は入力用に空欄を用意
 attrs['脚質'] = ''
-attrs['斤量'] = np.nan()
+attrs['斤量'] = np.nan
 # 先頭行がヘッダ行の場合は削除
 if attrs.iloc[0].tolist() == ['枠','馬名','性別','年齢','脚質']:
     attrs = attrs.iloc[1:].reset_index(drop=True)().iloc[:, [0, 2, 3, 4]].copy()
