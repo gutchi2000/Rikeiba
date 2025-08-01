@@ -210,51 +210,30 @@ others_names   = names[1:]                 # ['〇馬名','▲馬名','☆馬名
 others_symbols = symbols[1:]               # ['〇','▲','☆','△','△']
 
 # ——————————————
-# シナリオ別 券種マッピング
-parts_map = {
-    '通常':     ['馬連','ワイド','馬単'],
-    'ちょい余裕': ['馬連','ワイド','馬単','三連複'],
-    '余裕':     ['馬連','ワイド','馬単','三連複','三連単']
+# ◎／〇 の馬リスト準備（省略）
+
+# --- シナリオ別 券種リスト定義 ---
+three = ['馬連','ワイド','馬単']
+scenario_map = {
+    '通常': three,
+    'ちょい余裕': ['ワイド','三連複'],
+    '余裕': ['ワイド','三連複','三連単']
 }
-parts = parts_map[scenario]
 
-# ——————————————
-# 資金配分計算
+# --- 資金配分計算 ---
 main_share = 0.5
-pur1 = int(round((total_budget * main_share * 1/4) / 100) * 100)  # 単勝合計
-pur2 = int(round((total_budget * main_share * 3/4) / 100) * 100)  # 複勝合計
-rem  = total_budget - (pur1 + pur2)                             # 残り予算
+pur1 = int(round((total_budget * main_share * 1/4)  / 100) * 100)
+pur2 = int(round((total_budget * main_share * 3/4)  / 100) * 100)
+rem  = total_budget - (pur1 + pur2)
 
-# 単勝・複勝 各2頭ずつの割当
-win_each   = int(round((pur1 / 2) / 100) * 100)
-place_each = int(round((pur2 / 2) / 100) * 100)
+win_each   = int(round((pur1 / 2)  / 100) * 100)
+place_each = int(round((pur2 / 2)  / 100) * 100)
 
-# ——————————————
-# 資金配分表示
 st.subheader("■ 資金配分")
-st.write(f"合計予算：{total_budget:,}円　単勝：{pur1:,}円　複勝：{pur2:,}円　残：{rem:,}円")
+st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円")
 
-# ―― 馬連／ワイド／馬単 をラジオ選択
-three = parts[:3]
-with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
-    choice = st.radio("購入する券種", options=three, index=1)
-    st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-
-# ——————————————
-# 単勝・複勝表示
-st.subheader("■ 単勝 (◎／〇 各2頭ずつ)")
-st.write(f"◎ {h1} → {win_each:,}円")
-st.write(f"〇 {h2} → {win_each:,}円")
-
-st.subheader("■ 複勝 (◎／〇 各2頭ずつ)")
-st.write(f"◎ {h1} → {place_each:,}円")
-st.write(f"〇 {h2} → {place_each:,}円")
-
-# ——————————————
-# 最終買い目一覧テーブル作成
 bets = []
-
-# 単勝・複勝
+# 単勝・複勝（◎／〇 各2頭ずつ）
 bets += [
     {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
     {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
@@ -262,60 +241,77 @@ bets += [
     {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
 ]
 
-# 馬連／ワイド／馬単（選択されたもののみ、残り予算を均等割り）
-if choice in three:
-    n = len(others_names)
-    share_each = int(round(rem / n / 100) * 100)
+# シナリオごとの残予算割当
+parts = scenario_map[scenario]
+
+# — 通常 —  
+if scenario == '通常':
+    with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
+        choice = st.radio("購入券種", options=three, index=1)
+        st.write(f"▶ {choice} に残り {rem:,}円 を充当")
+    # 選択した1種を均等割り
+    # ここは「◎–相手」一行ずつ
+    share_each = int(round(rem / len(others_names) / 100) * 100)
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
             '券種': choice,
-            '印': f'◎–{mk}',
-            '馬': h1,
-            '相手': nm,
-            '金額': share_each
-        })
-
-# --- 三連複（◎-〇▲☆△△ 10点買い） ---
-if '三連複' in parts:
-    # ◎軸の残り5頭から2頭選ぶ組み合わせはC(5,2)=10通り
-    trio_pairs = list(combinations(others_names, 2))
-    n_trio = len(trio_pairs)  # 10
-    share_each = int(round(rem / n_trio / 100) * 100)
-    for pair in trio_pairs:
-        bets.append({
-            '券種': '三連複',
-            '印': '◎-〇▲☆△△',
-            '馬':  h1,
-            '相手': '／'.join(pair),
-            '金額': share_each
-        })
-
-# --- 三連単フォーメーション（◎-〇▲-〇▲☆△△ 8点買い） ---
-if '三連単' in parts:
-    # 2着候補：top6[1] (〇), top6[2] (▲)
-    second_opts = others_names[:2]                   # [h2, h3]
-    # 3着候補：残り5頭すべて（〇,▲,☆,△,△）
-    third_opts  = others_names                      # [h2, h3, h4, h5, h6]
-    combos = []
-    for s in second_opts:
-        for t in third_opts:
-            if t != s:
-                combos.append((s, t))
-    # combos の長さは 2×4 = 8
-    n_combo = len(combos)
-    share_each = int(round(rem / n_combo / 100) * 100)
-    for s, t in combos:
-        bets.append({
-            '券種': '三連単フォーメーション',
-            '印':   '◎-〇▲-〇▲☆△△',
+            '印':   f'◎–{mk}',
             '馬':    h1,
-            '相手':  f"{s}／{t}",
+            '相手':  nm,
             '金額':  share_each
         })
 
-# DataFrame にして見やすく整形
+# — ちょい余裕 —  
+elif scenario == 'ちょい余裕':
+    st.write("▶ 残り予算を ワイド ＋ 三連複 で消費します")
+    # ワイド：◎–相手 で5通り
+    n_w = len(others_names)
+    share_w = int(round(rem / (n_w +  comb_n := len(list(combinations(others_names,2)))) / 100) * 100)
+    # まずワイド
+    for nm, mk in zip(others_names, others_symbols):
+        bets.append({
+            '券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_w
+        })
+    # 次に三連複10通り
+    trio = list(combinations(others_names,2))
+    for pair in trio:
+        bets.append({
+            '券種':'三連複','印':'◎-〇▲☆△△','馬':h1,
+            '相手':'／'.join(pair),'金額':share_w
+        })
+
+# — 余裕 —  
+elif scenario == '余裕':
+    st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で消費します")
+    # 各券種の組み合わせ数を求める
+    n_w     = len(others_names)
+    n_tri3  = len(list(combinations(others_names,2)))
+    # 三連単フォーメーションの8通り
+    second_opts = others_names[:2]
+    combo3 = [(s,t) for s in second_opts for t in others_names if t!=s]
+    n_tri1  = len(combo3)  # =8
+    total_line = n_w + n_tri3 + n_tri1
+    share_each = int(round(rem / total_line / 100) * 100)
+    # ワイド
+    for nm, mk in zip(others_names, others_symbols):
+        bets.append({
+            '券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each
+        })
+    # 三連複
+    for pair in combinations(others_names,2):
+        bets.append({
+            '券種':'三連複','印':'◎-〇▲☆△△','馬':h1,
+            '相手':'／'.join(pair),'金額':share_each
+        })
+    # 三連単フォーメーション
+    for s,t in combo3:
+        bets.append({
+            '券種':'三連単フォーメーション','印':'◎-〇▲-〇▲☆△△',
+            '馬':h1,'相手':f"{s}／{t}",'金額':share_each
+        })
+
+# --- 最終テーブル表示 ---
 df_bets = pd.DataFrame(bets)
 df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
-
 st.subheader("■ 最終買い目一覧")
 st.table(df_bets[['券種','印','馬','相手','金額']])
