@@ -61,7 +61,10 @@ tmp = sheet2.iloc[:, [0,2,3,4]].copy()
 tmp.columns = ['枠','馬名','性別','年齢']
 # 脚質は入力用に空欄で作成
 tmp['脚質'] = ''
-attrs = tmp.copy().iloc[:, [0, 2, 3, 4]].copy()
+attrs = tmp.copy()
+# 先頭行がヘッダ行の場合は削除
+if attrs.iloc[0].tolist() == ['枠','馬名','性別','年齢','脚質']:
+    attrs = attrs.iloc[1:].reset_index(drop=True)().iloc[:, [0, 2, 3, 4]].copy()
 attrs.columns = ['枠','馬名','性別','年齢']
 # 脚質は完全新規入力、勝率等は使わない
 attrs['脚質'] = ''
