@@ -119,18 +119,20 @@ style_map = dict(zip(horses['馬名'], horses['脚質']))
 def calc_score(r):
     GP = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
           '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬・未勝利':1}
-    g = GP.get(r['クラス名'],1)
-    raw = g*(r['頭数']+1-r['確定着順']) + lambda_part*g
+    g = GP.get(r['クラス名'], 1)
+    raw = g * (r['頭数'] + 1 - r['確定着順']) + lambda_part * g
     sw  = season_w[season_of(pd.to_datetime(r['レース日']).month)]
-    gw  = gender_w.get(r['性別'],1)
-    stw = style_w.get(r['脚質'],1)
-    fw  = frame_w.get(str(r['枠']),1)
+    gw  = gender_w.get(r['性別'], 1)
+    stw = style_w.get(r['脚質'], 1)
+    fw  = frame_w.get(str(r['枠']), 1)
     aw  = age_w
     bt  = besttime_w
     # 斤量補正: data_editorで入力した「斤量」列を使用
     wt = r.get('斤量', np.nan)
-    weight_factor = ((wt/avg_wt)**weight_coeff) if not np.isnan(wt) and avg_wt>0 else 1
-    bonus = bp if any(k in str(r.get('血統','')) for k in keys) else 0
+    weight_factor = ((wt / avg_wt) ** weight_coeff) if not np.isnan(wt) and avg_wt > 0 else 1
+    # 血統ボーナス
+    bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
+    # 最終スコア
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus*gw*stw*fw*aw*bt*wfac + bonus
 
 # スコア適用
