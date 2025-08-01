@@ -91,7 +91,15 @@ if not excel_file or not html_file:
     st.stop()
 
 # Excelデータ読み込み
-df = pd.read_excel(excel_file, sheet_name=0)
+# 1枚目シート: 基本成績データ
+df1 = pd.read_excel(excel_file, sheet_name=0)
+# 2枚目シート: 勝率系＆属性データ
+df2 = pd.read_excel(excel_file, sheet_name=1)
+# 必要な列: 枠, 馬名, 性別, 年齢 は df2 に含む想定
+# 基本データと属性データを結合
+# df1 に df2 の属性列を追加
+attrs = df2[['枠','馬名','脚質','性別','年齢']]
+df = pd.merge(df1, attrs, on='馬名', how='left')
 
 # HTML血統データ読み込み（正規表現でパース）
 content = html_file.read().decode(errors='ignore')
