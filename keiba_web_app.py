@@ -22,23 +22,20 @@ st.sidebar.header("パラメータ設定")
 lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
 orig_weight  = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
 hist_weight  = 1 - orig_weight
-\(with st.sidebar.expander("性別重み", expanded=False):
+# 折り畳み可能なセクション
+with st.sidebar.expander("性別重み", expanded=False):
     gender_w = {g: st.slider(g, 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
-)
-(with st.sidebar.expander("脚質重み", expanded=False):
-    style_w = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
-)
-(with st.sidebar.expander("四季重み", expanded=False):
+with st.sidebar.expander("脚質重み", expanded=False):
+    style_w  = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
+with st.sidebar.expander("四季重み", expanded=False):
     season_w = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
-)
-age_w      = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0)
-(with st.sidebar.expander("枠順重み", expanded=False):
-    frame_w = {str(i): st.slider(f"{i}枠",0.0,2.0,1.0) for i in range(1,9)}
-)
-besttime_w = st.sidebar.slider("ベストタイム重み",0.0,2.0,1.0)
-weight_coeff = st.sidebar.slider("斤量効果強度",0.0,2.0,1.0)
-total_budget = st.sidebar.slider("合計予算",500,50000,10000,500)
-scenario     = st.sidebar.selectbox("シナリオ",['通常','ちょい余裕','余裕'])
+age_w        = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0)
+with st.sidebar.expander("枠順重み", expanded=False):
+    frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
+besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)
+total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 500)
+scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
 # --- メイン画面 ---
 st.title("競馬予想アプリ（完成版）")
