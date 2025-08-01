@@ -36,7 +36,7 @@ with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
 weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)
-total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 500)
+total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)  # ステップを100円単位に変更
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
 # --- メイン画面 ---
