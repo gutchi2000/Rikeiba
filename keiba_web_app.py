@@ -53,7 +53,8 @@ edited = st.data_editor(
     }, num_rows='static'
 )
 # 斤量はsheet0から取得
-df_wt = df_score[['馬名','斤量']].drop_duplicates()
+# 生データの斤量列を input_wt として取得
+df_wt = df_score[['馬名','斤量']].drop_duplicates().rename(columns={'斤量':'input_wt'})
 # 編集結果と斤量結合
 horses = pd.merge(edited, df_wt, on='馬名', how='left')
 
@@ -82,18 +83,24 @@ style_map = dict(zip(horses['馬名'],horses['脚質']))
 
 # スコア計算関数
 def calc_score(r):
-    gp= {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
+    gp = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
           '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬・未勝利':1}
-    g=gp.get(r['クラス名'],1)
-    raw=g*(r['頭数']+1-r['確定着順'])+lambda_part*g
-    sw=season_w[season_of(pd.to_datetime(r['レース日']).month)]
-    gw=gender_w.get(r['性別'],1)
-    stw=style_w.get(style_map.get(r['馬名'],''),1)
-    fw=frame_w.get(str(r['枠']),1)
-    aw=age_w; bt=besttime_w
-    wt=r['斤量']; wfac=(wt/avg_wt)**weight_coeff if avg_wt>0 else 1
-    bonus=bp if any(k in str(r['血統']) for k in keys) else 0
-    return raw*sw*gw*stw*fw*aw*bt*wfac+bonus
+    g = gp.get(r['クラス名'], 1)
+    raw = g * (r['頭数'] + 1 - r['確定着順']) + lambda_part * g
+    sw = season_w[season_of(pd.to_datetime(r['レース日']).month)]
+    gw = gender_w.get(r['性別'], 1)
+    stw = style_w.get(style_map.get(r['馬名'], ''), 1)
+    fw = frame_w.get(str(r['枠']), 1)
+    aw = age_w
+    bt = besttime_w
+    # 斤量補正: 結合した input_wt を使用
+    wt = r.get('input_wt', None)
+    if pd.isna(wt) or wt is None:
+        weight_factor = 1.0
+    else:
+        weight_factor = (wt / avg_wt) ** weight_coeff if avg_wt > 0 else 1.0
+    bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
+    return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
 
 # 全レースに適用
 df_score['score_raw']=df_score.apply(calc_score,axis=1)
