@@ -64,7 +64,7 @@ initial_wt.rename(columns={'斤量':'input_wt'}, inplace=True)
 # 編集前テーブルに斤量列を追加
 attrs = attrs.merge(initial_wt, on='馬名', how='left')
 # 追加後に列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
-attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']](initial_wt, on='馬名', how='left')
+attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質入力")
