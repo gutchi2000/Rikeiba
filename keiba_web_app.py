@@ -125,34 +125,22 @@ df_agg.columns     = ['馬名','AvgZ','Stdev']
 df_agg['Stability'] = -df_agg['Stdev']
 df_agg['RankZ']     = z_score(df_agg['AvgZ'])
 
-# --- 散布図（静的 Matplotlib 版） ---
+# --- 散布図（Altair テキスト付き） ---
 st.subheader("偏差値 vs 安定度 散布図")
-fig, ax = plt.subplots(figsize=(10,8))
-ax.scatter(df_agg['RankZ'], df_agg['Stability'], s=50)
-avg_st = df_agg['Stability'].mean()
-# ラベル配置（四象限ごとにオフセット）
-for x, y, name in zip(df_agg['RankZ'], df_agg['Stability'], df_agg['馬名']):
-    if x >= 50 and y >= avg_st:
-        dx, dy = 2, 2
-    elif x < 50 and y >= avg_st:
-        dx, dy = -8, 2
-    elif x < 50 and y < avg_st:
-        dx, dy = -8, -6
-    else:
-        dx, dy = 2, -6
-    ax.text(x+dx, y+dy, name, fontsize=8)
-# 背景グリッドと中心線
-ax.set_facecolor('#fafafa')
-ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-ax.axvline(50, color='gray', linewidth=1)
-ax.axhline(avg_st, color='gray', linewidth=1)
-# 四象限ラベル
-ax.text(60, avg_st+0.1, '一発警戒')
-ax.text(40, avg_st+0.1, '警戒必須')
-ax.text(60, avg_st-0.1, '鉄板級')
-ax.text(40, avg_st-0.1, '堅実型')
-plt.tight_layout()
-st.pyplot(fig)
+# Altairで散布図 + テキストラベル
+chart = alt.Chart(df_agg).mark_circle(size=100).encode(
+    x=alt.X('RankZ:Q', title='偏差値'),
+    y=alt.Y('Stability:Q', title='安定度')
+)
+labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10).encode(
+    x='RankZ:Q',
+    y='Stability:Q',
+    text='馬名:N'
+)
+vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
+hline = alt.Chart(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y:Q')
+st.altair_chart((chart + labels + vline + hline).properties(width=600, height=400).interactive(), use_container_width=True)
+
 
 # --- 上位6頭印付け & 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
