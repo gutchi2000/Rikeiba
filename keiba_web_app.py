@@ -210,13 +210,11 @@ bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
 # --- 買い目と配分 ---
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
-# ワイドのみを表示
-wide_amt = bet_share.get('ワイド', 0)
-st.write(f"ワイド: {wide_amt}円")
-# 折り畳みで馬連・ワイド・馬単選択
+rem  = total_budget - (pur1 + pur2)  # 残り予算
 with st.expander("馬連・ワイド・馬単から推奨券種を選択", expanded=False):
-    choice = st.radio("券種を選んでください", ['馬連','ワイド','馬単'], index=1)
-    st.write(f"選択中: {choice}")
+    choice = st.radio("購入する券種を選択してください", ['馬連','ワイド','馬単'], index=1)
+    # 残り予算を全額その券種に充当
+    st.write(f"{choice}: {rem:.0f}円")
 
 # --- 買い目例 ---
 st.subheader("推奨買い目例")
