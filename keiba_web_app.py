@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import re
 import matplotlib.pyplot as plt
+# 日本語フォント設定
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'TakaoPGothic', 'Meiryo', 'MS Gothic']
 
 # --- ヘルパー関数 ---
 def z_score(s: pd.Series) -> pd.Series:
