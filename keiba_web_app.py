@@ -64,13 +64,20 @@ df['馬名']=df['馬名'].astype(str).str.strip()
 stats = xls.parse(1, header=1)
 # 馬情報整形
 keys=['馬名','性別','年齢','ベストタイム']
-col_map={c:k for k in stats.columns for k in keys if k in str(c)}
-stats=stats.rename(columns=col_map)
-for k in keys:
-    if k not in stats.columns:
-        stats[k]=np.nan
-stats=stats[keys].drop_duplicates('馬名')
-stats['馬名']=stats['馬名'].astype(str)
+# 列名マッピング: statsの列名にキーが含まれる場合
+col_map = {}
+for col in stats.columns:
+    for key in keys:
+        if key in str(col):
+            col_map[col] = key
+            break
+stats = stats.rename(columns=col_map)
+# 欠損キーにNaNを追加
+for key in keys:
+    if key not in stats.columns:
+        stats[key] = np.nan
+stats = stats[keys].drop_duplicates('馬名')
+stats['馬名'] = stats['馬名'].astype(str)
 # 枠-番-馬名分割
 
 def split_frame(x):
