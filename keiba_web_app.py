@@ -67,21 +67,20 @@ attrs = attrs.merge(initial_wt, on='馬名', how='left')
 attrs = attrs[['枠','馬名','性別','年齢','脚質','input_wt']]
 
 # --- 馬一覧編集 ---
-st.subheader("馬一覧と脚質入力")
+st.subheader("馬一覧と脚質・斤量入力")
+# 編集用テーブルを定義
 edited = st.data_editor(
     attrs,
     column_order=['枠','馬名','性別','年齢','脚質','input_wt'],
     column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
+        '脚質':    st.column_config.SelectboxColumn('脚質', options=list(style_w.keys())),
         'input_wt': st.column_config.NumberColumn('斤量'),
-        '枠': st.column_config.NumberColumn('枠')
+        '枠':       st.column_config.NumberColumn('枠')
     },
     num_rows='static'
-))),
-        '枠':  st.column_config.NumberColumn('枠')
-    }, num_rows='static'
 )
-# シート1の斤量は既に馬一覧テーブル（edited）に含まれるため
+
+# 編集後のテーブルを horses に反映
 horses = edited.copy()
 
 # --- 血統HTMLパース ---
