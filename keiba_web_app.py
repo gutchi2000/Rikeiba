@@ -138,7 +138,7 @@ labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').en
     text='馬名:N'
 )
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
-hline = alt.Chart(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y:Q')(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y:Q')
+hline = alt.Chart(pd.DataFrame({'y':[df_agg['Stability'].mean()]})).mark_rule(color='gray').encode(y='y:Q')
 st.altair_chart((chart + labels + vline + hline).properties(width=600, height=400).interactive(), use_container_width=True)
 
 
