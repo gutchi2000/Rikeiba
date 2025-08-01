@@ -95,8 +95,9 @@ df = df.merge(stats[['枠','番','馬名','性別','年齢']], on='馬名', how=
 # ...
 
 # 最後のテーブル表示
+# 上位6頭を表示
+st.subheader("本日の予想6頭")
+top6 = summary.nlargest(6, 'バランス').reset_index(drop=True)
+tag_map = {1:'◎',2:'〇',3:'▲',4:'△',5:'△',6:'△'}
+top6['印'] = top6.index.to_series().map(lambda i: tag_map[i+1])
 st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
-
-# 最後のテーブル表示
-st.table(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])(top6[['印','馬名','偏差値','RawBase偏差値','バランス']])
-
