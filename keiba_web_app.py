@@ -55,12 +55,14 @@ df_score = pd.read_excel(excel_file, sheet_name=0)
 sheet2   = pd.read_excel(excel_file, sheet_name=1)
 attrs = sheet2.iloc[:, [0,2,5,3,4]].copy()
 attrs.columns = ['枠','馬名','脚質','性別','年齢']
-# シート1から斤量取得
-initial_wt = pd.read_excel(excel_file, sheet_name=0)[['馬名','斤量']]
+# シート1から最新レースの斤量を取得
+# sheet1のレース日でソートして最新の斤量を馬名ごとに抽出
+df1 = pd.read_excel(excel_file, sheet_name=0)
+df1['レース日'] = pd.to_datetime(df1['レース日'], errors='coerce')
+initial_wt = df1.sort_values('レース日').groupby('馬名').tail(1)[['馬名','斤量']]
+initial_wt.rename(columns={'斤量':'input_wt'}, inplace=True)
 # 編集前テーブルに斤量列を追加
 attrs = attrs.merge(initial_wt, on='馬名', how='left')
-attrs.rename(columns={'斤量':'input_wt'}, inplace=True)
-# 編集用カラム名調整: 表示は斤量とする
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質入力")
@@ -71,9 +73,8 @@ edited = st.data_editor(
         '枠':  st.column_config.NumberColumn('枠')
     }, num_rows='static'
 )
-# シート1の斤量を結合
-df_wt  = df_score[['馬名','斤量']].drop_duplicates().rename(columns={'斤量':'input_wt'})
-horses = pd.merge(edited, df_wt, on='馬名', how='left')
+# シート1の斤量は既に馬一覧テーブル（edited）に含まれるため
+horses = edited.copy()
 
 # --- 血統HTMLパース ---
 cont = html_file.read().decode(errors='ignore')
