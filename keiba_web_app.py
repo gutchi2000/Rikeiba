@@ -214,30 +214,54 @@ with st.expander("馬連・ワイド・馬単から推奨券種を選択", expan
     # 残り予算を全額その券種に充当
     st.write(f"{choice}: {rem:.0f}円")
 
-# --- 買い目例 ---
-st.subheader("推奨買い目例")
-# 単勝・複勝
-st.write(f"単勝: {top6.iloc[0]['馬名']} (◎)")
-st.write(f"複勝: {top6.iloc[1]['馬名']} (〇)")
+# --- 買い目一覧テーブル作成 ---
+bets = []
 
-# 馬連・ワイド・馬単
-with st.expander("馬連・ワイド・馬単 (◎ー〇軸一頭流し)", expanded=False):
-    base = top6.iloc[0]['馬名']
-    others = top6.iloc[1:]
-    st.write(f"軸馬: {base}")
-    st.write(f"流し相手: {', '.join(list(others['馬名']))}")
-    st.write(f"フォーメーション例: {base}-{', '.join(list(others['馬名']))}")
+# 単勝・複勝（◎／〇 各2頭ずつ）
+bets.append({
+    '券種': '単勝', '印': '◎', '馬': h1, '相手': '', '金額': win_each
+})
+bets.append({
+    '券種': '単勝', '印': '〇', '馬': h2, '相手': '', '金額': win_each
+})
+bets.append({
+    '券種': '複勝', '印': '◎', '馬': h1, '相手': '', '金額': place_each
+})
+bets.append({
+    '券種': '複勝', '印': '〇', '馬': h2, '相手': '', '金額': place_each
+})
+
+# 馬連・ワイド・馬単（選択券種のみ）
+if choice in ['馬連','ワイド','馬単']:
+    bets.append({
+        '券種': choice,
+        '印': '◎→〇',
+        '馬': h1,
+        '相手': ','.join(others),
+        '金額': bet_share[choice]
+    })
 
 # 三連複
-st.subheader("三連複 (◎ー〇▲☆△△ 軸一頭流し)")
-base = top6.iloc[0]['馬名']
-others = top6.iloc[1:]
-st.write(f"軸馬: {base}")
-st.write(f"相手: {', '.join(list(others['馬名']))}")
+if '三連複' in parts:
+    bets.append({
+        '券種': '三連複',
+        '印': '◎→〇▲☆△△',
+        '馬': h1,
+        '相手': ','.join(others),
+        '金額': bet_share.get('三連複', 0)
+    })
 
-# 三連単マルチ
-st.subheader("三連単マルチ (◎ー〇▲☆△△ 軸一頭マルチ)")
-base = top6.iloc[0]['馬名']
-others = top6.iloc[1:]
-st.write(f"軸馬: {base}")
-st.write(f"流し相手: {', '.join(list(others['馬名']))}")
+# 三連単
+if '三連単' in parts:
+    bets.append({
+        '券種': '三連単マルチ',
+        '印': '◎→〇▲☆△△',
+        '馬': h1,
+        '相手': ','.join(others),
+        '金額': bet_share.get('三連単', 0)
+    })
+
+# DataFrame化して表示
+df_bets = pd.DataFrame(bets)
+st.subheader("■ 最終買い目一覧")
+st.table(df_bets[['券種','印','馬','相手','金額']])
