@@ -1,17 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from bs4 import BeautifulSoup
 import datetime
 import matplotlib.pyplot as plt
+import io
 
 # --- ヘルパー関数 ---
 def z_score(series: pd.Series) -> pd.Series:
+    """
+    与えられたSeriesを偏差値（平均50, 標準偏差10）に変換して返す
+    """
     mu = series.mean()
     sigma = series.std(ddof=0)
     return 50 + 10 * (series - mu) / sigma
 
+
 def grade_mark(z: float) -> str:
+    """
+    偏差値に基づき印（◎◯▲☆△×）を返す
+    """
     if z >= 70:
         return "◎"
     if z >= 60:
@@ -24,7 +31,11 @@ def grade_mark(z: float) -> str:
         return "△"
     return "×"
 
+
 def season_of(month: int) -> str:
+    """
+    月から四季を判定して文字列を返す
+    """
     if 3 <= month <= 5:
         return '春'
     if 6 <= month <= 8:
@@ -55,20 +66,17 @@ style_w = {
 }
 
 st.sidebar.subheader("四季重み")
-season_w = {
-    s: st.sidebar.slider(f'{s}', 0.0, 2.0, 1.0, 0.1)
-    for s in ['春','夏','秋','冬']
-}
+season_w = {s: st.sidebar.slider(f'{s}', 0.0, 2.0, 1.0, 0.1) for s in ['春','夏','秋','冬']}
 
 age_w = st.sidebar.number_input("年齢重み（全馬共通）", 0.0, 5.0, 1.0, 0.1)
 
 st.sidebar.subheader("枠順重み")
-frame_w = {str(i): st.sidebar.slider(f'{i}枠',0.0,2.0,1.0,0.1) for i in range(1,10)}
+frame_w = {str(i): st.sidebar.slider(f'{i}枠', 0.0, 2.0, 1.0, 0.1) for i in range(1,10)}
 
 besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.1)
 
-total_budget = st.sidebar.slider("合計予算 (円)",500,50000,10000,500)
-scenario = st.sidebar.selectbox("シナリオ",['通常','ちょい余裕','余裕'])
+total_budget = st.sidebar.slider("合計予算 (円)", 500, 50000, 10000, 500)
+scenario = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
 
 # --- メイン画面 ---
 st.title("競馬予想アプリ")
@@ -81,71 +89,74 @@ if not excel_file or not html_file:
     st.info("Excel と HTML を両方アップロードしてください。")
     st.stop()
 
-# データ読み込み
+# Excelデータ読み込み
 df = pd.read_excel(excel_file, sheet_name=0)
-# 血統読み込み
-soup = BeautifulSoup(html_file.read(), 'html.parser')
-blood = []
-for tr in soup.find_all('tr'):
-    td = tr.find_all(['td','th'])
-    if len(td)>=2:
-        blood.append((td[0].get_text(strip=True), td[1].get_text(strip=True)))
-blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
+
+# HTML血統データ読み込み（pandasでテーブルを抽出）
+content = html_file.read().decode('utf-8')
+tables = pd.read_html(io.StringIO(content))
+# 最初の表を血統情報と仮定
+blood_df = tables[0].iloc[:, :2]
+blood_df.columns = ['馬名', '血統']
+
+# データ結合
 df = df.merge(blood_df, on='馬名', how='left')
 
 # 血統キーワード入力
 st.subheader("血統キーワード")
 keywords = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
-bonus_point = st.slider("血統ボーナス点数",0,20,5)
+bonus_point = st.slider("血統ボーナス点数", 0, 20, 5)
 
 # 馬一覧編集
 st.subheader("馬一覧と補正設定")
-base_cols = ['枠','馬名','性別','年齢']
+base_cols = ['枠', '馬名', '性別', '年齢']
 df_edit = df[base_cols].copy()
 df_edit['脚質'] = ''
 df_edit['斤量'] = 0
 edited = st.experimental_data_editor(df_edit, num_rows='dynamic')
 
-# スコア計算 per race-record
+# スコア計算（各レース行）
 def calc_score(row):
-    GP_map = {"GⅠ":10,"GⅡ":8,"GⅢ":6,"リステッド":5,"オープン特別":4,
-              "3勝クラス":3,"2勝クラス":2,"1勝クラス":1,"新馬・未勝利":1}
-    gp = GP_map.get(row['クラス名'],1)
-    N = row['頭数']; p = row['確定着順']
-    raw = gp*(N+1-p) + lambda_part*gp
-    # Season
+    GP_map = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5, "オープン特別":4,
+              "3勝クラス":3, "2勝クラス":2, "1勝クラス":1, "新馬・未勝利":1}
+    gp = GP_map.get(row['クラス名'], 1)
+    N, p = row['頭数'], row['確定着順']
+    raw = gp * (N + 1 - p) + lambda_part * gp
+    # 季節判定
     date = pd.to_datetime(row['レース日'], errors='coerce')
     sw = season_w[season_of(date.month)]
-    # Attribute weights
-    gw = gender_w.get(row['性別'],1.0)
-    stw = style_w.get(edited.loc[edited['馬名']==row['馬名'],'脚質'].values[0],1.0)
-    fw = frame_w.get(str(row['枠']),1.0)
+    # 属性補正
+    gw = gender_w.get(row['性別'], 1.0)
+    stw = style_w.get(edited.loc[edited['馬名']==row['馬名'],'脚質'].values[0], 1.0)
+    fw = frame_w.get(str(row['枠']), 1.0)
     aw = age_w
-    # BestTime placeholder: 全レース共通1.0
     bt = besttime_w
-    return raw*sw*gw*stw*fw*aw*bt
+    # 血統補正
+    blood_bonus = bonus_point if any(k in str(row['血統']) for k in keywords) else 0
+    return raw * sw * gw * stw * fw * aw * bt + blood_bonus
 
-# 各レース行にスコア
+# レース結果ごとにスコア計算
 df['score_raw'] = df.apply(calc_score, axis=1)
-# 正規化0-100→偏差値化
-df['score_norm'] = (df['score_raw'] - df['score_raw'].min())/(df['score_raw'].max()-df['score_raw'].min())*100
-# 馬ごとの平均偏差値と安定度(標準偏差)
+# 正規化 → 偏差値化
+df['score_norm'] = (df['score_raw'] - df['score_raw'].min()) / (df['score_raw'].max() - df['score_raw'].min()) * 100
+
+# 馬ごとの統計（平均偏差値、標準偏差）
 agg = df.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
-agg.columns=['馬名','AvgZ','Stdev']
-agg['Stability']= -agg['std']
-agg['RankZ']= z_score(agg['AvgZ'])
+agg.columns = ['馬名','AvgZ','Stdev']
+agg['Stability'] = -agg['Stdev']
+agg['RankZ'] = z_score(agg['AvgZ'])
 
 # 散布図描画
 st.subheader("偏差値 vs 安定度 散布図")
 fig, ax = plt.subplots()
 ax.scatter(agg['RankZ'], agg['Stability'])
-# 四象限線
-ax.axvline(50, color='gray'); ax.axhline(agg['Stability'].mean(), color='gray')
-# ラベル
-ax.text(60, agg['Stability'].mean()+agg['Stability'].max()*0.1, '一発警戒')
-ax.text(40, agg['Stability'].mean()+agg['Stability'].max()*0.1, '警戒必須')
-ax.text(60, agg['Stability'].mean()-agg['Stability'].max()*0.1, '鉄板級')
-ax.text(40, agg['Stability'].mean()-agg['Stability'].max()*0.1, '堅実型')
+# 四象限線・ラベル
+avg_st = agg['Stability'].mean()
+ax.axvline(50, color='gray'); ax.axhline(avg_st, color='gray')
+ax.text(60, avg_st+max(agg['Stability'])*0.1, '一発警戒')
+ax.text(40, avg_st+max(agg['Stability'])*0.1, '警戒必須')
+ax.text(60, avg_st-max(agg['Stability'])*0.1, '鉄板級')
+ax.text(40, avg_st-max(agg['Stability'])*0.1, '堅実型')
 st.pyplot(fig)
 
 # 上位6頭印付け
@@ -154,26 +165,22 @@ top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭")
 st.table(top6[['馬名','印']])
 
-# 資金配分
-pur1 = total_budget*0.25  # 単勝
-pur2 = total_budget*0.75  # 複勝
-rem = total_budget - (pur1+pur2)
-if scenario=='通常':
-    parts = ['馬連','ワイド','馬単']
-elif scenario=='ちょい余裕':
-    parts = ['馬連','ワイド','馬単','三連複']
-else:
-    parts = ['馬連','ワイド','馬単','三連複','三連単']
+# 資金配分 and 買い目生成
+pur1 = total_budget * 0.25  # 単勝
+pur2 = total_budget * 0.75  # 複勝
+rem = total_budget - (pur1 + pur2)
+if scenario=='通常': parts=['馬連','ワイド','馬単']
+elif scenario=='ちょい余裕': parts=['馬連','ワイド','馬単','三連複']
+else: parts=['馬連','ワイド','馬単','三連複','三連単']
 bet_share = {p: rem/len(parts) for p in parts}
 
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
 st.table(pd.DataFrame.from_dict(bet_share, orient='index', columns=['金額']))
 
-# 買い目例表示（簡易）
-st.subheader("推奨買い目")
+st.subheader("推奨買い目例")
 st.write("単勝:", top6.iloc[0]['馬名'])
 st.write("複勝:", top6.iloc[1]['馬名'])
 st.write("馬連/ワイド/馬単:", f"{top6.iloc[0]['馬名']}-{top6.iloc[1]['馬名']}")
-st.write("三連複:", f"{top6.iloc[0]['馬名']}-{','.join(top6.iloc[1:5]['馬名'].tolist())}")
-st.write("三連単マルチ:", f"{top6.iloc[0]['馬名']} 軸 → {','.join(top6.iloc[1:6]['馬名'].tolist())}")
+st.write("三連複:", f"{top6.iloc[0]['馬名']}-{','.join(top6.iloc[1:5]['馬名'])}")
+st.write("三連単:", f"{top6.iloc[0]['馬名']} 軸→{','.join(top6.iloc[1:6]['馬名'])}")
