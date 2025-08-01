@@ -195,48 +195,46 @@ st.table(top6[['馬名','印']])
 # --- サイドバーからの変数取得は省略 ---
 # total_budget, scenario, top6, etc. が定義済みとします
 
-# ◎／〇の馬名リスト準備
-h1 = top6.iloc[0]['馬名']     # ◎
-h2 = top6.iloc[1]['馬名']     # 〇
-others = list(top6.iloc[2:]['馬名'])  # ▲以下
+# --- ◎／〇 の馬リスト準備 ---
+h1 = top6.iloc[0]['馬名']              # ◎
+h2 = top6.iloc[1]['馬名']              # 〇
+symbols   = top6['印'].tolist()        # ['◎','〇','▲','☆','△','△']
+names     = top6['馬名'].tolist()      # [h1,h2,h3,...]
+others_names   = names[1:]             # ['〇馬名','▲馬名',...]
+others_symbols = symbols[1:]           # ['〇','▲',...]
 
 # --- 資金配分 ---
-main_share = 0.5  # 単複に使う割合
+main_share = 0.5
 pur1 = int(round((total_budget * main_share * 1/4) / 100) * 100)  # 単勝合計
 pur2 = int(round((total_budget * main_share * 3/4) / 100) * 100)  # 複勝合計
 rem  = total_budget - (pur1 + pur2)                               # 残り予算
 
-parts = {
-    '通常': ['馬連','ワイド','馬単'],
-    'ちょい余裕': ['馬連','ワイド','馬単','三連複'],
-    '余裕': ['馬連','ワイド','馬単','三連複','三連単']
-}[scenario]
-
-raw_share = rem / len(parts)
-bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
+# --- 単勝・複勝 割当額（100円単位）---
+win_each   = int(round((pur1 / 2) / 100) * 100)
+place_each = int(round((pur2 / 2) / 100) * 100)
 
 # --- 資金配分表示 ---
 st.subheader("■ 資金配分")
 st.write(f"合計予算：{total_budget:,}円")
 st.write(f"単勝合計：{pur1:,}円  ／  複勝合計：{pur2:,}円  （残：{rem:,}円）")
 
+# --- 券種選択 & 残予算全額充当 ---
+parts = ['馬連','ワイド','馬単']
+with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
+    choice = st.radio("購入する券種", parts, index=1)
+    st.write(f"▶ {choice} に残り {rem:,}円 をまるごと充当")
+
+# --- 使用額テーブル ---
+use_share = {p: (rem if p == choice else 0) for p in parts}
 share_df = (
-    pd.DataFrame.from_dict(bet_share, orient='index', columns=['使⽤額'])
-    .rename_axis('券種')
-    .reset_index()
+    pd.DataFrame.from_dict(use_share, orient='index', columns=['使用額'])
+      .rename_axis('券種')
+      .reset_index()
 )
-share_df['使⽤額'] = share_df['使⽤額'].map(lambda x: f"{x:,}円")
+share_df['使用額'] = share_df['使用額'].map(lambda x: f"{x:,}円" if x>0 else "")
 st.table(share_df)
 
-# --- 券種選択 ---
-with st.expander("馬連／ワイド／馬単 から１券種を選択", expanded=False):
-    choice = st.radio("購入する券種", options=parts[:3], index=1)
-    st.write(f"▶ {choice}：{bet_share[choice]:,}円 を充当")
-
-# --- 単勝・複勝（◎／〇 各2頭ずつ） ---
-win_each   = int(round((pur1 / 2) / 100) * 100)
-place_each = int(round((pur2 / 2) / 100) * 100)
-
+# --- 単勝・複勝 (◎／〇 各2頭ずつ) ---
 st.subheader("■ 単勝 (◎／〇 各2頭ずつ)")
 st.write(f"◎ {h1} → {win_each:,}円")
 st.write(f"〇 {h2} → {win_each:,}円")
@@ -256,33 +254,36 @@ bets += [
     {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
 ]
 
-# 馬連／ワイド／馬単（選択券種のみ）
-if choice in ['馬連','ワイド','馬単']:
-    bets.append({
-        '券種': choice,
-        '印': '◎-〇▲☆△△',
-        '馬': h1,
-        '相手': '／'.join(others),
-        '金額': bet_share[choice]
-    })
+# 馬連／ワイド／馬単：◎–相手 を一行ずつ、残り全額 rem を使用
+if choice in parts:
+    for nm, mk in zip(others_names, others_symbols):
+        bets.append({
+            '券種': choice,
+            '印': f'◎–{mk}',
+            '馬': h1,
+            '相手': nm,
+            '金額': rem
+        })
 
-# 三連複／三連単（シナリオに応じて）
-if '三連複' in parts:
-    bets.append({
-        '券種':'三連複',
-        '印':'◎-〇▲☆△△',
-        '馬':h1,
-        '相手':'／'.join(others),
-        '金額':bet_share.get('三連複',0)
-    })
+# 三連複／三連単（シナリオに応じて出力）
+if '三連複' in parts:  # ここで parts に含めていれば
+    for nm, mk in zip(others_names, others_symbols):
+        bets.append({
+            '券種':'三連複',
+            '印':f'◎–{mk}',
+            '馬':h1,
+            '相手':nm,
+            '金額':rem
+        })
 if '三連単' in parts:
-    bets.append({
-        '券種':'三連単マルチ',
-        '印':'◎-〇▲☆△△',
-        '馬':h1,
-        '相手':'／'.join(others),
-        '金額':bet_share.get('三連単',0)
-    })
+    for nm, mk in zip(others_names, others_symbols):
+        bets.append({
+            '券種':'三連単マルチ',
+            '印':f'◎–{mk}',
+            '馬':h1,
+            '相手':nm,
+            '金額':rem
+        })
 
 df_bets = pd.DataFrame(bets)
 df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
