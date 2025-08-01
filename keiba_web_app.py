@@ -103,8 +103,8 @@ input_df = pd.DataFrame({
 ed = st.data_editor(
     input_df,
     column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', ['逃げ','先行','差し','追込']),
-        '本斤量': st.column_config.NumberColumn('本斤量', min_value=45, max_value=60, step=1)
+        '脚質': st.column_config.SelectboxColumn(label='脚質', options=['逃げ','先行','差し','追込']),
+        '本斤量': st.column_config.NumberColumn(label='本斤量', min_value=45, max_value=60, step=1)
     },
     use_container_width=True
 )
