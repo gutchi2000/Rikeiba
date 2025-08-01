@@ -148,7 +148,7 @@ labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').en
     text='馬名:N'
 )
 # 象限ラベル
-quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='black').encode(
+quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='white').encode(
     x='RankZ:Q',
     y='Stability:Q',
     text='label:N'
