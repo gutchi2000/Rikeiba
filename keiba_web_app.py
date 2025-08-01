@@ -48,8 +48,6 @@ with st.sidebar:
 
 # ── キャッシュクリア注意 ──
 st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
-st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
-st.write("**注意：重み変更後は右上メニュー→Clear cacheで再実行してください。**")
 
 # ── データアップロード ──
 st.subheader("データアップロード")
