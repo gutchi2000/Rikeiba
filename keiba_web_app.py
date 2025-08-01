@@ -95,7 +95,8 @@ edited = st.data_editor(
     num_rows='static'
 )
 # 編集後のテーブルを horses に反映
-horses = edited.copy()()
+# 編集後のテーブルを horses に反映
+horses = edited.copy())
 
 # --- 血統HTMLパース ---
 cont = html_file.read().decode(errors='ignore')
