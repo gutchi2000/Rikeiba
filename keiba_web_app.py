@@ -139,18 +139,9 @@ edited = st.data_editor(
 )
 
 # 平均斤量算出
-avg_wt = edited['斤量'].mean()例（要修正）
-# avg_wt = edited['斤量'].mean()
-
-# ※ まずは列名をご確認の上、こちらのコードを修正してください。
-
 avg_wt = edited['斤量'].mean()
 
-avg_wt = edited['斤量'].mean()
-
-avg_wt = edited['斤量'].mean()
-
-# スコア計算（各レース行）
+# スコア計算（各レース行）（各レース行）
 def calc_score(row):
     GP_map = {"GⅠ":10, "GⅡ":8, "GⅢ":6, "リステッド":5, "オープン特別":4,
               "3勝クラス":3, "2勝クラス":2, "1勝クラス":1, "新馬・未勝利":1}
