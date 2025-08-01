@@ -66,7 +66,9 @@ stats = xls.parse(1, header=1)
 keys=['馬名','性別','年齢','ベストタイム']
 col_map={c:k for k in keys for c in stats.columns if k in str(c)}
 stats=stats.rename(columns=col_map)
-for k in keys: stats.setdefault(k, np.nan)
+for k in keys:
+    if k not in stats.columns:
+        stats[k] = np.nan
 stats=stats[keys].drop_duplicates('馬名')
 stats['馬名']=stats['馬名'].astype(str)
 # 枠-番-馬名 分割
