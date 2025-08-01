@@ -92,11 +92,10 @@ if not excel_file or not html_file:
 # Excelデータ読み込み
 df = pd.read_excel(excel_file, sheet_name=0)
 
-# HTML血統データ読み込み（pandasでテーブルを抽出）
-content = html_file.read().decode('utf-8')
-tables = pd.read_html(io.StringIO(content))
-# 最初の表を血統情報と仮定
-blood_df = tables[0].iloc[:, :2]
+# HTML血統データ読み込み（pandas.read_htmlで直接抽出）
+# read_htmlはファイル-likeオブジェクトも受け付ける
+blood_tables = pd.read_html(html_file)
+blood_df = blood_tables[0].iloc[:, :2]
 blood_df.columns = ['馬名', '血統']
 
 # データ結合
@@ -127,7 +126,7 @@ def calc_score(row):
     sw = season_w[season_of(date.month)]
     # 属性補正
     gw = gender_w.get(row['性別'], 1.0)
-    stw = style_w.get(edited.loc[edited['馬名']==row['馬名'],'脚質'].values[0], 1.0)
+    stw = style_w.get(edited.loc[edited['馬名']==row['馬名'], '脚質'].values[0], 1.0)
     fw = frame_w.get(str(row['枠']), 1.0)
     aw = age_w
     bt = besttime_w
@@ -142,7 +141,7 @@ df['score_norm'] = (df['score_raw'] - df['score_raw'].min()) / (df['score_raw'].
 
 # 馬ごとの統計（平均偏差値、標準偏差）
 agg = df.groupby('馬名')['score_norm'].agg(['mean','std']).reset_index()
-agg.columns = ['馬名','AvgZ','Stdev']
+agg.columns = ['馬名', 'AvgZ', 'Stdev']
 agg['Stability'] = -agg['Stdev']
 agg['RankZ'] = z_score(agg['AvgZ'])
 
@@ -153,26 +152,29 @@ ax.scatter(agg['RankZ'], agg['Stability'])
 # 四象限線・ラベル
 avg_st = agg['Stability'].mean()
 ax.axvline(50, color='gray'); ax.axhline(avg_st, color='gray')
-ax.text(60, avg_st+max(agg['Stability'])*0.1, '一発警戒')
-ax.text(40, avg_st+max(agg['Stability'])*0.1, '警戒必須')
-ax.text(60, avg_st-max(agg['Stability'])*0.1, '鉄板級')
-ax.text(40, avg_st-max(agg['Stability'])*0.1, '堅実型')
+ax.text(60, avg_st + max(agg['Stability']) * 0.1, '一発警戒')
+ax.text(40, avg_st + max(agg['Stability']) * 0.1, '警戒必須')
+ax.text(60, avg_st - max(agg['Stability']) * 0.1, '鉄板級')
+ax.text(40, avg_st - max(agg['Stability']) * 0.1, '堅実型')
 st.pyplot(fig)
 
 # 上位6頭印付け
 top6 = agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭")
-st.table(top6[['馬名','印']])
+st.table(top6[['馬名', '印']])
 
 # 資金配分 and 買い目生成
 pur1 = total_budget * 0.25  # 単勝
 pur2 = total_budget * 0.75  # 複勝
 rem = total_budget - (pur1 + pur2)
-if scenario=='通常': parts=['馬連','ワイド','馬単']
-elif scenario=='ちょい余裕': parts=['馬連','ワイド','馬単','三連複']
-else: parts=['馬連','ワイド','馬単','三連複','三連単']
-bet_share = {p: rem/len(parts) for p in parts}
+if scenario == '通常':
+    parts = ['馬連','ワイド','馬単']
+elif scenario == 'ちょい余裕':
+    parts = ['馬連','ワイド','馬単','三連複']
+else:
+    parts = ['馬連','ワイド','馬単','三連複','三連単']
+bet_share = {p: rem / len(parts) for p in parts}
 
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
