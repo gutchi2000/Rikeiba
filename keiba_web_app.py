@@ -67,21 +67,20 @@ attrs['斤量'] = np.nan
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質入力")
+# 独自表: 枠, 番, 馬名, 性別, 年齢, 脚質
 edited = st.data_editor(
     attrs,
     column_order=['枠','番','馬名','性別','年齢','脚質'],
     column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])
+        '脚質': st.column_config.SelectboxColumn(
+            '脚質', options=['逃げ','先行','差し','追込']
+        )
     },
     use_container_width=True,
     num_rows='static'
 )
 # 編集後のテーブルを horses に反映
 horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質']]
-)
-# 編集後のテーブルを horses に反映
-# 編集後のテーブルを horses に反映
-horses = edited.copy()
 
 # --- 血統HTMLパース ---
 cont = html_file.read().decode(errors='ignore')
