@@ -56,34 +56,15 @@ sheet2   = pd.read_excel(excel_file, sheet_name=1)
 # 重複行を削除して、出走メンバー18頭のみ取得
 # "馬名"列で一意化（月並みに最初に出現した順）
 sheet2 = sheet2.drop_duplicates(subset=sheet2.columns[2], keep='first').reset_index(drop=True)
-# シート2から今回出走馬一覧を取得（枠、番、馬名、性別、年齢）
-sheet2 = sheet2.copy()
-# 列名が不定なので位置で取得: 枠(col0), 番(col1), 馬名(col2), 性別(col3), 年齢(col4)
-attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
-attrs.columns = ['枠','番','馬名','性別','年齢']
-# 脚質と斤量は入力用に空欄を用意
+# --- シート2から今回出走馬一覧を取得 ---
+# 独自テーブル：枠, 番, 馬名, 脚質, 斤量 のみ
+sheet2 = pd.read_excel(excel_file, sheet_name=1)
+# 必要な列を位置で取得: 枠(0), 番(1), 馬名(2)
+attrs = sheet2.iloc[:, [0,1,2]].copy()
+attrs.columns = ['枠','番','馬名']
+# 脚質と斤量の空欄列を追加
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
-# 先頭行がヘッダ行の場合は削除
-if attrs.iloc[0].tolist() == ['枠','馬名','性別','年齢','脚質']:
-    attrs = attrs.iloc[1:].reset_index(drop=True)().iloc[:, [0, 2, 3, 4]].copy()
-attrs.columns = ['枠','馬名','性別','年齢']
-# 脚質は完全新規入力、勝率等は使わない
-attrs['脚質'] = ''
-attrs.columns = ['枠','馬名','脚質','性別','年齢']
-# シート1から最新レースの斤量を取得
-# sheet1のレース日でソートして最新の斤量を馬名ごとに抽出
-df1 = pd.read_excel(excel_file, sheet_name=0)
-df1['レース日'] = pd.to_datetime(df1['レース日'], errors='coerce')
-initial_wt = df1.sort_values('レース日').groupby('馬名').tail(1)[['馬名','斤量']]
-initial_wt.rename(columns={'斤量':'input_wt'}, inplace=True)
-# 編集前テーブルに斤量列を追加
-attrs = attrs.merge(initial_wt, on='馬名', how='left')
-# 列名をユーザー向けに調整: input_wt -> 斤量
-attrs.rename(columns={'input_wt':'斤量'}, inplace=True)
-# 列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
-# 列順を設定: 枠, 馬名, 性別, 年齢, 脚質, 斤量
-attrs = attrs[['枠','馬名','性別','年齢','脚質','斤量']]
 
 # --- 馬一覧編集 ---
 st.subheader("馬一覧と脚質・斤量入力")
