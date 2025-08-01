@@ -195,15 +195,17 @@ st.table(top6[['馬名','印']])
 # 資金配分
 # 単勝:複勝 を 1:3 の比率で合計予算の50%を使用し、残り50%を他券種に配分
 main_share = 0.5  # 単複に使う合計割合
-pur1 = total_budget * main_share * (1/4)  # 単勝 (1部分)
-pur2 = total_budget * main_share * (3/4)  # 複勝 (3部分)
+pur1 = round((total_budget * main_share * (1/4)) / 100) * 100  # 単勝 (100円単位切り上げ)
+pur2 = round((total_budget * main_share * (3/4)) / 100) * 100  # 複勝 (100円単位切り上げ)
 rem  = total_budget - (pur1 + pur2)       # 残り予算
 parts = {
     '通常': ['馬連','ワイド','馬単'],
     'ちょい余裕': ['馬連','ワイド','馬単','三連複'],
     '余裕': ['馬連','ワイド','馬単','三連複','三連単']
 }[scenario]
-bet_share = {p: rem / len(parts) for p in parts}
+# 他券種は残り予算を100円単位で均等分割
+raw_share = rem / len(parts)
+bet_share = {p: int(round(raw_share / 100) * 100) for p in parts}
 
 st.subheader("買い目と配分（円）")
 st.write(f"単勝: {pur1:.0f}円, 複勝: {pur2:.0f}円")
