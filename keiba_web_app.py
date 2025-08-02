@@ -28,7 +28,6 @@ hist_weight    = 1 - orig_weight
 weight_coeff   = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0, 0.05)
 lambda_decay   = st.sidebar.slider("時系列減衰 λ", 0.0, 1.0, 0.1, 0.01)
 total_budget   = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
-scenario       = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
 
 with st.sidebar.expander("性別重み", expanded=True):
     gender_w = {g: st.slider(g, 0.0, 2.0, 1.0, 0.05) for g in ['牡', '牝', 'セ']}
@@ -36,10 +35,11 @@ with st.sidebar.expander("脚質重み", expanded=True):
     style_w  = {s: st.slider(s, 0.0, 2.0, 1.0, 0.05) for s in ['逃げ', '先行', '差し', '追込']}
 with st.sidebar.expander("四季重み", expanded=True):
     season_w = {s: st.slider(s, 0.0, 2.0, 1.0, 0.05) for s in ['春', '夏', '秋', '冬']}
-age_w = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0, 0.1)
+age_w         = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0, 0.1)
 with st.sidebar.expander("枠順重み", expanded=True):
-    frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0, 0.05) for i in range(1, 9)}
-besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.05)
+    frame_w  = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0, 0.05) for i in range(1, 9)}
+besttime_w    = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.05)
+scenario        = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
 
 st.title("競馬予想アプリ（完成版）")
 
@@ -184,6 +184,7 @@ else:
     for i,(s,t) in enumerate(combo3):
         amt = base + (leftover if i==0 else 0)
         bets.append({'券種':'三連単フォーメーション','印':'◎-〇▲-...','馬':h1,'相手':f"{s}／{t}",'金額':amt})
+
 
 df_bets = pd.DataFrame(bets)
 summary = df_bets.groupby('券種')['金額'].sum().reset_index()
