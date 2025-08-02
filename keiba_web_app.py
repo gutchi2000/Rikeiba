@@ -102,9 +102,12 @@ points = alt.Chart(df_agg).mark_circle(size=120).encode(
 )
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(strokeDash=[4,4]).encode(x='x:Q')
 hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(strokeDash=[4,4]).encode(y='y:Q')
-labels=alt.Chart(df_agg).mark_text(dx=7, dy=-7, fontSize=11).encode(x='RankZ:Q', y='Stability:Q', text='馬名:N')
-chart=(points+vline+hline+labels).properties(width=650, height=450)
+labels=alt.Chart(df_agg).mark_text(dx=7, dy=-7, fontSize=11).encode(
+    x='RankZ:Q', y='Stability:Q', text='馬名:N'
+)
+chart = (points + vline + hline + labels).properties(width=650, height=450)
 st.altair_chart(chart.interactive(), use_container_width=True)
+
 # --- 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
