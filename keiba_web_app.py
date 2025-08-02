@@ -22,18 +22,24 @@ def season_of(month: int) -> str:
     return '冬'
 
 st.sidebar.header("パラメータ設定")
-lambda_part = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
-total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
-scenario = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
-lambda_decay = st.sidebar.slider("時系列減衰 λ", 0.0, 1.0, 0.1, 0.01)
+lambda_part    = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
+orig_weight    = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
+hist_weight    = 1 - orig_weight
+weight_coeff   = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0, 0.05)
+lambda_decay   = st.sidebar.slider("時系列減衰 λ", 0.0, 1.0, 0.1, 0.01)
+total_budget   = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
+scenario       = st.sidebar.selectbox("シナリオ", ['通常', 'ちょい余裕', '余裕'])
 
-with st.sidebar.expander("重み設定", expanded=False):
-    gender_w = {g: st.slider(g, 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
-    style_w  = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
-    season_w = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
-    age_w    = st.number_input("年齢重み", 0.0, 5.0, 1.0)
-    frame_w  = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1, 9)}
-    besttime_w = st.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+with st.sidebar.expander("性別重み", expanded=True):
+    gender_w = {g: st.slider(g, 0.0, 2.0, 1.0, 0.05) for g in ['牡', '牝', 'セ']}
+with st.sidebar.expander("脚質重み", expanded=True):
+    style_w  = {s: st.slider(s, 0.0, 2.0, 1.0, 0.05) for s in ['逃げ', '先行', '差し', '追込']}
+with st.sidebar.expander("四季重み", expanded=True):
+    season_w = {s: st.slider(s, 0.0, 2.0, 1.0, 0.05) for s in ['春', '夏', '秋', '冬']}
+age_w = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0, 0.1)
+with st.sidebar.expander("枠順重み", expanded=True):
+    frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0, 0.05) for i in range(1, 9)}
+besttime_w = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0, 0.05)
 
 st.title("競馬予想アプリ（完成版）")
 
@@ -85,8 +91,9 @@ def calc_score(r):
     fw  = frame_w.get(str(r['枠']), 1)
     aw  = age_w
     bt  = besttime_w
+    wf  = weight_coeff
     bonus = bp if any(k in str(r.get('血統','')) for k in keys) else 0
-    return raw * sw * gw * stw * fw * aw * bt + bonus
+    return (raw * sw * gw * stw * fw * aw * bt * wf) + bonus
 
 df_score['レース日'] = pd.to_datetime(df_score['レース日'])
 df_score['score_raw'] = df_score.apply(calc_score, axis=1)
@@ -150,7 +157,6 @@ if scenario == '通常':
     for i, (nm, mk) in enumerate(zip(others, others_marks)):
         amt = base + (leftover if i==0 else 0)
         bets.append({'券種':choice,'印':f'◎–{mk}','馬':h1,'相手':nm,'金額':amt})
-
 elif scenario == 'ちょい余裕':
     n_w = len(others)
     n_t = len(list(combinations(others,2)))
@@ -162,7 +168,6 @@ elif scenario == 'ちょい余裕':
         bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':amt})
     for pair in combinations(others,2):
         bets.append({'券種':'三連複','印':'◎-〇▲☆△△','馬':h1,'相手':'／'.join(pair),'金額':base})
-
 else:
     n_w  = len(others)
     n_t3 = len(list(combinations(others,2)))
@@ -171,7 +176,7 @@ else:
     total = n_w + n_t3 + len(combo3)
     base = int(np.floor((rem/total)/100)*100)
     leftover = rem - base*total
-    for i,(nm,mk) in enumerate(zip(others,others_marks)):
+    for i,(nm, mk) in enumerate(zip(others,others_marks)):
         amt = base + (leftover if i==0 else 0)
         bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':amt})
     for pair in combinations(others,2):
