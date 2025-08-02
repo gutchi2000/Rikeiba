@@ -128,107 +128,37 @@ def calc_score(r):
     # 最終スコア
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
 
-# スコア適用
-"
-+"df_score['score_raw']  = df_score.apply(calc_score, axis=1)
-"
-+"df_score['score_norm'] = (
-"
-+"    (df_score['score_raw'] - df_score['score_raw'].min()) /
-"
-+"    (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
-"
-+")
+# --- 過去5走重み設定 ---
+w1 = st.sidebar.slider("1走前の重み", 0.0, 2.0, 1.0, 0.01)
+w2 = st.sidebar.slider("2走前の重み", 0.0, 2.0, 1.0, 0.01)
+w3 = st.sidebar.slider("3走前の重み", 0.0, 2.0, 1.0, 0.01)
+w4 = st.sidebar.slider("4走前の重み", 0.0, 2.0, 1.0, 0.01)
+w5 = st.sidebar.slider("5走前の重み", 0.0, 2.0, 1.0, 0.01)
+weights = {1: w1, 2: w2, 3: w3, 4: w4, 5: w5}
+weights_sum = w1 + w2 + w3 + w4 + w5
 
-"
-+"# --- 過去5走重み設定 ---
-"
-+"w1 = st.sidebar.slider("1走前の重み", 0.0, 2.0, 1.0, 0.01)
-"
-+"w2 = st.sidebar.slider("2走前の重み", 0.0, 2.0, 1.0, 0.01)
-"
-+"w3 = st.sidebar.slider("3走前の重み", 0.0, 2.0, 1.0, 0.01)
-"
-+"w4 = st.sidebar.slider("4走前の重み", 0.0, 2.0, 1.0, 0.01)
-"
-+"w5 = st.sidebar.slider("5走前の重み", 0.0, 2.0, 1.0, 0.01)
-"
-+"weights = {1: w1, 2: w2, 3: w3, 4: w4, 5: w5}
-"
-+"weights_sum = w1 + w2 + w3 + w4 + w5
+# --- 過去5走スコア重み付け ---
+df_score['レース日'] = pd.to_datetime(df_score['レース日'])
+df_score = df_score.sort_values(['馬名','レース日'], ascending=[True, False])
+df_score['race_order'] = df_score.groupby('馬名').cumcount() + 1
+df_score['score_hist'] = df_score.apply(
+    lambda r: r['score_norm'] * weights.get(r['race_order'], 0),
+    axis=1
+)
 
-"
-+"# --- 過去5走スコア重み付け ---
-"
-+"df_score['レース日'] = pd.to_datetime(df_score['レース日'])
-"
-+"df_score = df_score.sort_values(['馬名','レース日'], ascending=[True, False])
-"
-+"df_score['race_order'] = df_score.groupby('馬名').cumcount() + 1
-"
-+"df_score['score_hist'] = df_score.apply(
-"
-+"    lambda r: r['score_norm'] * weights.get(r['race_order'], 0), axis=1
-"
-+")
+# --- 馬ごとの過去5走加重平均 ---
+df_hist = (
+    df_score[df_score['race_order'] <= 5]
+    .groupby('馬名')['score_hist'].sum()
+    .reset_index()
+)
+df_hist['HistAvg'] = df_hist['score_hist'] / weights_sum
 
-"
-+"# --- 馬ごとの過去5走加重平均 ---
-"
-+"df_hist = (
-"
-+"    df_score[df_score['race_order'] <= 5]
-"
-+"    .groupby('馬名')['score_hist'].sum()
-"
-+"    .reset_index()
-"
-+")
-"
-+"df_hist['HistAvg'] = df_hist['score_hist'] / weights_sum
+# --- 偏差値化して df_agg を再構築 ---
+df_agg = df_hist.copy()
+df_agg['RankZ']     = z_score(df_agg['HistAvg'])
+df_agg['Stability'] = 0  # 過去5走のみでは分散計算を省略
 
-"
-+"# --- 馬ごとの統計 ---
-"
-+"df_agg = (
-"
-+"    df_hist
-"
-+"    .merge(df_agg[['馬名']], on='馬名', how='right')  # ensure all horses
-"
-+"    .fillna(0)
-"
-+"    .assign(AvgZ=lambda d: d['HistAvg'], Stdev=0)
-"
-+"    .loc[:, ['馬名','AvgZ','Stdev']]
-"
-+")
-"
-+"df_agg['Stability'] = -df_agg['Stdev']
-"
-+"df_agg['RankZ'] = z_score(df_agg['AvgZ'])
-
-# --- 馬ごとの統計 ---
-"
-    "df_agg = (
-"
-    "    df_hist
-"
-    "    .merge(df_agg[['馬名']], on='馬名', how='right')
-"
-    "    .fillna(0)
-"
-    "    .assign(AvgZ=lambda d: d['HistAvg'], Stdev=0)
-"
-    "    .loc[:, ['馬名', 'AvgZ', 'Stdev']]
-"
-    ")
-"
-    "df_agg['Stability'] = -df_agg['Stdev']
-"
-    "df_agg['RankZ'] = z_score(df_agg['AvgZ'])
-
-"
     "# --- 散布図（Altair テキスト付き + 象限ラベル） ---下に馬名＆偏差値テーブル ---
 st.subheader("馬名と偏差値一覧（偏差値>=%0.1f）" % z_cut)
 filtered = df_agg[df_agg['RankZ'] >= z_cut].sort_values('RankZ', ascending=False)
