@@ -129,131 +129,87 @@ def calc_score(r):
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
 
 # スコア適用
-" + 
-"df_score['score_raw']  = df_score.apply(calc_score, axis=1)
-" +
-"df_score['score_norm'] = (
-" +
-"    (df_score['score_raw'] - df_score['score_raw'].min()) /
-" +
-"    (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
-)
-
-" +
-"# --- 過去5走重み設定 ---
-" +
-"w1 = st.sidebar.slider("1走前の重み", 0.0, 2.0, 1.0, 0.01)
-" +
-"w2 = st.sidebar.slider("2走前の重み", 0.0, 2.0, 1.0, 0.01)
-" +
-"w3 = st.sidebar.slider("3走前の重み", 0.0, 2.0, 1.0, 0.01)
-" +
-"w4 = st.sidebar.slider("4走前の重み", 0.0, 2.0, 1.0, 0.01)
-" +
-"w5 = st.sidebar.slider("5走前の重み", 0.0, 2.0, 1.0, 0.01)
-" +
-"weights = {1:w1, 2:w2, 3:w3, 4:w4, 5:w5}
-" +
-"weights_sum = w1 + w2 + w3 + w4 + w5
-
-" +
-"# --- 過去5走スコア重み付け ---
-" +
-"df_score['レース日'] = pd.to_datetime(df_score['レース日'])
-" +
-"df_score = df_score.sort_values(['馬名','レース日'], ascending=[True, False])
-" +
-"df_score['race_order'] = df_score.groupby('馬名').cumcount()+1
-" +
-"df_score['score_hist'] = df_score.apply(lambda r: r['score_norm']*weights.get(r['race_order'],0), axis=1)
-" +
 "
-" +
-"# --- 馬ごとの過去5走加重平均 ---
-" +
-"df_hist = (
-" +
-"    df_score[df_score['race_order']<=5]
-" +
-"    .groupby('馬名')['score_hist'].sum().reset_index()
-" +
-")
-" +
-"df_hist['HistAvg'] = df_hist['score_hist']/weights_sum
+    "df_score['score_raw'] = df_score.apply(calc_score, axis=1)
+"
+    "df_score['score_norm'] = (
+"
+    "    (df_score['score_raw'] - df_score['score_raw'].min()) /
+"
+    "    (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
+"
+    ")
 
-" +
-"# --- 馬ごとの統計 ---
-" +
-"df_agg = (
-" +
-"    df_hist
-" +
-"    .merge(df_agg[['馬名']], on='馬名', how='right')  # 順序維持
-" +
-"    .fillna(0)
-" +
-"    .assign(AvgZ=lambda d: d['HistAvg'], Stdev=0)
-" +
-"    .loc[:, ['馬名','AvgZ','Stdev']]
-" +
-")
-" +
-"df_agg['Stability'] = -df_agg['Stdev']
-" +
-"df_agg['RankZ'] = z_score(df_agg['AvgZ']) (
-    (df_score['score_raw'] - df_score['score_raw'].min()) /
-    (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
-)
+"
+    "# --- 過去5走重み設定 ---
+"
+    "w1 = st.sidebar.slider("1走前の重み", 0.0, 2.0, 1.0, 0.01)
+"
+    "w2 = st.sidebar.slider("2走前の重み", 0.0, 2.0, 1.0, 0.01)
+"
+    "w3 = st.sidebar.slider("3走前の重み", 0.0, 2.0, 1.0, 0.01)
+"
+    "w4 = st.sidebar.slider("4走前の重み", 0.0, 2.0, 1.0, 0.01)
+"
+    "w5 = st.sidebar.slider("5走前の重み", 0.0, 2.0, 1.0, 0.01)
+"
+    "weights = {1:w1, 2:w2, 3:w3, 4:w4, 5:w5}
+"
+    "weights_sum = w1 + w2 + w3 + w4 + w5
 
-# --- 馬ごとの統計 ---
-df_agg = (
-    df_score.groupby('馬名')['score_norm']
-    .agg(['mean','std']).reset_index()
-)
-df_agg.columns     = ['馬名','AvgZ','Stdev']
-df_agg['Stability'] = -df_agg['Stdev']
-df_agg['RankZ']     = z_score(df_agg['AvgZ'])
+"
+    "# --- 過去5走スコア重み付け ---
+"
+    "df_score['レース日'] = pd.to_datetime(df_score['レース日'])
+"
+    "df_score = df_score.sort_values(['馬名','レース日'], ascending=[True, False])
+"
+    "df_score['race_order'] = df_score.groupby('馬名').cumcount() + 1
+"
+    "df_score['score_hist'] = df_score.apply(
+"
+    "    lambda r: r['score_norm'] * weights.get(r['race_order'], 0), axis=1
+"
+    ")
 
-# --- 散布図（Altair テキスト付き + 象限ラベル） ---
-st.subheader("偏差値 vs 安定度 散布図")
-# 四象限ラベル用データ
-avg_st = df_agg['Stability'].mean()
-quad_labels = pd.DataFrame([
-    {'RankZ':75, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'一発警戒'},
-    {'RankZ':25, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'警戒必須'},
-    {'RankZ':75, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'鉄板級'},
-    {'RankZ':25, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'堅実型'}
-])
-# 基本散布図
-points = alt.Chart(df_agg).mark_circle(size=100).encode(
-    x=alt.X('RankZ:Q', title='偏差値'),
-    y=alt.Y('Stability:Q', title='安定度'),
-    tooltip=['馬名','AvgZ','Stdev']
-)
-# 馬名テキスト
-labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').encode(
-    x='RankZ:Q',
-    y='Stability:Q',
-    text='馬名:N'
-)
-# 象限ラベル
-quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='white').encode(
-    x='RankZ:Q',
-    y='Stability:Q',
-    text='label:N'
-)
-# 中心線
-vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
-hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y='y:Q')
-# 合成
-chart = (points + labels + quad + vline + hline)
-st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
+"
+    "# --- 馬ごとの過去5走加重平均 ---
+"
+    "df_hist = (
+"
+    "    df_score[df_score['race_order'] <= 5]
+"
+    "    .groupby('馬名')['score_hist'].sum()
+"
+    "    .reset_index()
+"
+    ")
+"
+    "df_hist['HistAvg'] = df_hist['score_hist'] / weights_sum
 
-# --- 偏差値フィルター ---
-st.sidebar.subheader("偏差値フィルター")
-z_cut = st.sidebar.slider("最低偏差値", float(df_agg['RankZ'].min()), float(df_agg['RankZ'].max()), 50.0)
+"
+    "# --- 馬ごとの統計 ---
+"
+    "df_agg = (
+"
+    "    df_hist
+"
+    "    .merge(df_agg[['馬名']], on='馬名', how='right')
+"
+    "    .fillna(0)
+"
+    "    .assign(AvgZ=lambda d: d['HistAvg'], Stdev=0)
+"
+    "    .loc[:, ['馬名', 'AvgZ', 'Stdev']]
+"
+    ")
+"
+    "df_agg['Stability'] = -df_agg['Stdev']
+"
+    "df_agg['RankZ'] = z_score(df_agg['AvgZ'])
 
-# --- 散布図下に馬名＆偏差値テーブル ---
+"
+    "# --- 散布図（Altair テキスト付き + 象限ラベル） ---下に馬名＆偏差値テーブル ---
 st.subheader("馬名と偏差値一覧（偏差値>=%0.1f）" % z_cut)
 filtered = df_agg[df_agg['RankZ'] >= z_cut].sort_values('RankZ', ascending=False)
 st.table(filtered[['馬名','RankZ']].rename(columns={'RankZ':'偏差値'}))
