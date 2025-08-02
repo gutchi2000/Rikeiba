@@ -159,7 +159,8 @@ df_agg = df_hist.copy()
 df_agg['RankZ']     = z_score(df_agg['HistAvg'])
 df_agg['Stability'] = 0  # 過去5走のみでは分散計算を省略
 
-    "# --- 散布図（Altair テキスト付き + 象限ラベル） ---下に馬名＆偏差値テーブル ---
+# --- 散布図（Altair テキスト付き + 象限ラベル） ---
+# 下に馬名＆偏差値テーブル
 st.subheader("馬名と偏差値一覧（偏差値>=%0.1f）" % z_cut)
 filtered = df_agg[df_agg['RankZ'] >= z_cut].sort_values('RankZ', ascending=False)
 st.table(filtered[['馬名','RankZ']].rename(columns={'RankZ':'偏差値'}))
