@@ -90,28 +90,30 @@ df_score['score_tw'] = df_score['score_norm'] * df_score['decay_w']
 
 # --- 集計 ---
 df_agg = df_score.groupby('馬名').agg(AvgZ=('score_tw','mean'), Stdev=('score_tw','std')).reset_index()
-df_agg['RankZ']     = z_score(df_agg['AvgZ']); df_agg['Stability'] = -df_agg['Stdev']
+df_agg['RankZ'] = z_score(df_agg['AvgZ'])
+df_agg['Stability'] = -df_agg['Stdev']
+
+# --- 偏差値フィルター ---
+st.sidebar.subheader("偏差値フィルター")
+z_cut = st.sidebar.slider("最低偏差値", float(df_agg['RankZ'].min()), float(df_agg['RankZ'].max()), 50.0)
+df_plot = df_agg[df_agg['RankZ'] >= z_cut]
+
 # --- 散布図 ---
 st.subheader("偏差値 vs 安定度 散布図")
-df_plot = df_agg.copy()
 avg_rankz = df_plot['RankZ'].mean()
-avg_stab = df_plot['Stability'].mean()
+avg_stab  = df_plot['Stability'].mean()
 chart = alt.Chart(df_plot).mark_circle(size=150).encode(
     x=alt.X('RankZ:Q', title='偏差値'),
     y=alt.Y('Stability:Q', title='安定度'),
-    color=alt.condition(
-        (alt.datum.RankZ >= avg_rankz) & (alt.datum.Stability >= avg_stab),
-        alt.value('red'), alt.value('steelblue')
-    ),
-    tooltip=[alt.Tooltip('馬名:N'), alt.Tooltip('AvgZ:Q', title='平均偏差値'), alt.Tooltip('Stdev:Q', title='偏差値標準偏差')]
+    color=alt.condition((alt.datum.RankZ>=avg_rankz)&(alt.datum.Stability>=avg_stab), alt.value('red'), alt.value('steelblue')),
+    tooltip=[alt.Tooltip('馬名:N', title='馬名'), alt.Tooltip('AvgZ:Q', title='平均偏差値'), alt.Tooltip('Stdev:Q', title='偏差値標準偏差')]
 ).properties(width=600, height=400)
 # 平均線
-avg_lines = alt.Chart(pd.DataFrame({
-    'x':[avg_rankz], 'y':[avg_stab]
-})).mark_rule(color='gray', strokeDash=[4,4]).encode(
-    x='x:Q', y='y:Q'
+rules = alt.layer(
+    alt.Chart(pd.DataFrame({'x':[avg_rankz]})).mark_rule(color='gray', strokeDash=[4,4]).encode(x='x:Q'),
+    alt.Chart(pd.DataFrame({'y':[avg_stab]})).mark_rule(color='gray', strokeDash=[4,4]).encode(y='y:Q')
 )
-st.altair_chart(chart + avg_lines, use_container_width=True)
+st.altair_chart(chart + rules, use_container_width=True)
 
 # --- 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
