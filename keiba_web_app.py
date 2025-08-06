@@ -208,8 +208,6 @@ st.table(filtered[['馬名','RankZ']].rename(columns={'RankZ':'偏差値'}))
 # --- 上位6頭印付け & 買い目生成 ---
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
-st.subheader("上位6頭")
-st.table(top6[['馬名','印']])
 st.subheader("上位6頭（根拠付き）")
 st.table(top6[['馬名','印','根拠']])
 
