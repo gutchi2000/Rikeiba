@@ -248,11 +248,15 @@ with st.expander("▶ 散布図の見方（クリックで開く）"):
 - 的中率重視なら右下、本命党は右下重視！
 """)
 
-# ========== 上位6頭＆説明 ==========
-st.subheader("上位6頭（根拠付き）")
-top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
-top6['印'] = ['◎','〇','▲','☆','△','△']
-st.table(top6[['馬名','印','根拠']])
+# ========== 上位馬（平均スコア>50のみ／根拠付き） ==========
+topN = df_agg[df_agg['AvgZ'] > 50].sort_values('RankZ', ascending=False).head(6).copy()
+topN['印'] = ['◎','〇','▲','☆','△','△'][:len(topN)]
+st.subheader("上位馬（平均スコア>50のみ／根拠付き）")
+st.table(topN[['馬名','印','根拠']])
+
+if len(topN) == 0:
+    st.warning("平均スコア50超の馬がいません。")
+    st.stop()
 
 with st.expander("▼『平均スコア』『安定度』の意味・基準を見る"):
     st.markdown("#### 平均スコア（AvgZ）")
@@ -390,7 +394,7 @@ for i, k in enumerate(kakusitsu):
 
 
 # 印と脚質・血統情報を全頭にマージ
-印map = dict(zip(top6['馬名'], top6['印']))
+印map = dict(zip(topN['馬名'], topN['印']))
 horses = horses.merge(df_agg[['馬名','AvgZ','Stdev']], on='馬名', how='left')
 horses['印'] = horses['馬名'].map(印map).fillna('')
 
@@ -468,10 +472,10 @@ st.subheader("■ 全頭AI診断コメント")
 st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev']])
 
 # ========== 買い目生成＆資金配分 ==========
-h1 = top6.iloc[0]['馬名']
-h2 = top6.iloc[1]['馬名']
-symbols = top6['印'].tolist()
-names   = top6['馬名'].tolist()
+h1 = topN.iloc[0]['馬名']
+h2 = topN.iloc[1]['馬名']
+symbols = topN['印'].tolist()
+names   = topN['馬名'].tolist()
 others_names   = names[1:]
 others_symbols = symbols[1:]
 
