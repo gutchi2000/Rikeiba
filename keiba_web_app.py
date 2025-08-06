@@ -236,7 +236,8 @@ chart = (points + labels + quad + vline + hline)
 st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
 
 # 注釈文も下に表示
-st.markdown("""
+with st.expander("▶ 散布図の見方（クリックで開く）"):
+    st.markdown("""
 - この散布図は「右下ほど本命級」
 - 横軸：偏差値（高いほど能力が高い）
 - 縦軸：標準偏差（小さいほど安定）
