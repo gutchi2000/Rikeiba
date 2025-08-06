@@ -4,20 +4,17 @@ import numpy as np
 import re
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
-import altair as alt
 from itertools import combinations
 
 # =========== 日本語フォントの用意 ==========
-# ipaexg.ttf（IPAexゴシック）がある場合
 try:
     jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
 except:
-    jp_font = font_manager.FontProperties(fname="C:/Windows/Fonts/meiryo.ttc") # Windowsの場合
+    jp_font = font_manager.FontProperties(fname="C:/Windows/Fonts/meiryo.ttc")  # Windowsの場合
 
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'Meiryo', 'MS Gothic']
 
-# ---- ヘルパー ----
 def z_score(s: pd.Series) -> pd.Series:
     return 50 + 10 * (s - s.mean()) / s.std(ddof=0)
 
@@ -27,7 +24,7 @@ def season_of(month: int) -> str:
     if 9 <= month <= 11: return '秋'
     return '冬'
 
-# ------------- サイドバー -------------
+# ========== サイドバー ==========
 st.sidebar.header("パラメータ設定")
 lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
 orig_weight  = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
@@ -48,7 +45,7 @@ weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
-# ---- メイン ----
+# ========== メイン ==========
 st.title("競馬予想アプリ（完成版）")
 st.subheader("ファイルアップロード")
 excel_file = st.file_uploader("Excel (成績＆属性)", type='xlsx')
@@ -78,6 +75,7 @@ edited = st.data_editor(
 )
 horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質']]
 
+# ---- 血統パース ----
 cont = html_file.read().decode(errors='ignore')
 rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
 blood = []
@@ -110,9 +108,15 @@ def calc_score(r):
     aw  = age_w.get(str(r['年齢']), 1.0)
     bt  = besttime_w
     weight_factor = 1
-    bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
+    # 血統ボーナス（空白/全角スペース/大文字小文字対応）
+    bloodline = str(r.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
+    bonus = 0
+    for k in keys:
+        if k.strip() and k.strip().lower() in bloodline:
+            bonus = bp
+            break
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
-    
+
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
 df_score['score_norm'] = (
     (df_score['score_raw'] - df_score['score_raw'].min()) /
@@ -143,7 +147,7 @@ def reason(row):
 
 df_agg['根拠'] = df_agg.apply(reason, axis=1)
 
-# ========== グラフ系：ここを日本語ラベル＆フォント指定 ==========
+# ========== 上位6頭＆説明 ==========
 st.subheader("上位6頭（根拠付き）")
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
@@ -186,11 +190,14 @@ with st.expander("▼『平均スコア』『安定度』の意味・基準を�
         "- **安定度（標準偏差）**が小さい＝「ムラが少なく信頼できる」\n"
         "- これらを両方見て、上位6頭や印の優先度を決めています"
     )
-# --- サイドバーからの変数取得は省略 ---
-# total_budget, scenario, top6, etc. が定義済みとします
 
+# ========== 展開ロケーション（全頭・馬番） ==========
 df_map = horses.copy()
 df_map['印'] = df_map['馬名'].map(dict(zip(top6['馬名'], top6['印'])))
+# --- 馬番の安全変換 ---
+df_map['番'] = df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+df_map['番'] = pd.to_numeric(df_map['番'], errors='coerce')
+df_map = df_map.dropna(subset=['番'])
 df_map['番'] = df_map['番'].astype(int)
 df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
 df_map = df_map.sort_values(['番'])
@@ -216,23 +223,14 @@ ax.set_ylabel("脚質", fontproperties=jp_font)
 ax.set_title("展開ロケーション（脚質×馬番／全頭）", fontproperties=jp_font)
 st.pyplot(fig)
 
+# ========== 買い目生成＆資金配分 ==========
+h1 = top6.iloc[0]['馬名']
+h2 = top6.iloc[1]['馬名']
+symbols = top6['印'].tolist()
+names   = top6['馬名'].tolist()
+others_names   = names[1:]
+others_symbols = symbols[1:]
 
-# ——————————————
-# ―― 資金配分 〜 最終買い目一覧 （完成形） ――
-# ——————————————
-
-# ◎／〇 の馬リスト準備
-h1 = top6.iloc[0]['馬名']                  # ◎馬
-h2 = top6.iloc[1]['馬名']                  # 〇馬
-symbols = top6['印'].tolist()              # ['◎','〇','▲','☆','△','△']
-names   = top6['馬名'].tolist()            # [h1,h2,h3,h4,h5,h6]
-others_names   = names[1:]                 # ['〇馬名','▲馬名','☆馬名','△馬名','△馬名']
-others_symbols = symbols[1:]               # ['〇','▲','☆','△','△']
-
-# ——————————————
-# ◎／〇 の馬リスト準備（省略）
-
-# --- シナリオ別 券種リスト定義 ---
 three = ['馬連','ワイド','馬単']
 scenario_map = {
     '通常': three,
@@ -240,7 +238,6 @@ scenario_map = {
     '余裕': ['ワイド','三連複','三連単']
 }
 
-# --- 資金配分計算 ---
 main_share = 0.5
 pur1 = int(round((total_budget * main_share * 1/4)  / 100) * 100)
 pur2 = int(round((total_budget * main_share * 3/4)  / 100) * 100)
@@ -253,7 +250,6 @@ st.subheader("■ 資金配分")
 st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円")
 
 bets = []
-# 単勝・複勝（◎／〇 各2頭ずつ）
 bets += [
     {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
     {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
@@ -261,16 +257,12 @@ bets += [
     {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
 ]
 
-# シナリオごとの残予算割当
 parts = scenario_map[scenario]
 
-# — 通常 —  
 if scenario == '通常':
     with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
         choice = st.radio("購入券種", options=three, index=1)
         st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-    # 選択した1種を均等割り
-    # ここは「◎–相手」一行ずつ
     share_each = int(round(rem / len(others_names) / 100) * 100)
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
@@ -281,16 +273,11 @@ if scenario == '通常':
             '金額':  share_each
         })
 
-# — ちょい余裕 —  
 elif scenario == 'ちょい余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 で消費します")
-    # ワイドの行数
     n_w = len(others_names)
-    # 三連複の組み合わせ数 C(5,2)=10
     n_t = len(list(combinations(others_names, 2)))
-    # 合計行数で等分
     share_each = int(round(rem / (n_w + n_t) / 100) * 100)
-    # ワイド
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
             '券種':'ワイド',
@@ -299,7 +286,6 @@ elif scenario == 'ちょい余裕':
             '相手': nm,
             '金額': share_each
         })
-    # 三連複
     for pair in combinations(others_names, 2):
         bets.append({
             '券種':'三連複',
@@ -309,38 +295,30 @@ elif scenario == 'ちょい余裕':
             '金額': share_each
         })
 
-
-# — 余裕 —  
 elif scenario == '余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で消費します")
-    # 各券種の組み合わせ数を求める
     n_w     = len(others_names)
     n_tri3  = len(list(combinations(others_names,2)))
-    # 三連単フォーメーションの8通り
     second_opts = others_names[:2]
     combo3 = [(s,t) for s in second_opts for t in others_names if t!=s]
-    n_tri1  = len(combo3)  # =8
+    n_tri1  = len(combo3)
     total_line = n_w + n_tri3 + n_tri1
     share_each = int(round(rem / total_line / 100) * 100)
-    # ワイド
     for nm, mk in zip(others_names, others_symbols):
         bets.append({
             '券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each
         })
-    # 三連複
     for pair in combinations(others_names,2):
         bets.append({
             '券種':'三連複','印':'◎-〇▲☆△△','馬':h1,
             '相手':'／'.join(pair),'金額':share_each
         })
-    # 三連単フォーメーション
     for s,t in combo3:
         bets.append({
             '券種':'三連単フォーメーション','印':'◎-〇▲-〇▲☆△△',
             '馬':h1,'相手':f"{s}／{t}",'金額':share_each
         })
 
-# --- 最終テーブル表示 ---
 df_bets = pd.DataFrame(bets)
 df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
 st.subheader("■ 最終買い目一覧")
