@@ -39,7 +39,8 @@ with st.sidebar.expander("脚質重み", expanded=False):
     style_w  = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
 with st.sidebar.expander("四季重み", expanded=False):
     season_w = {s: st.slider(s, 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
-age_w        = st.sidebar.number_input("年齢重み", 0.0, 5.0, 1.0)
+with st.sidebar.expander("年齢重み", expanded=False):
+    age_w = {str(age): st.slider(f"{age}歳", 0.0, 2.0, 1.0, 0.05) for age in range(3, 11)}
 with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
@@ -106,12 +107,12 @@ def calc_score(r):
     gw  = gender_w.get(r['性別'], 1)
     stw = style_w.get(r['脚質'], 1)
     fw  = frame_w.get(str(r['枠']), 1)
-    aw  = age_w
+    aw  = age_w.get(str(r['年齢']), 1.0)
     bt  = besttime_w
     weight_factor = 1
     bonus = bp if any(k in str(r.get('血統', '')) for k in keys) else 0
     return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
-
+    
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
 df_score['score_norm'] = (
     (df_score['score_raw'] - df_score['score_raw'].min()) /
