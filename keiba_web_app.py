@@ -229,6 +229,30 @@ ax.set_ylabel("脚質", fontproperties=jp_font)
 ax.set_title("展開ロケーション（脚質×馬番／全頭）", fontproperties=jp_font)
 st.pyplot(fig)
 
+# --- 脚質カウント表示 ---
+kakusitsu = ['逃げ','先行','差し','追込']
+counter = df_map['脚質'].value_counts().reindex(kakusitsu, fill_value=0)
+st.markdown(
+    "#### 脚質内訳"
+    + "｜".join([f"{k}:{counter[k]}頭" for k in kakusitsu])
+)
+
+# --- 展開コメント自動生成 ---
+def pace_comment(counter):
+    nige = counter['逃げ']
+    sengo = counter['先行']
+    if nige >= 3:
+        return "逃げ馬が多くハイペース濃厚。差し・追込有利な流れになりそう。"
+    elif nige == 2:
+        return "逃げ馬が複数いてペースは流れやすい。差し馬の台頭に注意。"
+    elif nige == 1:
+        return "逃げ馬が1頭で単騎逃げ濃厚。前残りの可能性高い。"
+    else:
+        return "純粋な逃げ馬不在。先行・差しが早めに動く持久戦か、意外な馬の逃げ残りも。"
+
+pace_text = pace_comment(counter)
+st.markdown(f"**【展開傾向】** {pace_text}")
+
 
 # ========== 買い目生成＆資金配分 ==========
 h1 = top6.iloc[0]['馬名']
