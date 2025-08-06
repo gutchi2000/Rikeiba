@@ -194,11 +194,13 @@ with st.expander("▼『平均スコア』『安定度』の意味・基準を�
 # ========== 展開ロケーション（全頭・馬番） ==========
 df_map = horses.copy()
 df_map['印'] = df_map['馬名'].map(dict(zip(top6['馬名'], top6['印'])))
-# --- 馬番の安全変換 ---
+
+# --- 馬番の安全変換（全角→半角, 数値化, 欠損除去）---
 df_map['番'] = df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
 df_map['番'] = pd.to_numeric(df_map['番'], errors='coerce')
 df_map = df_map.dropna(subset=['番'])
 df_map['番'] = df_map['番'].astype(int)
+
 df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
 df_map = df_map.sort_values(['番'])
 
@@ -211,8 +213,12 @@ for i, row in df_map.iterrows():
     if np.isnan(y): continue  # 脚質未入力はスキップ
     ax.scatter(x, y, color=colors.get(row['脚質'], 'gray'), s=200)
     label = f"{row['馬名']} {row['印'] if pd.notnull(row['印']) else ''}"
-    ax.text(x, y, label, ha='center', va='center', color='white', fontsize=9, weight='bold',
-            bbox=dict(facecolor=colors.get(row['脚質'], 'gray'), alpha=0.7, boxstyle='round'))
+    ax.text(
+        x, y, label, 
+        ha='center', va='center', color='white', fontsize=9, weight='bold',
+        bbox=dict(facecolor=colors.get(row['脚質'], 'gray'), alpha=0.7, boxstyle='round'),
+        fontproperties=jp_font  # ←コレが重要！
+    )
 
 ax.set_yticks([0,1,2,3])
 ax.set_yticklabels(['逃げ','先行','差し','追込'], fontproperties=jp_font)
@@ -222,6 +228,7 @@ ax.set_xlabel("馬番", fontproperties=jp_font)
 ax.set_ylabel("脚質", fontproperties=jp_font)
 ax.set_title("展開ロケーション（脚質×馬番／全頭）", fontproperties=jp_font)
 st.pyplot(fig)
+
 
 # ========== 買い目生成＆資金配分 ==========
 h1 = top6.iloc[0]['馬名']
