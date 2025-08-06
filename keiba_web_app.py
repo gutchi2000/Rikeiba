@@ -144,6 +144,23 @@ df_agg.columns     = ['馬名','AvgZ','Stdev']
 df_agg['Stability'] = -df_agg['Stdev']
 df_agg['RankZ']     = z_score(df_agg['AvgZ'])
 
+# 例：各馬ごとに簡易的な根拠文を生成
+def reason(row):
+    base = f"平均スコア{row['AvgZ']:.1f}、安定度{row['Stdev']:.1f}。"
+    if row['RankZ'] >= 65:
+        base += "非常に高評価。"
+    elif row['RankZ'] >= 55:
+        base += "高水準。"
+    if row['Stdev'] < 8:
+        base += "安定感抜群。"
+    elif row['Stdev'] < 13:
+        base += "比較的安定。"
+    if row['馬名'] in df_score[df_score['score_raw'] > df_score['score_raw'].mean() + 10]['馬名'].values:
+        base += "血統・脚質等もプラス評価。"
+    return base
+
+df_agg['根拠'] = df_agg.apply(reason, axis=1)
+
 # --- 散布図（Altair テキスト付き + 象限ラベル） ---
 st.subheader("偏差値 vs 安定度 散布図")
 # 四象限ラベル用データ
@@ -193,6 +210,8 @@ top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭")
 st.table(top6[['馬名','印']])
+st.subheader("上位6頭（根拠付き）")
+st.table(top6[['馬名','印','根拠']])
 
 # --- サイドバーからの変数取得は省略 ---
 # total_budget, scenario, top6, etc. が定義済みとします
