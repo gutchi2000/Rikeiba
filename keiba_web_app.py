@@ -232,26 +232,43 @@ st.pyplot(fig)
 # --- 脚質カウント表示 ---
 kakusitsu = ['逃げ','先行','差し','追込']
 counter = df_map['脚質'].value_counts().reindex(kakusitsu, fill_value=0)
-st.markdown(
-    "#### 脚質内訳"
-    + "｜".join([f"{k}:{counter[k]}頭" for k in kakusitsu])
-)
 
-# --- 展開コメント自動生成 ---
-def pace_comment(counter):
+# --- ペース判定＆有利脚質ロジック ---
+def pace_and_favor(counter):
     nige = counter['逃げ']
     sengo = counter['先行']
-    if nige >= 3:
-        return "逃げ馬が多くハイペース濃厚。差し・追込有利な流れになりそう。"
-    elif nige == 2:
-        return "逃げ馬が複数いてペースは流れやすい。差し馬の台頭に注意。"
-    elif nige == 1:
-        return "逃げ馬が1頭で単騎逃げ濃厚。前残りの可能性高い。"
+    # デフォルトはミドル
+    pace = "ミドルペース"
+    mark = {'逃げ':'△', '先行':'△', '差し':'△', '追込':'△'}
+    # ハイペース判定
+    if nige >= 3 or (nige==2 and sengo>=4):
+        pace = "ハイペース"
+        mark = {'逃げ':'△', '先行':'△', '差し':'◎', '追込':'〇'}
+    # スローペース判定
+    elif nige == 1 and sengo <= 2:
+        pace = "スローペース"
+        mark = {'逃げ':'◎', '先行':'〇', '差し':'△', '追込':'×'}
+    # 準スロー
+    elif nige <= 1:
+        pace = "ややスローペース"
+        mark = {'逃げ':'〇', '先行':'◎', '差し':'△', '追込':'×'}
+    # ミドル（それ以外）
     else:
-        return "純粋な逃げ馬不在。先行・差しが早めに動く持久戦か、意外な馬の逃げ残りも。"
+        pace = "ミドルペース"
+        mark = {'逃げ':'〇', '先行':'◎', '差し':'〇', '追込':'△'}
+    return pace, mark
 
-pace_text = pace_comment(counter)
-st.markdown(f"**【展開傾向】** {pace_text}")
+pace_type, mark = pace_and_favor(counter)
+
+# --- 表示 ---
+st.markdown(
+    "#### 脚質内訳｜" + "｜".join([f"{k}:{counter[k]}頭" for k in kakusitsu])
+)
+st.markdown(
+    f"**【展開想定】{pace_type}**  \n"
+    + "|".join([f"{k}　{mark[k]}" for k in kakusitsu])
+)
+
 
 
 # ========== 買い目生成＆資金配分 ==========
