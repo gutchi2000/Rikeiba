@@ -489,5 +489,19 @@ elif scenario == '余裕':
 
 df_bets = pd.DataFrame(bets)
 df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
-st.subheader("■ 最終買い目一覧")
-st.table(df_bets[['券種','印','馬','相手','金額']])
+# ---------- タブで券種ごとに表示 ----------
+unique_types = df_bets['券種'].unique().tolist()
+tabs = st.tabs(['サマリー'] + unique_types)
+for i, typ in enumerate([''] + unique_types):
+    with tabs[i]:
+        if i == 0:
+            st.subheader("■ 最終買い目一覧（全券種まとめ）")
+            st.table(df_bets[['券種','印','馬','相手','金額']])
+        else:
+            df_this = df_bets[df_bets['券種'] == typ]
+            if len(df_this) == 0:
+                st.info(f"{typ} の買い目はありません。")
+            else:
+                st.subheader(f"{typ} 買い目一覧")
+                st.table(df_this[['券種','印','馬','相手','金額']])
+
