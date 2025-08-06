@@ -399,7 +399,7 @@ horses = horses.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'
 
 # コメント列
 def ai_comment(row):
-    base = f"{row['馬名']}（{row['印'] or '無印'}）："
+    base = ""
     # ◎本命、〇対抗など印ごとに診断
     if row['印'] == '◎':
         base += "本命評価。"
@@ -459,6 +459,7 @@ def ai_comment(row):
     elif style == '追込':
         base += "直線勝負の一撃に期待。"
     return base
+
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
