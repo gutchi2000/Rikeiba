@@ -41,6 +41,12 @@ with st.sidebar.expander("年齢重み", expanded=False):
 with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+with st.sidebar.expander("各種ボーナス設定", expanded=False):
+    grade_bonus = st.slider("重賞実績ボーナス（GⅠ・GⅡ・GⅢ）", 0, 20, 5)
+    agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
+    agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
+    agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
+    body_weight_bonus = st.slider("適正馬体重ボーナス", 0, 10, 3)
 weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
@@ -96,6 +102,7 @@ keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
 
 style_map = dict(zip(horses['馬名'], horses['脚質']))
+
 def calc_score(r):
     GP = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
           '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬・未勝利':1}
@@ -108,14 +115,54 @@ def calc_score(r):
     aw  = age_w.get(str(r['年齢']), 1.0)
     bt  = besttime_w
     weight_factor = 1
-    # 血統ボーナス（空白/全角スペース/大文字小文字対応）
+
+    # 血統ボーナス
     bloodline = str(r.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
-    bonus = 0
+    blood_bonus = 0
     for k in keys:
         if k.strip() and k.strip().lower() in bloodline:
-            bonus = bp
+            blood_bonus = bp
             break
-    return raw * sw * gw * stw * fw * aw * bt * weight_factor + bonus
+
+    # 重賞実績ボーナス（GⅠ・GⅡ・GⅢ のみ加点）
+    grade_name = str(r.get('クラス名',''))
+    if grade_name in ['GⅠ','GⅡ','GⅢ']:
+        grade_point = grade_bonus
+    else:
+        grade_point = 0
+
+    # 上がり3F順位ボーナス
+    agari_bonus = 0
+    agari_order = r.get('上3F順位', np.nan)
+    try:
+        agari_order = int(agari_order)
+        if agari_order == 1:
+            agari_bonus = agari1_bonus
+        elif agari_order == 2:
+            agari_bonus = agari2_bonus
+        elif agari_order == 3:
+            agari_bonus = agari3_bonus
+    except:
+        agari_bonus = 0
+
+    # 馬体重適正ボーナス
+    body_bonus = 0
+    try:
+        name = r['馬名']
+        myhist = df_score[(df_score['馬名']==name) & (df_score['馬体重'].notna())]
+        if len(myhist) > 0:
+            # 最高着順時の体重＝適正
+            best_row = myhist.loc[myhist['確定着順'].idxmin()]
+            tekitai = best_row['馬体重']
+            now_bw = r.get('馬体重', np.nan)
+            if not pd.isna(now_bw) and abs(now_bw - tekitai) <= 10:
+                body_bonus = body_weight_bonus
+    except Exception as e:
+        body_bonus = 0
+
+    total_bonus = blood_bonus + grade_point + agari_bonus + body_bonus
+    return raw * sw * gw * stw * fw * aw * bt * weight_factor + total_bonus
+
 
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
 df_score['score_norm'] = (
