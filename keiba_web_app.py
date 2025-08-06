@@ -229,30 +229,24 @@ ax.set_ylabel("脚質", fontproperties=jp_font)
 ax.set_title("展開ロケーション（脚質×馬番／全頭）", fontproperties=jp_font)
 st.pyplot(fig)
 
-# --- 脚質カウント表示 ---
+# --- 脚質カウント＆ペース/記号判定 ---
 kakusitsu = ['逃げ','先行','差し','追込']
 counter = df_map['脚質'].value_counts().reindex(kakusitsu, fill_value=0)
 
-# --- ペース判定＆有利脚質ロジック ---
 def pace_and_favor(counter):
     nige = counter['逃げ']
     sengo = counter['先行']
-    # デフォルトはミドル
     pace = "ミドルペース"
     mark = {'逃げ':'△', '先行':'△', '差し':'△', '追込':'△'}
-    # ハイペース判定
     if nige >= 3 or (nige==2 and sengo>=4):
         pace = "ハイペース"
         mark = {'逃げ':'△', '先行':'△', '差し':'◎', '追込':'〇'}
-    # スローペース判定
     elif nige == 1 and sengo <= 2:
         pace = "スローペース"
         mark = {'逃げ':'◎', '先行':'〇', '差し':'△', '追込':'×'}
-    # 準スロー
     elif nige <= 1:
         pace = "ややスローペース"
         mark = {'逃げ':'〇', '先行':'◎', '差し':'△', '追込':'×'}
-    # ミドル（それ以外）
     else:
         pace = "ミドルペース"
         mark = {'逃げ':'〇', '先行':'◎', '差し':'〇', '追込':'△'}
@@ -260,14 +254,39 @@ def pace_and_favor(counter):
 
 pace_type, mark = pace_and_favor(counter)
 
-# --- 表示 ---
 st.markdown(
     "#### 脚質内訳｜" + "｜".join([f"{k}:{counter[k]}頭" for k in kakusitsu])
 )
 st.markdown(
-    f"**【展開想定】{pace_type}**  \n"
-    + "|".join([f"{k}　{mark[k]}" for k in kakusitsu])
+    f"**【展開想定】{pace_type}**"
 )
+
+# --- 脚質ごとに該当馬（スコア順）を横並びで表示 ---
+out = ""
+for k in kakusitsu:
+    # 脚質ごとに該当馬（平均スコア順）
+    temp = df_map[df_map['脚質'] == k].copy()
+    if not temp.empty:
+        # df_aggにスコア（AvgZ）をJOIN
+        temp = temp.merge(df_agg[['馬名','AvgZ']], on='馬名', how='left')
+        temp = temp.sort_values('AvgZ', ascending=False)
+        names = "、".join(temp['馬名'].tolist())
+    else:
+        names = "該当馬なし"
+    out += f"<b>{k} {mark[k]}</b><br>{names}<br><br>"
+
+# --- 横並び（4列）っぽくするためカラムレイアウトで表示 ---
+cols = st.columns(4)
+for i, k in enumerate(kakusitsu):
+    temp = df_map[df_map['脚質'] == k].copy()
+    if not temp.empty:
+        temp = temp.merge(df_agg[['馬名','AvgZ']], on='馬名', how='left')
+        temp = temp.sort_values('AvgZ', ascending=False)
+        names = "<br>".join(temp['馬名'].tolist())
+    else:
+        names = "該当馬なし"
+    cols[i].markdown(f"**{k}　{mark[k]}**<br>{names}", unsafe_allow_html=True)
+
 
 
 
