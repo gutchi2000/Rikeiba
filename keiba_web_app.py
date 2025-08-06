@@ -147,6 +147,40 @@ def reason(row):
 
 df_agg['根拠'] = df_agg.apply(reason, axis=1)
 
+# ========== 全頭散布図（偏差値 vs 安定度） ==========
+import altair as alt
+
+st.subheader("全頭：偏差値 vs 安定度 散布図")
+
+avg_st = df_agg['Stability'].mean()
+quad_labels = pd.DataFrame([
+    {'RankZ':75, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'一発警戒'},
+    {'RankZ':25, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'警戒必須'},
+    {'RankZ':75, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'鉄板級'},
+    {'RankZ':25, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'堅実型'}
+])
+
+points = alt.Chart(df_agg).mark_circle(size=100).encode(
+    x=alt.X('RankZ:Q', title='偏差値'),
+    y=alt.Y('Stability:Q', title='安定度'),
+    tooltip=['馬名','AvgZ','Stdev']
+)
+labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').encode(
+    x='RankZ:Q',
+    y='Stability:Q',
+    text='馬名:N'
+)
+quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='white').encode(
+    x='RankZ:Q',
+    y='Stability:Q',
+    text='label:N'
+)
+vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
+hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y='y:Q')
+
+chart = (points + labels + quad + vline + hline)
+st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
+
 # ========== 上位6頭＆説明 ==========
 st.subheader("上位6頭（根拠付き）")
 top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
