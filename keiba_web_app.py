@@ -197,29 +197,30 @@ df_agg['根拠'] = df_agg.apply(reason, axis=1)
 # ========== 全頭散布図（偏差値 vs 安定度） ==========
 import altair as alt
 
-st.subheader("全頭：偏差値 vs 安定度 散布図")
+df_agg['Stdev'] = df_agg['Stdev']  # 標準偏差そのまま
 
-avg_st = df_agg['Stability'].mean()
+# 四象限ラベル
+avg_st = df_agg['Stdev'].mean()
 quad_labels = pd.DataFrame([
-    {'RankZ':75, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'一発警戒'},
-    {'RankZ':25, 'Stability': avg_st + (df_agg['Stability'].max()-avg_st)/2, 'label':'警戒必須'},
-    {'RankZ':75, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'鉄板級'},
-    {'RankZ':25, 'Stability': avg_st - (avg_st-df_agg['Stability'].min())/2, 'label':'堅実型'}
+    {'RankZ':70, 'Stdev': avg_st - (avg_st-df_agg['Stdev'].min())/1.5, 'label':'鉄板・本命'},
+    {'RankZ':70, 'Stdev': avg_st + (df_agg['Stdev'].max()-avg_st)/2, 'label':'波乱・ムラ馬'},
+    {'RankZ':30, 'Stdev': avg_st - (avg_st-df_agg['Stdev'].min())/1.5, 'label':'堅実ヒモ'},
+    {'RankZ':30, 'Stdev': avg_st + (df_agg['Stdev'].max()-avg_st)/2, 'label':'消し・大穴'},
 ])
 
 points = alt.Chart(df_agg).mark_circle(size=100).encode(
     x=alt.X('RankZ:Q', title='偏差値'),
-    y=alt.Y('Stability:Q', title='安定度'),
+    y=alt.Y('Stdev:Q', title='標準偏差（小さいほど安定）'),
     tooltip=['馬名','AvgZ','Stdev']
 )
 labels = alt.Chart(df_agg).mark_text(dx=5, dy=-5, fontSize=10, color='white').encode(
     x='RankZ:Q',
-    y='Stability:Q',
+    y='Stdev:Q',
     text='馬名:N'
 )
 quad = alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold', color='white').encode(
     x='RankZ:Q',
-    y='Stability:Q',
+    y='Stdev:Q',
     text='label:N'
 )
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
@@ -227,6 +228,16 @@ hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y
 
 chart = (points + labels + quad + vline + hline)
 st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
+
+# 注釈文も下に表示
+st.info(
+    "【見方】この散布図は“右下ほど本命級”\n"
+    "・横軸＝偏差値（高いほど能力上位）\n"
+    "・縦軸＝標準偏差（小さいほど安定）\n"
+    "右下：鉄板・本命／右上：波乱・ムラ馬\n"
+    "左下：堅実ヒモ／左上：消し・大穴\n"
+    "— 的中率重視は右下、本命党なら右下重視！"
+)
 
 # ========== 上位6頭＆説明 ==========
 st.subheader("上位6頭（根拠付き）")
