@@ -69,17 +69,23 @@ attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
 
-st.subheader("馬一覧と脚質入力")
+# --- 馬一覧＋脚質＋馬体重入力 ---
+st.subheader("馬一覧・脚質・当日馬体重入力")
+if '馬体重' not in attrs.columns:
+    attrs['馬体重'] = np.nan
+
 edited = st.data_editor(
     attrs,
-    column_order=['枠','番','馬名','性別','年齢','脚質'],
+    column_order=['枠','番','馬名','性別','年齢','脚質','馬体重'],
     column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込'])
+        '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込']),
+        '馬体重': st.column_config.NumberColumn('馬体重', min_value=300, max_value=600, step=1)
     },
     use_container_width=True,
     num_rows='static'
 )
-horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質']]
+horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質','馬体重']]
+
 
 # ---- 血統パース ----
 cont = html_file.read().decode(errors='ignore')
