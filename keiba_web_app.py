@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import altair as alt
 from itertools import combinations
 from itertools import product
+import matplotlib.pyplot as plt
 
 # 日本語フォント設定（matplotlib用）
 plt.rcParams['font.family'] = 'sans-serif'
@@ -210,7 +211,39 @@ top6 = df_agg.sort_values('RankZ', ascending=False).head(6)
 top6['印'] = ['◎','〇','▲','☆','△','△']
 st.subheader("上位6頭（根拠付き）")
 st.table(top6[['馬名','印','根拠']])
+with st.expander("▼『平均スコア』『安定度』の意味・基準を見る"):
+    st.markdown("#### 平均スコア（AvgZ）")
+    st.write(
+        "- 過去成績（score_norm）から各馬ごとに平均を算出\n"
+        "- 偏差値（RankZ）の算出基準にもなる\n"
+        "- 数値が高いほど「安定して高成績」"
+    )
+    avg_mean = df_agg['AvgZ'].mean()
+    avg_std = df_agg['AvgZ'].std()
+    avg_med = df_agg['AvgZ'].median()
+    st.write(f"【全体 平均: {avg_mean:.1f}　中央値: {avg_med:.1f}　標準偏差: {avg_std:.1f}】")
+    fig, ax = plt.subplots()
+    ax.hist(df_agg['AvgZ'], bins=10)
+    ax.set_title("全馬の平均スコア分布")
+    st.pyplot(fig)
 
+    st.markdown("#### 安定度（Stdev）")
+    st.write(
+        "- 過去成績の「ばらつき」の大きさ（標準偏差）\n"
+        "- 小さいほど「安定している」\n"
+        "- 今回は安定度=マイナス標準偏差（大きいほど安定）で比較"
+    )
+    st.write(f"【全体 平均: {df_agg['Stdev'].mean():.1f}　中央値: {df_agg['Stdev'].median():.1f}　標準偏差: {df_agg['Stdev'].std():.1f}】")
+    fig2, ax2 = plt.subplots()
+    ax2.hist(df_agg['Stdev'], bins=10)
+    ax2.set_title("全馬の安定度（標準偏差）分布")
+    st.pyplot(fig2)
+
+    st.info(
+        "- **平均スコア**が高い＝「実力が高い」\n"
+        "- **安定度（標準偏差）**が小さい＝「ムラが少なく信頼できる」\n"
+        "- これらを両方見て、上位6頭や印の優先度を決めています"
+    )
 # --- サイドバーからの変数取得は省略 ---
 # total_budget, scenario, top6, etc. が定義済みとします
 
