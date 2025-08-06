@@ -389,7 +389,82 @@ for i, k in enumerate(kakusitsu):
     cols[i].markdown(f"**{k}　{mark[k]}**<br>{names}", unsafe_allow_html=True)
 
 
+# 印と脚質・血統情報を全頭にマージ
+印map = dict(zip(top6['馬名'], top6['印']))
+horses = horses.merge(df_agg[['馬名','AvgZ','Stdev']], on='馬名', how='left')
+horses['印'] = horses['馬名'].map(印map).fillna('')
 
+# 血統情報もくっつけておく（すでにhorsesに血統が入っていればこの行は不要）
+horses = horses.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'))
+
+# コメント列
+def ai_comment(row):
+    base = f"{row['馬名']}（{row['印'] or '無印'}）："
+    # ◎本命、〇対抗など印ごとに診断
+    if row['印'] == '◎':
+        base += "本命評価。"
+        if row['Stdev'] <= 8:
+            base += "高い安定感で信頼度抜群。"
+        else:
+            base += "能力最上位もムラあり。"
+    elif row['印'] == '〇':
+        base += "対抗評価。"
+        if row['Stdev'] <= 10:
+            base += "近走安定しており軸候補。"
+        else:
+            base += "展開ひとつで逆転も。"
+    elif row['印'] in ['▲','☆']:
+        base += "上位グループの一角。"
+        if row['Stdev'] > 15:
+            base += "ムラがあり一発タイプ。"
+        else:
+            base += "安定型で堅実。"
+    elif row['印'] == '△':
+        base += "押さえ候補。"
+        if row['Stdev'] < 12:
+            base += "堅実だが勝ち切るまでは？"
+        else:
+            base += "展開次第で浮上も。"
+    else:
+        if row['AvgZ'] >= 55 and row['Stdev'] < 13:
+            base += "実力十分。ヒモ穴候補。"
+        elif row['AvgZ'] < 45:
+            base += "実績からは厳しい。"
+        else:
+            base += "決定打に欠ける。"
+    # ムラ・波乱
+    if row['Stdev'] >= 18:
+        base += "波乱含み。"
+    elif row['Stdev'] <= 8:
+        base += "非常に安定。"
+
+    # 血統キーワード判定
+    bloodtxt = str(row.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
+    bloodword = ""
+    for k in keys:
+        if k.strip() and k.strip().lower() in bloodtxt:
+            bloodword = k.strip()
+            break
+    if bloodword:
+        base += f"血統的にも注目（{bloodword}系統）。"
+
+    # 脚質コメント
+    style = str(row.get('脚質','')).strip()
+    if style == '逃げ':
+        base += "ハナを奪えれば粘り込み十分。"
+    elif style == '先行':
+        base += "先行力を活かして上位争い。"
+    elif style == '差し':
+        base += "展開が向けば末脚強烈。"
+    elif style == '追込':
+        base += "直線勝負の一撃に期待。"
+    return base
+
+horses['短評'] = horses.apply(ai_comment, axis=1)
+
+st.subheader("■ 全頭AI診断コメント")
+# 必要なら表示項目を増減してください
+st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev']])
 
 # ========== 買い目生成＆資金配分 ==========
 h1 = top6.iloc[0]['馬名']
