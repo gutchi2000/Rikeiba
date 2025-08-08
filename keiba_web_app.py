@@ -572,19 +572,6 @@ names   = topN['馬名'].tolist()
 others_names   = names[1:] if len(names) > 1 else []
 others_symbols = symbols[1:] if len(symbols) > 1 else []
 
-bets = []
-# ◎ は常に買う
-bets += [
-    {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
-    {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
-]
-# 〇 がいる時だけ追加
-if h2 is not None:
-    bets += [
-        {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
-        {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
-    ]
-
 three = ['馬連','ワイド','馬単']
 scenario_map = {
     '通常': three,
@@ -592,6 +579,7 @@ scenario_map = {
     '余裕': ['ワイド','三連複','三連単']
 }
 
+# --- まず配分計算（この上で win_each/place_each を使わない）
 main_share = 0.5
 pur1 = int(round((total_budget * main_share * 1/4)  / 100) * 100)
 pur2 = int(round((total_budget * main_share * 3/4)  / 100) * 100)
@@ -603,13 +591,17 @@ place_each = int(round((pur2 / 2)  / 100) * 100)
 st.subheader("■ 資金配分")
 st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円")
 
+# --- bets をここで1回だけ作る
 bets = []
 bets += [
     {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
-    {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
     {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
-    {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
 ]
+if h2 is not None:
+    bets += [
+        {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
+        {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
+    ]
 
 parts = scenario_map[scenario]
 
@@ -617,37 +609,26 @@ if scenario == '通常':
     with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
         choice = st.radio("購入券種", options=three, index=1)
         st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-    share_each = int(round(rem / len(others_names) / 100) * 100)
-    for nm, mk in zip(others_names, others_symbols):
-        bets.append({
-            '券種': choice,
-            '印':   f'◎–{mk}',
-            '馬':    h1,
-            '相手':  nm,
-            '金額':  share_each
-        })
+    if len(others_names) > 0:
+        share_each = int(round(rem / len(others_names) / 100) * 100)
+        for nm, mk in zip(others_names, others_symbols):
+            bets.append({'券種': choice, '印': f'◎–{mk}', '馬': h1, '相手': nm, '金額': share_each})
+    else:
+        st.info("相手がいないため連系はスキップ。")
 
 elif scenario == 'ちょい余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 で消費します")
     n_w = len(others_names)
     n_t = len(list(combinations(others_names, 2)))
-    share_each = int(round(rem / (n_w + n_t) / 100) * 100)
-    for nm, mk in zip(others_names, others_symbols):
-        bets.append({
-            '券種':'ワイド',
-            '印':  f'◎–{mk}',
-            '馬':   h1,
-            '相手': nm,
-            '金額': share_each
-        })
-    for pair in combinations(others_names, 2):
-        bets.append({
-            '券種':'三連複',
-            '印':  '◎-〇▲☆△△',
-            '馬':   h1,
-            '相手':'／'.join(pair),
-            '金額': share_each
-        })
+    total_line = n_w + n_t
+    if total_line > 0:
+        share_each = int(round(rem / total_line / 100) * 100)
+        for nm, mk in zip(others_names, others_symbols):
+            bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each})
+        for pair in combinations(others_names, 2):
+            bets.append({'券種':'三連複','印':'◎-〇▲☆△△','馬':h1,'相手':'／'.join(pair),'金額':share_each})
+    else:
+        st.info("相手が足りないため連系はスキップ。")
 
 elif scenario == '余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で消費します")
@@ -657,21 +638,16 @@ elif scenario == '余裕':
     combo3 = [(s,t) for s in second_opts for t in others_names if t!=s]
     n_tri1  = len(combo3)
     total_line = n_w + n_tri3 + n_tri1
-    share_each = int(round(rem / total_line / 100) * 100)
-    for nm, mk in zip(others_names, others_symbols):
-        bets.append({
-            '券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each
-        })
-    for pair in combinations(others_names,2):
-        bets.append({
-            '券種':'三連複','印':'◎-〇▲☆△△','馬':h1,
-            '相手':'／'.join(pair),'金額':share_each
-        })
-    for s,t in combo3:
-        bets.append({
-            '券種':'三連単フォーメーション','印':'◎-〇▲-〇▲☆△△',
-            '馬':h1,'相手':f"{s}／{t}",'金額':share_each
-        })
+    if total_line > 0:
+        share_each = int(round(rem / total_line / 100) * 100)
+        for nm, mk in zip(others_names, others_symbols):
+            bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each})
+        for pair in combinations(others_names,2):
+            bets.append({'券種':'三連複','印':'◎-〇▲☆△△','馬':h1,'相手':'／'.join(pair),'金額':share_each})
+        for s,t in combo3:
+            bets.append({'券種':'三連単フォーメーション','印':'◎-〇▲-〇▲☆△△','馬':h1,'相手':f"{s}／{t}",'金額':share_each})
+    else:
+        st.info("相手が足りないため連系はスキップ。")
 
 df_bets = pd.DataFrame(bets)
 df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
