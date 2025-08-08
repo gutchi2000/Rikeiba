@@ -382,35 +382,82 @@ def ai_comment(row):
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
-# ===== [G0] 重賞好走抽出の前処理（G1:1-5 / G2:1-4 / G3:1-3 ＋ 上がり3F） =====
+# ===== [G0] 重賞好走抽出（G1:1-5 / G2:1-4 / G3:1-3 ＋ 上がり3F） =====
+# 列推定
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
 ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上がり３Ｆ','上3Fタイム','上3F'] if c in df_score.columns), None)
+grade_col_guess = next((c for c in ['クラス名','グレード','格','条件','クラス','レースグレード'] if c in df_score.columns), None)
 
-def normalize_grade(x):
-    s = str(x)
-    s = s.replace('Ｇ','G').replace('Ⅰ','1').replace('Ⅱ','2').replace('Ⅲ','3')
-    s = re.sub(r'\s+', '', s)
-    m = re.match(r'(?i)^G([123])$', s)
-    if m: return f"G{m.group(1)}"
-    m2 = re.search(r'(?i)G([123])', s)
-    return f"G{m2.group(1)}" if m2 else None
+# 文字列から G1/G2/G3 を抽出（クラス列でもレース名でもOK）
+def extract_grade_any(s: str | float | int) -> str | None:
+    if s is None or (isinstance(s, float) and np.isnan(s)): 
+        return None
+    x = str(s)
+    # 全角/ローマ数字を正規化
+    x = x.replace('Ｇ','G').replace('（','(').replace('）',')')
+    x = x.replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III')
+    # G + ローマ数字 → G1/2/3
+    x = re.sub(r'G\s*III', 'G3', x, flags=re.I)
+    x = re.sub(r'G\s*II',  'G2', x, flags=re.I)
+    x = re.sub(r'G\s*I',   'G1', x, flags=re.I)
+    # どこかに G1/2/3 があれば拾う（括弧内でも可）
+    m = re.search(r'G\s*([123])', x, flags=re.I)
+    return f"G{m.group(1)}" if m else None
 
+# 1行から等級を決める（クラス列→ダメならレース名）
+def grade_from_row(row) -> str | None:
+    g = extract_grade_any(row[grade_col_guess]) if grade_col_guess in row else None
+    if not g and race_col:
+        g = extract_grade_any(row[race_col])
+    return g
+
+# 着順列
+finish_col = '確定着順'  # ここはあなたのファイルで既に使えているので固定
 df_g = df_score.copy()
-df_g['GradeN']   = df_g['クラス名'].map(normalize_grade)
-df_g['着順num']  = pd.to_numeric(df_g['確定着順'], errors='coerce')
-thr_map = {'G1':5, 'G2':4, 'G3':3}
-df_g = df_g[df_g['GradeN'].isin(thr_map) & df_g['着順num'].notna()].copy()
-df_g = df_g[df_g.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
-df_g['_date'] = pd.to_datetime(df_g['レース日'], errors='coerce')
-df_g['_date_str'] = df_g['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
+df_g['GradeN']   = df_g.apply(grade_from_row, axis=1)
+df_g['着順num']  = pd.to_numeric(df_g[finish_col], errors='coerce')
+df_g['_date']    = pd.to_datetime(df_g['レース日'], errors='coerce')
+df_g['_date_str']= df_g['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 
+# 閾値
+thr_map = {'G1':5, 'G2':4, 'G3':3}
+df_g = df_g[df_g['GradeN'].isin(thr_map.keys()) & df_g['着順num'].notna()].copy()
+df_g = df_g[df_g.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
+df_g = df_g.sort_values(['馬名','_date'], ascending=[True, False])
+
+# 1行表示文字列（上がり3F付）
 def make_line(r):
     race = r[race_col] if race_col else 'レース名不明'
     ag   = f"　上がり3F {r[ag_col]}" if (ag_col and pd.notna(r[ag_col])) else ""
     return f"{race}　{r['GradeN']}　{int(r['着順num'])}着　{r['_date_str']}{ag}"
 
-df_g = df_g.sort_values(['馬名','_date'], ascending=[True, False])
-grade_highlights = df_g.groupby('馬名').apply(lambda d: [make_line(row) for _, row in d.iterrows()]).to_dict()
+grade_highlights = df_g.groupby('馬名').apply(
+    lambda d: [make_line(row) for _, row in d.iterrows()]
+).to_dict()
+
+# ===== ハイライト表示（上位は展開、その他は折り畳み） =====
+st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
+top_names = topN['馬名'].tolist()
+
+st.markdown("##### 上位馬（展開済み）")
+for name in top_names:
+    lines = grade_highlights.get(name, [])
+    st.markdown(f"**{name}**")
+    if not lines:
+        st.write("　重賞経験なし")
+    else:
+        st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
+
+rest_names = horses.loc[~horses['馬名'].isin(top_names), '馬名']
+if len(rest_names) > 0:
+    st.markdown("##### その他の馬（必要なら開く）")
+    for name in rest_names:
+        with st.expander(name, expanded=False):
+            lines = grade_highlights.get(name, [])
+            if not lines:
+                st.write("重賞経験なし")
+            else:
+                st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
 
 # ===== ハイライト表示（上位は展開、その他は折り畳み） =====
 st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
