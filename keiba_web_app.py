@@ -52,11 +52,10 @@ with st.sidebar.expander("戦績率の重み（すべて芝を使用）", expand
     plc_w  = st.sidebar.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1)
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
-    grade_bonus = st.sidebar.slider("重賞実績ボーナス（GⅠ・GⅡ・GⅢ）", 0, 20, 5)
-    agari1_bonus = st.sidebar.slider("上がり3F 1位ボーナス", 0, 10, 3)
-    agari2_bonus = st.sidebar.slider("上がり3F 2位ボーナス", 0, 5, 2)
-    agari3_bonus = st.sidebar.slider("上がり3F 3位ボーナス", 0, 3, 1)
-    body_weight_bonus = st.sidebar.slider("適正馬体重ボーナス", 0, 10, 3)
+    grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
+    agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
+    agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
+    agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
 
 weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)  # （現状未使用）
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
