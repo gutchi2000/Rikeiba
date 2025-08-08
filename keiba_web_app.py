@@ -521,32 +521,58 @@ def ai_comment(row):
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
 # ===== [G1] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） START =====
+# レース名の列候補（あれば使う）
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
 
+def normalize_grade(x: str) -> str:
+    """G表記を G1/G2/G3 に正規化（全角G、ローマ数字、GI/GII/GIII、JpnI 等に対応）"""
+    s = str(x).strip().upper()
+    # 全角→半角、ローマ数字→I/II/III
+    s = s.replace('Ｇ', 'G').replace('Ⅰ', 'I').replace('Ⅱ', 'II').replace('Ⅲ', 'III')
+    # JPNI / JPN II / JpnIII → GI/GII/GIII 相当として扱う
+    s = re.sub(r'JPN\s*III', 'GIII', s)
+    s = re.sub(r'JPN\s*II',  'GII',  s)
+    s = re.sub(r'JPN\s*I',   'GI',   s)
+    # GI/GII/GIII → G1/G2/G3
+    s = s.replace('GIII', 'G3').replace('GII', 'G2').replace('GI', 'G1')
+    # 既に G1/G2/G3 ならそのまま
+    return s
+
+def parse_pos(x) -> float:
+    """確定着順から先頭の数字を抜き出して数値化（'1着','1位','01' などに対応）"""
+    if pd.isna(x):
+        return np.nan
+    m = re.search(r'\d+', str(x))
+    return float(m.group()) if m else np.nan
+
 gr = df_score.copy()
-gr['着順'] = pd.to_numeric(gr['確定着順'], errors='coerce')
-gr = gr[gr['クラス名'].isin(['GⅠ','GⅡ','GⅢ'])].copy()
+gr['GradeN'] = gr['クラス名'].apply(normalize_grade)
+gr['着順num'] = gr['確定着順'].apply(parse_pos)
 
-thr_map = {'GⅠ': 5, 'GⅡ': 4, 'GⅢ': 3}
-gr['閾値'] = gr['クラス名'].map(thr_map)
-gr = gr[gr['着順'].notna() & (gr['着順'] <= gr['閾値'])].copy()
+# 対象は G1/G2/G3 のみ
+gr = gr[gr['GradeN'].isin(['G1','G2','G3'])].copy()
 
-gr['日付'] = pd.to_datetime(gr['レース日'], errors='coerce').dt.strftime('%Y.%m.%d').fillna('日付不明')
+# クラスごとの着順閾値
+thr_map = {'G1': 5, 'G2': 4, 'G3': 3}
+gr['閾値'] = gr['GradeN'].map(thr_map)
 
-def g_to_ascii(g):
-    return g.replace('Ⅰ','1').replace('Ⅱ','2').replace('Ⅲ','3')
+# 好走のみ抽出
+gr = gr[gr['着順num'].notna() & (gr['着順num'] <= gr['閾値'])].copy()
 
+# 日付整形
+gr['_date'] = pd.to_datetime(gr['レース日'], errors='coerce')
+gr['_date_str'] = gr['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
+
+# 表示用1行
 def one_line(row):
-    g = g_to_ascii(str(row['クラス名']))
-    race = (row[race_col] if race_col else 'レース名不明')
-    pos = int(row['着順']) if pd.notna(row['着順']) else row['確定着順']
-    return f"{race}　{g}　{pos}着　{row['日付']}"
+    race = (row[race_col] if race_col and pd.notna(row.get(race_col)) else 'レース名不明')
+    return f"{race}　{row['GradeN']}　{int(row['着順num'])}着　{row['_date_str']}"
 
-gr = gr.sort_values('レース日', ascending=False)
-grade_highlights = gr.groupby('馬名').apply(
-    lambda d: [one_line(r) for _, r in d.iterrows()]
-).to_dict()
+# 新しい順に並べて馬ごとにまとめる
+gr = gr.sort_values('_date', ascending=False)
+grade_highlights = gr.groupby('馬名').apply(lambda d: [one_line(r) for _, r in d.iterrows()]).to_dict()
 
+# horses に列追加（なければ「重賞経験なし」）
 def highlight_text(name):
     lines = grade_highlights.get(name, [])
     return "重賞経験なし" if len(lines) == 0 else "\n".join(lines)
