@@ -520,66 +520,35 @@ def ai_comment(row):
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
-# ===== [G] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3 + 上がり3F） START =====
-# Excelの列名を拾う
-race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
-ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上3F','上３F','上り3F'] if c in df_score.columns), None)
+# ===== [G] 表示：上位は展開、その他は折り畳み START =====
+st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
 
-def normalize_grade(x: str) -> str:
-    """ 'G 3' / 'Ｇ３' / 'GⅢ' / 'GIII' / 'JpnIII' → G1/G2/G3 に統一 """
-    s = str(x).strip().upper()
-    trans = str.maketrans('Ｇ１２３４５６７８９０　', 'G1234567890 ')
-    s = s.translate(trans)
-    s = re.sub(r'\s+', '', s)               # 'G 3' → 'G3'
-    s = s.replace('Ⅲ','III').replace('Ⅱ','II').replace('Ⅰ','I')
-    s = re.sub(r'JPNIII','GIII',s); s = re.sub(r'JPNII','GII',s); s = re.sub(r'JPNI','GI',s)
-    s = s.replace('GIII','G3').replace('GII','G2').replace('GI','G1')
-    return s
+# 上位（topN）の馬名は展開表示
+top_names = topN['馬名'].tolist()
 
-def parse_pos(x) -> float:
-    if pd.isna(x): return np.nan
-    m = re.search(r'\d+', str(x))
-    return float(m.group()) if m else np.nan
-
-gr = df_score.copy()
-gr['GradeN']  = gr['クラス名'].apply(normalize_grade)
-gr['着順num'] = gr['確定着順'].apply(parse_pos)
-
-# G1/G2/G3のみ
-gr = gr[gr['GradeN'].isin(['G1','G2','G3'])].copy()
-
-# 閾値
-thr_map = {'G1':5, 'G2':4, 'G3':3}
-gr['閾値'] = gr['GradeN'].map(thr_map)
-
-# 好走のみ
-gr = gr[gr['着順num'].notna() & (gr['着順num'] <= gr['閾値'])].copy()
-
-# 日付整形
-gr['_date']     = pd.to_datetime(gr['レース日'], errors='coerce')
-gr['_date_str'] = gr['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
-
-def one_line(row):
-    race = row[race_col] if (race_col and pd.notna(row.get(race_col))) else 'レース名不明'
-    agtxt = ""
-    if ag_col and pd.notna(row.get(ag_col)):
-        try:
-            agtxt = f"　上がり3F {float(row[ag_col]):.1f}"
-        except:
-            agtxt = f"　上がり3F {row[ag_col]}"
-    return f"{race}　{row['GradeN']}　{int(row['着順num'])}着　{row['_date_str']}{agtxt}"
-
-gr = gr.sort_values(['馬名','_date'], ascending=[True, False])
-
-# 馬名→行の文字列リスト
-grade_highlights = gr.groupby('馬名').apply(lambda d: [one_line(r) for _, r in d.iterrows()]).to_dict()
-
-# horses の一列（概要用。テキストで一気読みしたい人向け）
-def highlight_text(name):
+st.markdown("##### 上位馬（展開済み）")
+for name in top_names:
     lines = grade_highlights.get(name, [])
-    return "重賞経験なし" if len(lines) == 0 else "\n".join(lines)
+    st.markdown(f"**{name}**")
+    if not lines:
+        st.write("　重賞経験なし")
+    else:
+        # ・箇条書きで横並びっぽく見やすく
+        st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
 
-horses['重賞実績'] = horses['馬名'].apply(highlight_text)
+# その他は必要なら開く方式
+rest_names = horses.loc[~horses['馬名'].isin(top_names), '馬名']
+if len(rest_names) > 0:
+    st.markdown("##### その他の馬（必要なら開く）")
+    for name in rest_names:
+        with st.expander(name, expanded=False):
+            lines = grade_highlights.get(name, [])
+            if not lines:
+                st.write("重賞経験なし")
+            else:
+                st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
+# ===== [G] 表示：上位は展開、その他は折り畳み END =====
+
 
 # ---- 見やすさ重視ビュー：各馬ごとに小テーブルで表示（馬名とレース名が縦にだらだら並ばない） ----
 st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
