@@ -136,7 +136,13 @@ df_score = (
     df_score
     .merge(horses, on='馬名', how='inner')
     .merge(blood_df, on='馬名', how='left')
+    .merge(rate[['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム秒']], on='馬名', how='left')
 )
+
+# ベストタイム正規化用のレンジ
+bt_min = df_score['ベストタイム秒'].min(skipna=True)
+bt_max = df_score['ベストタイム秒'].max(skipna=True)
+bt_span = (bt_max - bt_min) if pd.notna(bt_min) and pd.notna(bt_max) and (bt_max > bt_min) else 1.0
 
 st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
