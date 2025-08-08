@@ -41,6 +41,10 @@ with st.sidebar.expander("年齢重み", expanded=False):
 with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+with st.sidebar.expander("戦績率の重み（すべて芝を使用）", expanded=False):
+    win_w  = st.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1)
+    quin_w = st.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1)
+    plc_w  = st.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1)
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
     grade_bonus = st.slider("重賞実績ボーナス（GⅠ・GⅡ・GⅢ）", 0, 20, 5)
     agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
@@ -68,6 +72,37 @@ attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
 attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
+# --- 2枚目シートから芝の率＋ベストタイム列を自動検出 ---
+name_col = sheet2.columns[2]  # 馬名の列（あなたのファイルでは3列目）
+
+def find_col(patterns):
+    for pat in patterns:
+        for c in sheet2.columns:
+            if re.search(pat, str(c)):
+                return c
+    return None
+
+col_win  = find_col([r'勝率.*芝', r'芝.*勝率', r'^勝率$'])
+col_quin = find_col([r'連対率.*芝', r'芝.*連対率', r'^連対率$'])
+col_plc  = find_col([r'複勝率.*芝', r'芝.*複勝率', r'^複勝率$'])
+col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ'])
+
+# 必須列が見つからない場合は列名を教えて（or ここに手動指定）
+rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
+rate.columns = ['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム']
+
+# 数値化とタイム秒化
+for c in ['勝率_芝','連対率_芝','複勝率_芝']:
+    rate[c] = pd.to_numeric(rate[c], errors='coerce')
+
+def parse_time_to_sec(x):
+    s = str(x)
+    m = re.match(r'^\s*(\d+)[\.\:](\d+)[\.\:](\d+)\s*$', s)  # 例: 1.07.3 → 1分07秒3
+    if m:
+        return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
+    return pd.to_numeric(s, errors='coerce')  # 既に秒ならそのまま
+
+rate['ベストタイム秒'] = rate['ベストタイム'].apply(parse_time_to_sec)
 
 # --- 馬一覧＋脚質＋馬体重入力 ---
 st.subheader("馬一覧・脚質・当日馬体重入力")
@@ -114,12 +149,12 @@ def calc_score(r):
           '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬・未勝利':1}
     g = GP.get(r['クラス名'], 1)
     raw = g * (r['頭数'] + 1 - r['確定着順']) + lambda_part * g
+
     sw  = season_w[season_of(pd.to_datetime(r['レース日']).month)]
     gw  = gender_w.get(r['性別'], 1)
     stw = style_w.get(r['脚質'], 1)
     fw  = frame_w.get(str(r['枠']), 1)
     aw  = age_w.get(str(r['年齢']), 1.0)
-    bt  = besttime_w
     weight_factor = 1
 
     # 血統ボーナス
@@ -130,26 +165,20 @@ def calc_score(r):
             blood_bonus = bp
             break
 
-    # 重賞実績ボーナス（GⅠ・GⅡ・GⅢ のみ加点）
+    # 重賞実績ボーナス（GⅠ・GⅡ・GⅢ のみ）
     grade_name = str(r.get('クラス名',''))
-    if grade_name in ['GⅠ','GⅡ','GⅢ']:
-        grade_point = grade_bonus
-    else:
-        grade_point = 0
+    grade_point = grade_bonus if grade_name in ['GⅠ','GⅡ','GⅢ'] else 0
 
     # 上がり3F順位ボーナス
     agari_bonus = 0
     agari_order = r.get('上3F順位', np.nan)
     try:
         agari_order = int(agari_order)
-        if agari_order == 1:
-            agari_bonus = agari1_bonus
-        elif agari_order == 2:
-            agari_bonus = agari2_bonus
-        elif agari_order == 3:
-            agari_bonus = agari3_bonus
+        if agari_order == 1:   agari_bonus = agari1_bonus
+        elif agari_order == 2: agari_bonus = agari2_bonus
+        elif agari_order == 3: agari_bonus = agari3_bonus
     except:
-        agari_bonus = 0
+        pass
 
     # 馬体重適正ボーナス
     body_bonus = 0
@@ -157,18 +186,35 @@ def calc_score(r):
         name = r['馬名']
         myhist = df_score[(df_score['馬名']==name) & (df_score['馬体重'].notna())]
         if len(myhist) > 0:
-            # 最高着順時の体重＝適正
             best_row = myhist.loc[myhist['確定着順'].idxmin()]
             tekitai = best_row['馬体重']
             now_bw = r.get('馬体重', np.nan)
             if not pd.isna(now_bw) and abs(now_bw - tekitai) <= 10:
                 body_bonus = body_weight_bonus
-    except Exception as e:
-        body_bonus = 0
+    except:
+        pass
 
-    total_bonus = blood_bonus + grade_point + agari_bonus + body_bonus
-    return raw * sw * gw * stw * fw * aw * bt * weight_factor + total_bonus
+    # 芝の勝率/連対率/複勝率で加点（0〜 win_w+quin_w+plc_w）
+    rate_bonus = 0.0
+    try:
+        if pd.notna(r.get('勝率_芝', np.nan)):   rate_bonus += win_w  * (float(r['勝率_芝'])  / 100.0)
+        if pd.notna(r.get('連対率_芝', np.nan)): rate_bonus += quin_w * (float(r['連対率_芝']) / 100.0)
+        if pd.notna(r.get('複勝率_芝', np.nan)): rate_bonus += plc_w  * (float(r['複勝率_芝'])  / 100.0)
+    except:
+        pass
 
+    # ベストタイム加点（速いほど+）0〜besttime_w
+    bt_bonus = 0.0
+    try:
+        if pd.notna(r.get('ベストタイム秒', np.nan)):
+            bt_norm = (bt_max - float(r['ベストタイム秒'])) / bt_span  # 速いほど1に近い
+            bt_norm = max(0.0, min(1.0, bt_norm))
+            bt_bonus = besttime_w * bt_norm
+    except:
+        pass
+
+    total_bonus = blood_bonus + grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus
+    return raw * sw * gw * stw * fw * aw * weight_factor + total_bonus
 
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
 df_score['score_norm'] = (
