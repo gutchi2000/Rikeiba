@@ -324,6 +324,41 @@ topN['印'] = ['◎','〇','▲','☆','△','△'][:len(topN)]
 st.subheader("上位馬（平均スコア>50のみ／根拠付き）")
 st.table(topN[['馬名','印','根拠']])
 
+# ===== 指標の説明＆分布（棒グラフ） =====
+with st.expander("▼『平均スコア（AvgZ）』『安定度（Stdev）』の意味・分布を見る", expanded=False):
+    # 平均スコア（AvgZ）
+    st.markdown("#### 平均スコア（AvgZ）")
+    avg_mean = df_agg['AvgZ'].mean()
+    avg_med  = df_agg['AvgZ'].median()
+    avg_std  = df_agg['AvgZ'].std()
+    st.write(f"【全体 平均: {avg_mean:.1f}　中央値: {avg_med:.1f}　標準偏差: {avg_std:.1f}】")
+
+    fig, ax = plt.subplots()
+    ax.hist(df_agg['AvgZ'], bins=10)
+    ax.set_title("全馬の平均スコア分布", fontproperties=jp_font)
+    ax.set_xlabel("平均スコア", fontproperties=jp_font)
+    ax.set_ylabel("頭数", fontproperties=jp_font)
+    st.pyplot(fig)
+
+    # 安定度（Stdev）
+    st.markdown("#### 安定度（Stdev）")
+    st.write(
+        "- 過去成績のばらつき（標準偏差）。小さいほど安定\n"
+        "- グラフは分布の確認用"
+    )
+    st.write(
+        f"【全体 平均: {df_agg['Stdev'].mean():.1f}　"
+        f"中央値: {df_agg['Stdev'].median():.1f}　"
+        f"標準偏差: {df_agg['Stdev'].std():.1f}】"
+    )
+
+    fig2, ax2 = plt.subplots()
+    ax2.hist(df_agg['Stdev'], bins=10)
+    ax2.set_title("全馬の安定度（標準偏差）分布", fontproperties=jp_font)
+    ax2.set_xlabel("安定度（標準偏差）", fontproperties=jp_font)
+    ax2.set_ylabel("頭数", fontproperties=jp_font)
+    st.pyplot(fig2)
+
 # ========== 展開ロケーション ==========
 df_map = horses.copy()
 df_map['印'] = df_map['馬名'].map(dict(zip(topN['馬名'], topN['印'])))
