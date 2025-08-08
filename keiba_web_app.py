@@ -525,11 +525,25 @@ st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev']])
 
 # ========== 買い目生成＆資金配分 ==========
 h1 = topN.iloc[0]['馬名']
-h2 = topN.iloc[1]['馬名']
+h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
+
 symbols = topN['印'].tolist()
 names   = topN['馬名'].tolist()
-others_names   = names[1:]
-others_symbols = symbols[1:]
+others_names   = names[1:] if len(names) > 1 else []
+others_symbols = symbols[1:] if len(symbols) > 1 else []
+
+bets = []
+# ◎ は常に買う
+bets += [
+    {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
+    {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
+]
+# 〇 がいる時だけ追加
+if h2 is not None:
+    bets += [
+        {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
+        {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each},
+    ]
 
 three = ['馬連','ワイド','馬単']
 scenario_map = {
