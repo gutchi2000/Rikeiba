@@ -46,10 +46,11 @@ with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+
 with st.sidebar.expander("戦績率の重み（すべて芝を使用）", expanded=False):
-    win_w  = st.sidebar.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1)
-    quin_w = st.sidebar.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1)
-    plc_w  = st.sidebar.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1)
+    win_w  = st.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
+    quin_w = st.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
+    plc_w  = st.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
     grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
