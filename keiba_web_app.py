@@ -459,30 +459,6 @@ if len(rest_names) > 0:
             else:
                 st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
 
-# ===== ハイライト表示（上位は展開、その他は折り畳み） =====
-st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
-top_names = topN['馬名'].tolist()
-
-st.markdown("##### 上位馬（展開済み）")
-for name in top_names:
-    lines = grade_highlights.get(name, [])
-    st.markdown(f"**{name}**")
-    if not lines:
-        st.write("　重賞経験なし")
-    else:
-        st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
-
-rest_names = horses.loc[~horses['馬名'].isin(top_names), '馬名']
-if len(rest_names) > 0:
-    st.markdown("##### その他の馬（必要なら開く）")
-    for name in rest_names:
-        with st.expander(name, expanded=False):
-            lines = grade_highlights.get(name, [])
-            if not lines:
-                st.write("重賞経験なし")
-            else:
-                st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
-
 # ===== 買い目生成＆資金配分 =====
 h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
 h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
