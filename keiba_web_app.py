@@ -397,14 +397,15 @@ def ai_comment(row):
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
-# ===== [G0] 重賞好走抽出（G1:1-5 / G2:1-4 / G3:1-3 ＋ 上がり3F を1行で表示） =====
+# ===== [G1] 重賞好走抽出（G1:1-5 / G2:1-4 / G3:1-3）を表形式で表示 START =====
 # 列推定
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
 ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上がり３Ｆ','上3Fタイム','上3F'] if c in df_score.columns), None)
 grade_col_guess = next((c for c in ['クラス名','グレード','格','条件','クラス','レースグレード'] if c in df_score.columns), None)
 
+# GⅠ/Ⅱ/Ⅲ や 全角G を正規化して G1/G2/G3 を抽出
 _fwid = str.maketrans('０１２３','0123')
-def normalize_grade_text(x: str | float | int) -> str | None:
+def normalize_grade_text(x):
     if x is None or (isinstance(x, float) and np.isnan(x)): return None
     s = str(x).translate(_fwid)
     s = s.replace('Ｇ','G').replace('（','(').replace('）',')')
@@ -415,78 +416,82 @@ def normalize_grade_text(x: str | float | int) -> str | None:
     m = re.search(r'G\s*([123])', s, flags=re.I)
     return f"G{m.group(1)}" if m else None
 
-def grade_from_row(row) -> str | None:
+def grade_from_row(row):
     g = normalize_grade_text(row.get(grade_col_guess)) if grade_col_guess else None
     if not g and race_col:
         g = normalize_grade_text(row.get(race_col))
     return g
 
-# 元データ → フィルタ
-finish_col = '確定着順'
-df_g = df_score.copy()
-df_g['GradeN']   = df_g.apply(grade_from_row, axis=1)
-df_g['着順num']  = pd.to_numeric(df_g[finish_col], errors='coerce')
-df_g['_date']    = pd.to_datetime(df_g['レース日'], errors='coerce')
-df_g['_date_str']= df_g['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
+# 元データ → 前処理
+finish_col = '確定着順'  # あなたのファイルに合わせて固定
+dfg = df_score.copy()
+dfg['GradeN']   = dfg.apply(grade_from_row, axis=1)
+dfg['着順num']  = pd.to_numeric(dfg[finish_col], errors='coerce')
+dfg['_date']    = pd.to_datetime(dfg['レース日'], errors='coerce')
+dfg['_date_str']= dfg['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 
-# レース名/上がりに改行が混ざってても1行化しておく
+# レース名/上がりに改行が混ざっていても1行化
 def _clean_one_line(v):
     if pd.isna(v): return ''
     return str(v).replace('\r','').replace('\n','').strip()
-if race_col: df_g[race_col] = df_g[race_col].map(_clean_one_line)
-if ag_col:   df_g[ag_col]   = df_g[ag_col].map(_clean_one_line)
+if race_col: dfg[race_col] = dfg[race_col].map(_clean_one_line)
+if ag_col:   dfg[ag_col]   = dfg[ag_col].map(_clean_one_line)
 
+# 閾値で好走のみ
 thr_map = {'G1':5, 'G2':4, 'G3':3}
-df_g = df_g[df_g['GradeN'].isin(thr_map.keys()) & df_g['着順num'].notna()].copy()
-df_g = df_g[df_g.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
-df_g = df_g.sort_values(['馬名','_date'], ascending=[True, False])
+dfg = dfg[dfg['GradeN'].isin(thr_map.keys()) & dfg['着順num'].notna()].copy()
+dfg = dfg[dfg.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
+dfg = dfg.sort_values(['馬名','_date'], ascending=[True, False])
 
-# 1レース=1行（上がり3Fも同じ行に）
-def make_line(r):
-    race = r.get(race_col) if race_col else ''
-    if not race or str(race).lower() == 'nan':
-        race = 'レース名不明'
-    # 上がり3Fは小数1桁で整形（文字ならそのまま）
-    agtxt = ''
-    if ag_col:
-        v = r.get(ag_col)
-        if v not in [None, '', 'nan']:
-            try:
-                agtxt = f"{float(str(v).replace('秒','').strip()):.1f}"
-            except:
-                agtxt = _clean_one_line(v)
-    ag = f"　上がり3F {agtxt}" if agtxt else ''
-    return f"{race}　{r['GradeN']}　{int(r['着順num'])}着　{r['_date_str']}{ag}"
+# 表にする（レース名 / 格 / 着 / 日付 / 上がり3F）
+def _fmt_ag(v):
+    if v in [None, '', 'nan']: return ''
+    s = str(v).replace('秒','').strip()
+    try:
+        return f"{float(s):.1f}"
+    except:
+        return s
 
-grade_highlights = df_g.groupby('馬名').apply(
-    lambda d: [make_line(row) for _, row in d.iterrows()]
-).to_dict()
+def make_table(d: pd.DataFrame) -> pd.DataFrame:
+    n = len(d)
+    races = d[race_col].fillna('（不明）') if race_col else pd.Series(['（不明）']*n, index=d.index)
+    ags   = d[ag_col].map(_fmt_ag) if ag_col else pd.Series(['']*n, index=d.index)
+    out = pd.DataFrame({
+        'レース名': races,
+        '格': d['GradeN'].values,
+        '着': d['着順num'].astype(int).values,
+        '日付': d['_date_str'].values,
+        '上がり3F': ags.values,
+    })
+    return out
 
-# ===== ハイライト表示（上位は展開、その他は折り畳み） =====
+grade_tables = {name: make_table(d) for name, d in dfg.groupby('馬名')}
+
+# ===== 表示：上位は展開、その他は折り畳み =====
 st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
-top_names = topN['馬名'].tolist()
 
+top_names = topN['馬名'].tolist()
 st.markdown("##### 上位馬（展開済み）")
 for name in top_names:
-    lines = grade_highlights.get(name, [])
     st.markdown(f"**{name}**")
-    if not lines:
+    t = grade_tables.get(name, None)
+    if t is None or t.empty:
         st.write("　重賞経験なし")
     else:
-        # 各レース1行表示
-        st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
+        st.table(t)  # ← 5列で綺麗に並ぶ
 
 rest_names = horses.loc[~horses['馬名'].isin(top_names), '馬名']
 if len(rest_names) > 0:
     st.markdown("##### その他の馬（必要なら開く）")
     for name in rest_names:
         with st.expander(name, expanded=False):
-            lines = grade_highlights.get(name, [])
-            if not lines:
+            t = grade_tables.get(name, None)
+            if t is None or t.empty:
                 st.write("重賞経験なし")
             else:
-                st.markdown("・" + "<br>・".join(lines), unsafe_allow_html=True)
-# ===== [G0] ここまで =====
+                st.table(t)
+# ===== [G1] END =====
+
 
 
 # ===== 買い目生成＆資金配分 =====
