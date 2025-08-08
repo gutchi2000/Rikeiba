@@ -47,16 +47,16 @@ with st.sidebar.expander("枠順重み", expanded=False):
 
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
 with st.sidebar.expander("戦績率の重み（すべて芝を使用）", expanded=False):
-    win_w  = st.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1)
-    quin_w = st.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1)
-    plc_w  = st.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1)
+    win_w  = st.sidebar.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1)
+    quin_w = st.sidebar.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1)
+    plc_w  = st.sidebar.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1)
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
-    grade_bonus = st.slider("重賞実績ボーナス（GⅠ・GⅡ・GⅢ）", 0, 20, 5)
-    agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
-    agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
-    agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
-    body_weight_bonus = st.slider("適正馬体重ボーナス", 0, 10, 3)
+    grade_bonus = st.sidebar.slider("重賞実績ボーナス（GⅠ・GⅡ・GⅢ）", 0, 20, 5)
+    agari1_bonus = st.sidebar.slider("上がり3F 1位ボーナス", 0, 10, 3)
+    agari2_bonus = st.sidebar.slider("上がり3F 2位ボーナス", 0, 5, 2)
+    agari3_bonus = st.sidebar.slider("上がり3F 3位ボーナス", 0, 3, 1)
+    body_weight_bonus = st.sidebar.slider("適正馬体重ボーナス", 0, 10, 3)
 
 weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)  # （現状未使用）
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
@@ -80,7 +80,7 @@ attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
 
-# ===== [M1] 戦績率(芝)＆ベストタイム抽出 START =====
+# ===== [M1] 戦績率(芝)＆ベストタイム抽出 =====
 def norm_col(s: str) -> str:
     s = str(s).strip()
     s = re.sub(r'\s+', '', s)
@@ -138,7 +138,6 @@ def parse_time_to_sec(x):
     return pd.to_numeric(s, errors='coerce')
 
 rate['ベストタイム秒'] = rate['ベストタイム'].apply(parse_time_to_sec)
-# ===== [M1] END =====
 
 # --- 馬一覧＋脚質＋馬体重入力 ---
 st.subheader("馬一覧・脚質・当日馬体重入力")
@@ -185,6 +184,21 @@ st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
 
+# ------ グレード表記ゆれを吸収する正規化関数 ------
+_fwid = str.maketrans('０１２３','0123')  # 全角数字→半角
+def normalize_grade_text(x: str) -> str | None:
+    if x is None or (isinstance(x, float) and np.isnan(x)): return None
+    s = str(x)
+    s = s.translate(_fwid)
+    s = s.replace('Ｇ','G').replace('（','(').replace('）',')')
+    s = s.replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III')
+    s = re.sub(r'G\s*III', 'G3', s, flags=re.I)
+    s = re.sub(r'G\s*II',  'G2', s, flags=re.I)
+    s = re.sub(r'G\s*I',   'G1', s, flags=re.I)
+    m = re.search(r'G\s*([123])', s, flags=re.I)
+    return f"G{m.group(1)}" if m else None
+# ----------------------------------------------
+
 def calc_score(r):
     GP = {'GⅠ':10,'GⅡ':8,'GⅢ':6,'リステッド':5,'オープン特別':4,
           '3勝クラス':3,'2勝クラス':2,'1勝クラス':1,'新馬・未勝利':1}
@@ -205,8 +219,9 @@ def calc_score(r):
             blood_bonus = bp
             break
 
-    # 重賞名ボーナス（GⅠ〜GⅢのみ）
-    grade_point = grade_bonus if str(r.get('クラス名','')) in ['GⅠ','GⅡ','GⅢ'] else 0
+    # 重賞名ボーナス（GⅠ/Ⅱ/Ⅲ だけでなく G1/2/3 も拾う）
+    gnorm = normalize_grade_text(r.get('クラス名'))
+    grade_point = grade_bonus if (str(r.get('クラス名','')) in ['GⅠ','GⅡ','GⅢ'] or gnorm in ['G1','G2','G3']) else 0
 
     # 上がり3F順位ボーナス
     agari_bonus = 0
@@ -383,49 +398,28 @@ def ai_comment(row):
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
 # ===== [G0] 重賞好走抽出（G1:1-5 / G2:1-4 / G3:1-3 ＋ 上がり3F） =====
-# 列推定
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
 ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上がり３Ｆ','上3Fタイム','上3F'] if c in df_score.columns), None)
 grade_col_guess = next((c for c in ['クラス名','グレード','格','条件','クラス','レースグレード'] if c in df_score.columns), None)
 
-# 文字列から G1/G2/G3 を抽出（クラス列でもレース名でもOK）
-def extract_grade_any(s: str | float | int) -> str | None:
-    if s is None or (isinstance(s, float) and np.isnan(s)): 
-        return None
-    x = str(s)
-    # 全角/ローマ数字を正規化
-    x = x.replace('Ｇ','G').replace('（','(').replace('）',')')
-    x = x.replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III')
-    # G + ローマ数字 → G1/2/3
-    x = re.sub(r'G\s*III', 'G3', x, flags=re.I)
-    x = re.sub(r'G\s*II',  'G2', x, flags=re.I)
-    x = re.sub(r'G\s*I',   'G1', x, flags=re.I)
-    # どこかに G1/2/3 があれば拾う（括弧内でも可）
-    m = re.search(r'G\s*([123])', x, flags=re.I)
-    return f"G{m.group(1)}" if m else None
-
-# 1行から等級を決める（クラス列→ダメならレース名）
 def grade_from_row(row) -> str | None:
-    g = extract_grade_any(row[grade_col_guess]) if grade_col_guess in row else None
+    g = normalize_grade_text(row.get(grade_col_guess)) if grade_col_guess else None
     if not g and race_col:
-        g = extract_grade_any(row[race_col])
+        g = normalize_grade_text(row.get(race_col))
     return g
 
-# 着順列
-finish_col = '確定着順'  # ここはあなたのファイルで既に使えているので固定
+finish_col = '確定着順'
 df_g = df_score.copy()
 df_g['GradeN']   = df_g.apply(grade_from_row, axis=1)
 df_g['着順num']  = pd.to_numeric(df_g[finish_col], errors='coerce')
 df_g['_date']    = pd.to_datetime(df_g['レース日'], errors='coerce')
 df_g['_date_str']= df_g['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 
-# 閾値
 thr_map = {'G1':5, 'G2':4, 'G3':3}
 df_g = df_g[df_g['GradeN'].isin(thr_map.keys()) & df_g['着順num'].notna()].copy()
 df_g = df_g[df_g.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
 df_g = df_g.sort_values(['馬名','_date'], ascending=[True, False])
 
-# 1行表示文字列（上がり3F付）
 def make_line(r):
     race = r[race_col] if race_col else 'レース名不明'
     ag   = f"　上がり3F {r[ag_col]}" if (ag_col and pd.notna(r[ag_col])) else ""
@@ -435,7 +429,7 @@ grade_highlights = df_g.groupby('馬名').apply(
     lambda d: [make_line(row) for _, row in d.iterrows()]
 ).to_dict()
 
-# ===== ハイライト表示（上位は展開、その他は折り畳み） =====
+# ===== ハイライト表示 =====
 st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
 top_names = topN['馬名'].tolist()
 
