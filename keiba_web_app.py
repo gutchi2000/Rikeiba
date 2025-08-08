@@ -16,6 +16,8 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'Meiryo', 'MS Gothic']
 
 def z_score(s: pd.Series) -> pd.Series:
+    if s.std(ddof=0) == 0 or pd.isna(s.std(ddof=0)):
+        return pd.Series([50]*len(s), index=s.index)
     return 50 + 10 * (s - s.mean()) / s.std(ddof=0)
 
 def season_of(month: int) -> str:
@@ -27,7 +29,7 @@ def season_of(month: int) -> str:
 # ========== サイドバー ==========
 st.sidebar.header("パラメータ設定")
 lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
-orig_weight  = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)
+orig_weight  = st.sidebar.slider("OrigZ の重み", 0.0, 1.0, 0.5, 0.05)  # いまは未使用
 hist_weight  = 1 - orig_weight
 
 with st.sidebar.expander("性別重み", expanded=False):
@@ -51,7 +53,7 @@ with st.sidebar.expander("各種ボーナス設定", expanded=False):
     agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
     agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
     body_weight_bonus = st.slider("適正馬体重ボーナス", 0, 10, 3)
-weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)
+weight_coeff = st.sidebar.slider("斤量効果強度", 0.0, 2.0, 1.0)  # いまは未使用
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
@@ -72,12 +74,12 @@ attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
 attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
-# --- 2枚目シートから芝の率＋ベストタイム列を自動検出 ---
-# --- 2枚目シートから芝の率＋ベストタイム列を自動検出（頑丈版） ---
-# 前処理：列名の全角/半角・空白・カッコ・% を正規化してから探す
+
+# ===== [M1] 戦績率(芝)＆ベストタイム抽出 START =====
+# 列名の正規化＆自動検出 → ダメなら手動選択にフォールバック
 def norm_col(s: str) -> str:
     s = str(s).strip()
-    s = re.sub(r'\s+', '', s)  # 空白除去
+    s = re.sub(r'\s+', '', s)
     s = s.replace('（', '(').replace('）', ')').replace('％', '%')
     s = s.replace('ﾍﾞｽﾄ', 'ベスト').replace('ﾀｲﾑ', 'タイム')
     return s
@@ -99,21 +101,17 @@ col_quin = find_col([r'連対率.*芝', r'芝.*連対率', r'^連対率(\(芝\))
 col_plc  = find_col([r'複勝率.*芝', r'芝.*複勝率', r'^複勝率(\(芝\))?$'])
 col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ', r'タイム.*(最速|ベスト)'])
 
-# 見つからなかったら手動選択に切り替え（KeyError防止）
-need = [('勝率(芝)', col_win), ('連対率(芝)', col_quin), ('複勝率(芝)', col_plc), ('ベストタイム', col_bt)]
-if any(c is None for _, c in need):
+if any(c is None for c in [col_win, col_quin, col_plc, col_bt]):
     st.warning("2枚目シートの列自動検出に失敗。手動で選んでください。")
     options = list(sheet2.columns)
-    if col_win  is None:  col_win  = st.selectbox("勝率(芝)の列", options)
-    if col_quin is None:  col_quin = st.selectbox("連対率(芝)の列", options)
-    if col_plc  is None:  col_plc  = st.selectbox("複勝率(芝)の列", options)
-    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options)
+    if col_win  is None:  col_win  = st.selectbox("勝率(芝)の列", options, key="wincol")
+    if col_quin is None:  col_quin = st.selectbox("連対率(芝)の列", options, key="quincol")
+    if col_plc  is None:  col_plc  = st.selectbox("複勝率(芝)の列", options, key="plccol")
+    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options, key="btcol")
 
-# 必要列を抽出
 rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
 rate.columns = ['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム']
 
-# %や0〜1表記に耐えるクリーニング
 for c in ['勝率_芝','連対率_芝','複勝率_芝']:
     rate[c] = (
         rate[c].astype(str)
@@ -122,27 +120,23 @@ for c in ['勝率_芝','連対率_芝','複勝率_芝']:
     )
     rate[c] = pd.to_numeric(rate[c], errors='coerce')
 
-# もし 0〜1 の比率で入ってたら 0〜100 に換算
 max_val = pd.concat([rate['勝率_芝'], rate['連対率_芝'], rate['複勝率_芝']], axis=1).max().max()
 if pd.notna(max_val) and max_val <= 1.0:
     for c in ['勝率_芝','連対率_芝','複勝率_芝']:
         rate[c] = rate[c] * 100.0
 
-# タイムを秒に統一（1:07.3 / 1.07.3 / 67.3 すべてOK）
 def parse_time_to_sec(x):
     s = str(x).strip()
-    # 1:07.34 → 分:秒.小数
     m = re.match(r'^(\d+):(\d+)\.(\d+)$', s)
     if m:
         return int(m.group(1))*60 + int(m.group(2)) + float('0.'+m.group(3))
-    # 1.07.3 / 1:07:3 → 分.秒.1/10
     m = re.match(r'^(\d+)[\.\:](\d+)[\.\:](\d+)$', s)
     if m:
         return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
-    # 67.3 → 秒
     return pd.to_numeric(s, errors='coerce')
 
 rate['ベストタイム秒'] = rate['ベストタイム'].apply(parse_time_to_sec)
+# ===== [M1] 戦績率(芝)＆ベストタイム抽出 END =====
 
 # --- 馬一覧＋脚質＋馬体重入力 ---
 st.subheader("馬一覧・脚質・当日馬体重入力")
@@ -161,7 +155,6 @@ edited = st.data_editor(
 )
 horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質','馬体重']]
 
-
 # ---- 血統パース ----
 cont = html_file.read().decode(errors='ignore')
 rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
@@ -172,17 +165,20 @@ for r in rows:
         blood.append((re.sub(r'<.*?>','',c[0]).strip(), re.sub(r'<.*?>','',c[1]).strip()))
 blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
 
+# ===== [M2] df_score マージ（horses / blood / rate）START =====
 df_score = (
     df_score
     .merge(horses, on='馬名', how='inner')
     .merge(blood_df, on='馬名', how='left')
     .merge(rate[['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム秒']], on='馬名', how='left')
 )
+# ===== [M2] df_score マージ（horses / blood / rate）END =====
 
-# ベストタイム正規化用のレンジ
+# ===== [M3] ベストタイム正規化レンジ START =====
 bt_min = df_score['ベストタイム秒'].min(skipna=True)
 bt_max = df_score['ベストタイム秒'].max(skipna=True)
 bt_span = (bt_max - bt_min) if pd.notna(bt_min) and pd.notna(bt_max) and (bt_max > bt_min) else 1.0
+# ===== [M3] ベストタイム正規化レンジ END =====
 
 st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
@@ -220,7 +216,7 @@ def calc_score(r):
     agari_order = r.get('上3F順位', np.nan)
     try:
         agari_order = int(agari_order)
-        if agari_order == 1:   agari_bonus = agari1_bonus
+        if   agari_order == 1: agari_bonus = agari1_bonus
         elif agari_order == 2: agari_bonus = agari2_bonus
         elif agari_order == 3: agari_bonus = agari3_bonus
     except:
@@ -240,7 +236,7 @@ def calc_score(r):
     except:
         pass
 
-    # 芝の勝率/連対率/複勝率で加点（0〜 win_w+quin_w+plc_w）
+    # ===== [M4a] 芝の勝率/連対率/複勝率ボーナス START =====
     rate_bonus = 0.0
     try:
         if pd.notna(r.get('勝率_芝', np.nan)):   rate_bonus += win_w  * (float(r['勝率_芝'])  / 100.0)
@@ -248,8 +244,9 @@ def calc_score(r):
         if pd.notna(r.get('複勝率_芝', np.nan)): rate_bonus += plc_w  * (float(r['複勝率_芝'])  / 100.0)
     except:
         pass
+    # ===== [M4a] 芝の勝率/連対率/複勝率ボーナス END =====
 
-    # ベストタイム加点（速いほど+）0〜besttime_w
+    # ===== [M4b] ベストタイム加点（速いほど+） START =====
     bt_bonus = 0.0
     try:
         if pd.notna(r.get('ベストタイム秒', np.nan)):
@@ -258,15 +255,19 @@ def calc_score(r):
             bt_bonus = besttime_w * bt_norm
     except:
         pass
+    # ===== [M4b] ベストタイム加点（速いほど+） END =====
 
     total_bonus = blood_bonus + grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus
     return raw * sw * gw * stw * fw * aw * weight_factor + total_bonus
 
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
-df_score['score_norm'] = (
-    (df_score['score_raw'] - df_score['score_raw'].min()) /
-    (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
-)
+if df_score['score_raw'].max() == df_score['score_raw'].min():
+    df_score['score_norm'] = 50.0
+else:
+    df_score['score_norm'] = (
+        (df_score['score_raw'] - df_score['score_raw'].min()) /
+        (df_score['score_raw'].max() - df_score['score_raw'].min()) * 100
+    )
 
 df_agg = (
     df_score.groupby('馬名')['score_norm']
@@ -295,9 +296,6 @@ df_agg['根拠'] = df_agg.apply(reason, axis=1)
 # ========== 全頭散布図（偏差値 vs 安定度） ==========
 import altair as alt
 
-df_agg['Stdev'] = df_agg['Stdev']  # 標準偏差そのまま
-
-# 四象限ラベル
 avg_st = df_agg['Stdev'].mean()
 quad_labels = pd.DataFrame([
     {'RankZ':70, 'Stdev': avg_st - (avg_st-df_agg['Stdev'].min())/1.5, 'label':'鉄板・本命'},
@@ -327,28 +325,16 @@ hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y
 chart = (points + labels + quad + vline + hline)
 st.altair_chart(chart.properties(width=600, height=400).interactive(), use_container_width=True)
 
-# 注釈文も下に表示
-with st.expander("▶ 散布図の見方（クリックで開く）"):
-    st.markdown("""
-- この散布図は「右下ほど本命級」
-- 横軸：偏差値（高いほど能力が高い）
-- 縦軸：標準偏差（小さいほど安定）
-- 右下：鉄板・本命
-- 右上：波乱・ムラ馬
-- 左下：堅実ヒモ
-- 左上：消し・大穴
-- 的中率重視なら右下、本命党は右下重視！
-""")
-
-# ========== 上位馬（平均スコア>50のみ／根拠付き） ==========
+# ===== [T1] 上位馬（AvgZ>50）抽出 START =====
 topN = df_agg[df_agg['AvgZ'] > 50].sort_values('RankZ', ascending=False).head(6).copy()
+if len(topN) == 0:
+    st.warning("平均スコア50超の馬がいません。閾値なしの上位6頭を暫定表示します。")
+    topN = df_agg.sort_values('RankZ', ascending=False).head(6).copy()
+
 topN['印'] = ['◎','〇','▲','☆','△','△'][:len(topN)]
 st.subheader("上位馬（平均スコア>50のみ／根拠付き）")
 st.table(topN[['馬名','印','根拠']])
-
-if len(topN) == 0:
-    st.warning("平均スコア50超の馬がいません。")
-    st.stop()
+# ===== [T1] 上位馬（AvgZ>50）抽出 END =====
 
 with st.expander("▼『平均スコア』『安定度』の意味・基準を見る"):
     st.markdown("#### 平均スコア（AvgZ）")
@@ -382,17 +368,10 @@ with st.expander("▼『平均スコア』『安定度』の意味・基準を�
     ax2.set_ylabel("馬の数", fontproperties=jp_font)
     st.pyplot(fig2)
 
-    st.info(
-        "- **平均スコア**が高い＝「実力が高い」\n"
-        "- **安定度（標準偏差）**が小さい＝「ムラが少なく信頼できる」\n"
-        "- これらを両方見て、上位6頭や印の優先度を決めています"
-    )
-
 # ========== 展開ロケーション（全頭・馬番） ==========
 df_map = horses.copy()
 df_map['印'] = df_map['馬名'].map(dict(zip(topN['馬名'], topN['印'])))
 
-# --- 馬番の安全変換（全角→半角, 数値化, 欠損除去）---
 df_map['番'] = df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
 df_map['番'] = pd.to_numeric(df_map['番'], errors='coerce')
 df_map = df_map.dropna(subset=['番'])
@@ -407,14 +386,14 @@ colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
 for i, row in df_map.iterrows():
     x = row['番']
     y = ['逃げ','先行','差し','追込'].index(row['脚質']) if row['脚質'] in ['逃げ','先行','差し','追込'] else np.nan
-    if np.isnan(y): continue  # 脚質未入力はスキップ
+    if np.isnan(y): continue
     ax.scatter(x, y, color=colors.get(row['脚質'], 'gray'), s=200)
     label = f"{row['馬名']} {row['印'] if pd.notnull(row['印']) else ''}"
     ax.text(
-        x, y, label, 
+        x, y, label,
         ha='center', va='center', color='white', fontsize=9, weight='bold',
         bbox=dict(facecolor=colors.get(row['脚質'], 'gray'), alpha=0.7, boxstyle='round'),
-        fontproperties=jp_font  # ←コレが重要！
+        fontproperties=jp_font
     )
 
 ax.set_yticks([0,1,2,3])
@@ -459,20 +438,6 @@ st.markdown(
 )
 
 # --- 脚質ごとに該当馬（スコア順）を横並びで表示 ---
-out = ""
-for k in kakusitsu:
-    # 脚質ごとに該当馬（平均スコア順）
-    temp = df_map[df_map['脚質'] == k].copy()
-    if not temp.empty:
-        # df_aggにスコア（AvgZ）をJOIN
-        temp = temp.merge(df_agg[['馬名','AvgZ']], on='馬名', how='left')
-        temp = temp.sort_values('AvgZ', ascending=False)
-        names = "、".join(temp['馬名'].tolist())
-    else:
-        names = "該当馬なし"
-    out += f"<b>{k} {mark[k]}</b><br>{names}<br><br>"
-
-# --- 横並び（4列）っぽくするためカラムレイアウトで表示 ---
 cols = st.columns(4)
 for i, k in enumerate(kakusitsu):
     temp = df_map[df_map['脚質'] == k].copy()
@@ -484,19 +449,17 @@ for i, k in enumerate(kakusitsu):
         names = "該当馬なし"
     cols[i].markdown(f"**{k}　{mark[k]}**<br>{names}", unsafe_allow_html=True)
 
-
 # 印と脚質・血統情報を全頭にマージ
 印map = dict(zip(topN['馬名'], topN['印']))
 horses = horses.merge(df_agg[['馬名','AvgZ','Stdev']], on='馬名', how='left')
 horses['印'] = horses['馬名'].map(印map).fillna('')
 
-# 血統情報もくっつけておく（すでにhorsesに血統が入っていればこの行は不要）
+# 血統情報もマージ
 horses = horses.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'))
 
 # コメント列
 def ai_comment(row):
     base = ""
-    # ◎本命、〇対抗など印ごとに診断
     if row['印'] == '◎':
         base += "本命評価。"
         if row['Stdev'] <= 8:
@@ -522,19 +485,19 @@ def ai_comment(row):
         else:
             base += "展開次第で浮上も。"
     else:
-        if row['AvgZ'] >= 55 and row['Stdev'] < 13:
-            base += "実力十分。ヒモ穴候補。"
-        elif row['AvgZ'] < 45:
-            base += "実績からは厳しい。"
-        else:
-            base += "決定打に欠ける。"
-    # ムラ・波乱
-    if row['Stdev'] >= 18:
+        if pd.notna(row['AvgZ']) and pd.notna(row['Stdev']):
+            if row['AvgZ'] >= 55 and row['Stdev'] < 13:
+                base += "実力十分。ヒモ穴候補。"
+            elif row['AvgZ'] < 45:
+                base += "実績からは厳しい。"
+            else:
+                base += "決定打に欠ける。"
+
+    if pd.notna(row['Stdev']) and row['Stdev'] >= 18:
         base += "波乱含み。"
-    elif row['Stdev'] <= 8:
+    elif pd.notna(row['Stdev']) and row['Stdev'] <= 8:
         base += "非常に安定。"
 
-    # 血統キーワード判定
     bloodtxt = str(row.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
     bloodword = ""
     for k in keys:
@@ -544,7 +507,6 @@ def ai_comment(row):
     if bloodword:
         base += f"血統的にも注目（{bloodword}系統）。"
 
-    # 脚質コメント
     style = str(row.get('脚質','')).strip()
     if style == '逃げ':
         base += "ハナを奪えれば粘り込み十分。"
@@ -556,30 +518,21 @@ def ai_comment(row):
         base += "直線勝負の一撃に期待。"
     return base
 
-
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
-# ========== 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） ==========
-# レース名の列を推定（手元のExcelで違う場合は候補増やすか手動で指定してOK）
+# ===== [G1] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） START =====
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
 
 gr = df_score.copy()
-# 着順を数値化（"1", "1位" などを数値に）
 gr['着順'] = pd.to_numeric(gr['確定着順'], errors='coerce')
-
-# 対象はG1/G2/G3のみ（データは全角ローマ数字想定：GⅠ/GⅡ/GⅢ）
 gr = gr[gr['クラス名'].isin(['GⅠ','GⅡ','GⅢ'])].copy()
-# クラスごとの着順閾値
+
 thr_map = {'GⅠ': 5, 'GⅡ': 4, 'GⅢ': 3}
 gr['閾値'] = gr['クラス名'].map(thr_map)
-
-# 好走のみ抽出
 gr = gr[gr['着順'].notna() & (gr['着順'] <= gr['閾値'])].copy()
 
-# 日付フォーマット
 gr['日付'] = pd.to_datetime(gr['レース日'], errors='coerce').dt.strftime('%Y.%m.%d').fillna('日付不明')
 
-# 表示用に GⅠ→G1 などへ
 def g_to_ascii(g):
     return g.replace('Ⅰ','1').replace('Ⅱ','2').replace('Ⅲ','3')
 
@@ -589,23 +542,20 @@ def one_line(row):
     pos = int(row['着順']) if pd.notna(row['着順']) else row['確定着順']
     return f"{race}　{g}　{pos}着　{row['日付']}"
 
-# 馬ごとに最新順で並べたリストに
 gr = gr.sort_values('レース日', ascending=False)
 grade_highlights = gr.groupby('馬名').apply(
     lambda d: [one_line(r) for _, r in d.iterrows()]
 ).to_dict()
 
-# horses に列を追加（無い馬は「重賞経験なし」）
 def highlight_text(name):
     lines = grade_highlights.get(name, [])
     return "重賞経験なし" if len(lines) == 0 else "\n".join(lines)
 
 horses['重賞実績'] = horses['馬名'].apply(highlight_text)
+# ===== [G1] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） END =====
 
 st.subheader("■ 全頭AI診断コメント")
-st.dataframe(
-    horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev','重賞実績']],
-)
+st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev','重賞実績']])
 
 with st.expander("各馬の重賞好走履歴（クリックで展開）", expanded=False):
     for _, row in horses[['馬名']].iterrows():
@@ -618,8 +568,8 @@ with st.expander("各馬の重賞好走履歴（クリックで展開）", expan
             for line in grade_highlights[name]:
                 st.write("　" + line)
 
-# ========== 買い目生成＆資金配分 ==========
-h1 = topN.iloc[0]['馬名']
+# ===== [B1] 買い目生成＆資金配分 START =====
+h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
 h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
 
 symbols = topN['印'].tolist()
@@ -634,7 +584,6 @@ scenario_map = {
     '余裕': ['ワイド','三連複','三連単']
 }
 
-# --- まず配分計算（この上で win_each/place_each を使わない）
 main_share = 0.5
 pur1 = int(round((total_budget * main_share * 1/4)  / 100) * 100)
 pur2 = int(round((total_budget * main_share * 3/4)  / 100) * 100)
@@ -646,12 +595,12 @@ place_each = int(round((pur2 / 2)  / 100) * 100)
 st.subheader("■ 資金配分")
 st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円")
 
-# --- bets をここで1回だけ作る
 bets = []
-bets += [
-    {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
-    {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
-]
+if h1 is not None:
+    bets += [
+        {'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
+        {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each},
+    ]
 if h2 is not None:
     bets += [
         {'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
@@ -664,7 +613,7 @@ if scenario == '通常':
     with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
         choice = st.radio("購入券種", options=three, index=1)
         st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-    if len(others_names) > 0:
+    if len(others_names) > 0 and h1 is not None:
         share_each = int(round(rem / len(others_names) / 100) * 100)
         for nm, mk in zip(others_names, others_symbols):
             bets.append({'券種': choice, '印': f'◎–{mk}', '馬': h1, '相手': nm, '金額': share_each})
@@ -676,7 +625,7 @@ elif scenario == 'ちょい余裕':
     n_w = len(others_names)
     n_t = len(list(combinations(others_names, 2)))
     total_line = n_w + n_t
-    if total_line > 0:
+    if total_line > 0 and h1 is not None:
         share_each = int(round(rem / total_line / 100) * 100)
         for nm, mk in zip(others_names, others_symbols):
             bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each})
@@ -693,7 +642,7 @@ elif scenario == '余裕':
     combo3 = [(s,t) for s in second_opts for t in others_names if t!=s]
     n_tri1  = len(combo3)
     total_line = n_w + n_tri3 + n_tri1
-    if total_line > 0:
+    if total_line > 0 and h1 is not None:
         share_each = int(round(rem / total_line / 100) * 100)
         for nm, mk in zip(others_names, others_symbols):
             bets.append({'券種':'ワイド','印':f'◎–{mk}','馬':h1,'相手':nm,'金額':share_each})
@@ -705,20 +654,23 @@ elif scenario == '余裕':
         st.info("相手が足りないため連系はスキップ。")
 
 df_bets = pd.DataFrame(bets)
-df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x>0 else "")
-# ---------- タブで券種ごとに表示 ----------
-unique_types = df_bets['券種'].unique().tolist()
-tabs = st.tabs(['サマリー'] + unique_types)
-for i, typ in enumerate([''] + unique_types):
-    with tabs[i]:
-        if i == 0:
-            st.subheader("■ 最終買い目一覧（全券種まとめ）")
-            st.table(df_bets[['券種','印','馬','相手','金額']])
-        else:
-            df_this = df_bets[df_bets['券種'] == typ]
-            if len(df_this) == 0:
-                st.info(f"{typ} の買い目はありません。")
-            else:
-                st.subheader(f"{typ} 買い目一覧")
-                st.table(df_this[['券種','印','馬','相手','金額']])
+df_bets['金額'] = df_bets['金額'].map(lambda x: f"{x:,}円" if x and x>0 else "")
 
+unique_types = df_bets['券種'].unique().tolist() if len(df_bets)>0 else []
+tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types)>0 else st.tabs(['サマリー'])
+with tabs[0]:
+    st.subheader("■ 最終買い目一覧（全券種まとめ）")
+    if len(df_bets)==0:
+        st.info("現在、買い目はありません。")
+    else:
+        st.table(df_bets[['券種','印','馬','相手','金額']])
+
+for i, typ in enumerate(unique_types, start=1):
+    with tabs[i]:
+        df_this = df_bets[df_bets['券種'] == typ]
+        if len(df_this) == 0:
+            st.info(f"{typ} の買い目はありません。")
+        else:
+            st.subheader(f"{typ} 買い目一覧")
+            st.table(df_this[['券種','印','馬','相手','金額']])
+# ===== [B1] 買い目生成＆資金配分 END =====
