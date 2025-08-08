@@ -73,34 +73,74 @@ attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
 # --- 2枚目シートから芝の率＋ベストタイム列を自動検出 ---
-name_col = sheet2.columns[2]  # 馬名の列（あなたのファイルでは3列目）
+# --- 2枚目シートから芝の率＋ベストタイム列を自動検出（頑丈版） ---
+# 前処理：列名の全角/半角・空白・カッコ・% を正規化してから探す
+def norm_col(s: str) -> str:
+    s = str(s).strip()
+    s = re.sub(r'\s+', '', s)  # 空白除去
+    s = s.replace('（', '(').replace('）', ')').replace('％', '%')
+    s = s.replace('ﾍﾞｽﾄ', 'ベスト').replace('ﾀｲﾑ', 'タイム')
+    return s
+
+col_map = {orig: norm_col(orig) for orig in sheet2.columns}
 
 def find_col(patterns):
-    for pat in patterns:
-        for c in sheet2.columns:
-            if re.search(pat, str(c)):
-                return c
+    for orig, normed in col_map.items():
+        for pat in patterns:
+            if re.search(pat, normed, flags=re.I):
+                return orig
     return None
 
-col_win  = find_col([r'勝率.*芝', r'芝.*勝率', r'^勝率$'])
-col_quin = find_col([r'連対率.*芝', r'芝.*連対率', r'^連対率$'])
-col_plc  = find_col([r'複勝率.*芝', r'芝.*複勝率', r'^複勝率$'])
-col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ'])
+# 馬名列：見つからなければ3列目をフォールバック
+name_col = find_col([r'馬名|名前|出走馬']) or sheet2.columns[2]
 
-# 必須列が見つからない場合は列名を教えて（or ここに手動指定）
+col_win  = find_col([r'勝率.*芝', r'芝.*勝率', r'^勝率(\(芝\))?$'])
+col_quin = find_col([r'連対率.*芝', r'芝.*連対率', r'^連対率(\(芝\))?$'])
+col_plc  = find_col([r'複勝率.*芝', r'芝.*複勝率', r'^複勝率(\(芝\))?$'])
+col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ', r'タイム.*(最速|ベスト)'])
+
+# 見つからなかったら手動選択に切り替え（KeyError防止）
+need = [('勝率(芝)', col_win), ('連対率(芝)', col_quin), ('複勝率(芝)', col_plc), ('ベストタイム', col_bt)]
+if any(c is None for _, c in need):
+    st.warning("2枚目シートの列自動検出に失敗。手動で選んでください。")
+    options = list(sheet2.columns)
+    if col_win  is None:  col_win  = st.selectbox("勝率(芝)の列", options)
+    if col_quin is None:  col_quin = st.selectbox("連対率(芝)の列", options)
+    if col_plc  is None:  col_plc  = st.selectbox("複勝率(芝)の列", options)
+    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options)
+
+# 必要列を抽出
 rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
 rate.columns = ['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム']
 
-# 数値化とタイム秒化
+# %や0〜1表記に耐えるクリーニング
 for c in ['勝率_芝','連対率_芝','複勝率_芝']:
+    rate[c] = (
+        rate[c].astype(str)
+               .str.replace('%','', regex=False)
+               .str.replace('％','', regex=False)
+    )
     rate[c] = pd.to_numeric(rate[c], errors='coerce')
 
+# もし 0〜1 の比率で入ってたら 0〜100 に換算
+max_val = pd.concat([rate['勝率_芝'], rate['連対率_芝'], rate['複勝率_芝']], axis=1).max().max()
+if pd.notna(max_val) and max_val <= 1.0:
+    for c in ['勝率_芝','連対率_芝','複勝率_芝']:
+        rate[c] = rate[c] * 100.0
+
+# タイムを秒に統一（1:07.3 / 1.07.3 / 67.3 すべてOK）
 def parse_time_to_sec(x):
-    s = str(x)
-    m = re.match(r'^\s*(\d+)[\.\:](\d+)[\.\:](\d+)\s*$', s)  # 例: 1.07.3 → 1分07秒3
+    s = str(x).strip()
+    # 1:07.34 → 分:秒.小数
+    m = re.match(r'^(\d+):(\d+)\.(\d+)$', s)
+    if m:
+        return int(m.group(1))*60 + int(m.group(2)) + float('0.'+m.group(3))
+    # 1.07.3 / 1:07:3 → 分.秒.1/10
+    m = re.match(r'^(\d+)[\.\:](\d+)[\.\:](\d+)$', s)
     if m:
         return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
-    return pd.to_numeric(s, errors='coerce')  # 既に秒ならそのまま
+    # 67.3 → 秒
+    return pd.to_numeric(s, errors='coerce')
 
 rate['ベストタイム秒'] = rate['ベストタイム'].apply(parse_time_to_sec)
 
