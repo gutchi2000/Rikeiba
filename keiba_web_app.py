@@ -559,9 +559,64 @@ def ai_comment(row):
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
+# ========== 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） ==========
+# レース名の列を推定（手元のExcelで違う場合は候補増やすか手動で指定してOK）
+race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
+
+gr = df_score.copy()
+# 着順を数値化（"1", "1位" などを数値に）
+gr['着順'] = pd.to_numeric(gr['確定着順'], errors='coerce')
+
+# 対象はG1/G2/G3のみ（データは全角ローマ数字想定：GⅠ/GⅡ/GⅢ）
+gr = gr[gr['クラス名'].isin(['GⅠ','GⅡ','GⅢ'])].copy()
+# クラスごとの着順閾値
+thr_map = {'GⅠ': 5, 'GⅡ': 4, 'GⅢ': 3}
+gr['閾値'] = gr['クラス名'].map(thr_map)
+
+# 好走のみ抽出
+gr = gr[gr['着順'].notna() & (gr['着順'] <= gr['閾値'])].copy()
+
+# 日付フォーマット
+gr['日付'] = pd.to_datetime(gr['レース日'], errors='coerce').dt.strftime('%Y.%m.%d').fillna('日付不明')
+
+# 表示用に GⅠ→G1 などへ
+def g_to_ascii(g):
+    return g.replace('Ⅰ','1').replace('Ⅱ','2').replace('Ⅲ','3')
+
+def one_line(row):
+    g = g_to_ascii(str(row['クラス名']))
+    race = (row[race_col] if race_col else 'レース名不明')
+    pos = int(row['着順']) if pd.notna(row['着順']) else row['確定着順']
+    return f"{race}　{g}　{pos}着　{row['日付']}"
+
+# 馬ごとに最新順で並べたリストに
+gr = gr.sort_values('レース日', ascending=False)
+grade_highlights = gr.groupby('馬名').apply(
+    lambda d: [one_line(r) for _, r in d.iterrows()]
+).to_dict()
+
+# horses に列を追加（無い馬は「重賞経験なし」）
+def highlight_text(name):
+    lines = grade_highlights.get(name, [])
+    return "重賞経験なし" if len(lines) == 0 else "\n".join(lines)
+
+horses['重賞実績'] = horses['馬名'].apply(highlight_text)
+
 st.subheader("■ 全頭AI診断コメント")
-# 必要なら表示項目を増減してください
-st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev']])
+st.dataframe(
+    horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev','重賞実績']],
+)
+
+with st.expander("各馬の重賞好走履歴（クリックで展開）", expanded=False):
+    for _, row in horses[['馬名']].iterrows():
+        name = row['馬名']
+        st.markdown(f"**{name}**")
+        txt = grade_highlights.get(name, None)
+        if not txt:
+            st.write("　重賞経験なし")
+        else:
+            for line in grade_highlights[name]:
+                st.write("　" + line)
 
 # ========== 買い目生成＆資金配分 ==========
 h1 = topN.iloc[0]['馬名']
