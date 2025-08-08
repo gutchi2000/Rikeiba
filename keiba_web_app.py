@@ -520,80 +520,89 @@ def ai_comment(row):
 
 horses['短評'] = horses.apply(ai_comment, axis=1)
 
-# ===== [G] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） START =====
-# このExcelでは列名が『クラス名』『確定着順』『レース日』『レース名』
-race_col = 'レース名'
+# ===== [G] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3 + 上がり3F） START =====
+# Excelの列名を拾う
+race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
+ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上3F','上３F','上り3F'] if c in df_score.columns), None)
 
 def normalize_grade(x: str) -> str:
-    """ 'G 3' / 'Ｇ３' / 'GⅢ' / 'GIII' / 'JpnIII' などを G1/G2/G3 に統一 """
+    """ 'G 3' / 'Ｇ３' / 'GⅢ' / 'GIII' / 'JpnIII' → G1/G2/G3 に統一 """
     s = str(x).strip().upper()
-    # 全角→半角
     trans = str.maketrans('Ｇ１２３４５６７８９０　', 'G1234567890 ')
     s = s.translate(trans)
-    # 余分な空白を削除
-    s = re.sub(r'\s+', '', s)          # 例: 'G 3' → 'G3'
-    # ローマ数字→英字
-    s = s.replace('Ⅲ', 'III').replace('Ⅱ', 'II').replace('Ⅰ', 'I')
-    # Jpn をGに
-    s = re.sub(r'JPNIII', 'GIII', s)
-    s = re.sub(r'JPNII',  'GII',  s)
-    s = re.sub(r'JPNI',   'GI',   s)
-    # GI/GII/GIII → G1/G2/G3
-    s = s.replace('GIII', 'G3').replace('GII', 'G2').replace('GI', 'G1')
-    # 既に G1/G2/G3 ならそのまま。OP(L) 等は対象外
-    return s if s in {'G1','G2','G3'} else s
+    s = re.sub(r'\s+', '', s)               # 'G 3' → 'G3'
+    s = s.replace('Ⅲ','III').replace('Ⅱ','II').replace('Ⅰ','I')
+    s = re.sub(r'JPNIII','GIII',s); s = re.sub(r'JPNII','GII',s); s = re.sub(r'JPNI','GI',s)
+    s = s.replace('GIII','G3').replace('GII','G2').replace('GI','G1')
+    return s
 
 def parse_pos(x) -> float:
-    """ '1', '1着', '1位' などから先頭の数字だけを取る """
     if pd.isna(x): return np.nan
     m = re.search(r'\d+', str(x))
     return float(m.group()) if m else np.nan
 
 gr = df_score.copy()
-gr['GradeN']   = gr['クラス名'].apply(normalize_grade)
-gr['着順num']  = gr['確定着順'].apply(parse_pos)
+gr['GradeN']  = gr['クラス名'].apply(normalize_grade)
+gr['着順num'] = gr['確定着順'].apply(parse_pos)
 
-# G1/G2/G3 のみ対象
+# G1/G2/G3のみ
 gr = gr[gr['GradeN'].isin(['G1','G2','G3'])].copy()
 
-# 閾値マップ
+# 閾値
 thr_map = {'G1':5, 'G2':4, 'G3':3}
 gr['閾値'] = gr['GradeN'].map(thr_map)
 
 # 好走のみ
 gr = gr[gr['着順num'].notna() & (gr['着順num'] <= gr['閾値'])].copy()
 
-# 日付整形（2025.7.6 などもOK）
+# 日付整形
 gr['_date']     = pd.to_datetime(gr['レース日'], errors='coerce')
 gr['_date_str'] = gr['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 
 def one_line(row):
-    race = row[race_col] if pd.notna(row.get(race_col)) else 'レース名不明'
-    return f"{race}　{row['GradeN']}　{int(row['着順num'])}着　{row['_date_str']}"
+    race = row[race_col] if (race_col and pd.notna(row.get(race_col))) else 'レース名不明'
+    agtxt = ""
+    if ag_col and pd.notna(row.get(ag_col)):
+        try:
+            agtxt = f"　上がり3F {float(row[ag_col]):.1f}"
+        except:
+            agtxt = f"　上がり3F {row[ag_col]}"
+    return f"{race}　{row['GradeN']}　{int(row['着順num'])}着　{row['_date_str']}{agtxt}"
 
-gr = gr.sort_values('_date', ascending=False)
+gr = gr.sort_values(['馬名','_date'], ascending=[True, False])
+
+# 馬名→行の文字列リスト
 grade_highlights = gr.groupby('馬名').apply(lambda d: [one_line(r) for _, r in d.iterrows()]).to_dict()
 
+# horses の一列（概要用。テキストで一気読みしたい人向け）
 def highlight_text(name):
     lines = grade_highlights.get(name, [])
     return "重賞経験なし" if len(lines) == 0 else "\n".join(lines)
 
 horses['重賞実績'] = horses['馬名'].apply(highlight_text)
-# ===== [G] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3） END =====
 
-st.subheader("■ 全頭AI診断コメント")
-st.dataframe(horses[['馬名','印','脚質','血統','短評','AvgZ','Stdev','重賞実績']])
-
-with st.expander("各馬の重賞好走履歴（クリックで展開）", expanded=False):
-    for _, row in horses[['馬名']].iterrows():
-        name = row['馬名']
-        st.markdown(f"**{name}**")
-        txt = grade_highlights.get(name, None)
-        if not txt:
-            st.write("　重賞経験なし")
+# ---- 見やすさ重視ビュー：各馬ごとに小テーブルで表示（馬名とレース名が縦にだらだら並ばない） ----
+st.subheader("■ 重賞好走ハイライト（上がり3F付き）")
+for name in horses['馬名']:
+    with st.expander(f"{name}", expanded=False):
+        d = gr[gr['馬名'] == name].copy()
+        if d.empty:
+            st.write("重賞経験なし")
         else:
-            for line in grade_highlights[name]:
-                st.write("　" + line)
+            cols = ['_date_str','GradeN','着順num']
+            if race_col: cols.append(race_col)
+            if ag_col:   cols.append(ag_col)
+            t = d[cols].copy()
+            # 表示名
+            rename_map = {'_date_str':'日付','GradeN':'格','着順num':'着'}
+            if race_col: rename_map[race_col] = 'レース'
+            if ag_col:   rename_map[ag_col]   = '上がり3F'
+            t = t.rename(columns=rename_map)
+            # 体裁
+            t['着'] = t['着'].astype(int)
+            order = ['日付','格','着','レース'] + (['上がり3F'] if ag_col else [])
+            st.table(t[order])
+# ===== [G] 重賞好走履歴（G1:1-5 / G2:1-4 / G3:1-3 + 上がり3F） END =====
 
 # ===== [B1] 買い目生成＆資金配分 START =====
 h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
