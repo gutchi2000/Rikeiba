@@ -1120,6 +1120,94 @@ elif scenario == '余裕':
     else:
         st.info("連系はスキップ（相手不足 or 予算不足）")
 
+# === ハーフケリーによる最終配分（任意） ===
+st.subheader("ハーフケリー配分（任意）")
+use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
+
+if use_kelly and len(_df) > 0:
+    # 1) 的中確率qを各券種で計算（MC結果を使用）
+    idx_of = {name: i for i, name in enumerate(name_list)}  # name_listは既出
+
+    def pair_prob(i, j, kind: str) -> float:
+        # rank_idx は (mc_iters, n) の着順配列（既出）
+        if kind == 'ワイド':
+            top3 = rank_idx[:, :3]
+            ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
+            return (ci & cj).mean()
+        if kind == '馬連':
+            return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
+                    ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
+        if kind == '馬単':
+            return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
+        return np.nan
+
+    q_list = []
+    for _, r in _df.iterrows():
+        typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
+        q = np.nan
+        try:
+            if typ == '単勝':
+                q = float(p_win[idx_of[h]])           # p_win は0〜1
+            elif typ == '複勝':
+                q = float(p_top3[idx_of[h]])          # p_top3 は0〜1
+            elif typ in ('ワイド','馬連','馬単') and a:
+                i = idx_of[h]; j = idx_of[a]
+                q = pair_prob(i, j, typ)
+        except KeyError:
+            q = np.nan
+        q_list.append(q)
+
+    _df['的中確率q'] = q_list
+
+    # 2) オッズ入力UI（小数「倍」：例 3.5=100円→350円）
+    if '想定オッズ(倍)' not in _df.columns:
+        _df['想定オッズ(倍)'] = np.nan
+
+    st.caption("※ ワイド/連系は“期待払い戻し/100円”を100で割った値を入れてOK（例 420円→4.2）")
+    _df = st.data_editor(
+        _df,
+        column_config={
+            '想定オッズ(倍)': st.column_config.NumberColumn('想定オッズ(倍)', min_value=1.01, step=0.01),
+        },
+        use_container_width=True,
+        num_rows='dynamic',
+        disabled=['券種','印','馬','相手','金額','的中確率q']  # 金額はここで一旦無効化して後で上書き
+    )
+
+    # 3) f* を計算し、ハーフケリーで賭け額を算出
+    o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
+    q = pd.to_numeric(_df['的中確率q'], errors='coerce')
+
+    # f* = (q*o - 1)/(o - 1) の正の部分。負なら0。
+    f_star = (q * o - 1) / (o - 1)
+    f_star = f_star.where((o > 1.01) & q.notna(), np.nan)
+    f_star = f_star.clip(lower=0).fillna(0.0)
+
+    # 総予算に対してハーフケリー
+    bankroll = float(total_budget)
+    stake_raw = bankroll * 0.5 * f_star
+
+    # 0円 or NaN を除外しつつ、合計が予算を超えたら比例スケール
+    total_stake = float(stake_raw.sum())
+    if total_stake > bankroll and total_stake > 0:
+        stake_raw *= bankroll / total_stake
+
+    # 最小賭け単位で丸め
+    stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
+
+    # 余りを上から順に配分（min_unit刻み）
+    rem_k = int(bankroll - stake_rounded.sum())
+    i = 0
+    while rem_k >= int(min_unit) and i < len(stake_rounded):
+        stake_rounded[i] += int(min_unit)
+        rem_k -= int(min_unit)
+        i += 1
+
+    # 4) 最終「金額」をハーフケリー結果で上書き
+    _df['金額'] = stake_rounded.map(lambda x: f"{int(x):,}円" if x > 0 else "")
+
+# （ここから下は既存の「タブ表示」ロジックをそのまま継続）
+
 # 合計チェック & 最終表示
 _df = pd.DataFrame(bets)
 spent = int(_df['金額'].fillna(0).replace('',0).sum())
