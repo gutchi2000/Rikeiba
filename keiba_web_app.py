@@ -473,7 +473,7 @@ def calc_score(r):
     gnorm = normalize_grade_text(r.get('クラス名'))
     grade_point = grade_bonus if gnorm in ['G1','G2','G3'] else 0
 
-        agari_bonus = 0
+    agari_bonus = 0
     try:
         ao = int(r.get('上3F順位', np.nan))
         if   ao == 1: agari_bonus = agari1_bonus
