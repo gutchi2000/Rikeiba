@@ -1133,39 +1133,61 @@ st.caption("※ 対応：単勝/複勝/ワイド/馬連/馬単（ほかは0円�
 use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
 
 if use_kelly and len(_df) > 0:
-    # 1) 的中確率qを各券種で計算（MC結果を使用）
-    idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
+   # 1) 的中確率qを各券種で計算（MC結果を使用）
+idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
 
-    def pair_prob(i, j, kind: str) -> float:
-        # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
-        if kind == 'ワイド':
-            top3 = rank_idx[:, :3]
-            ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
-            return (ci & cj).mean()
-        if kind == '馬連':
-            return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
-                    ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
-        if kind == '馬単':
-            return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
-        return np.nan
+def pair_prob(i, j, kind: str) -> float:
+    # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
+    if kind == 'ワイド':
+        top3 = rank_idx[:, :3]
+        ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
+        return (ci & cj).mean()
+    if kind == '馬連':
+        return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
+                ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
+    if kind == '馬単':
+        return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
+    return np.nan
 
-    q_list = []
-    for _, r in _df.iterrows():
-        typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
+def trio_prob(i, j, k) -> float:
+    # 三連複：i/j/k が3着内に「順不同」で全員入る
+    top3 = rank_idx[:, :3]
+    ci = np.any(top3 == i, axis=1)
+    cj = np.any(top3 == j, axis=1)
+    ck = np.any(top3 == k, axis=1)
+    return (ci & cj & ck).mean()
+
+def trifecta_prob(i, j, k) -> float:
+    # 三連単：i→j→k の完全一致
+    return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
+
+q_list = []
+for _, r in _df.iterrows():
+    typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
+    q = np.nan
+    try:
+        if typ == '単勝':
+            q = float(p_win[idx_of[h]])           # 0〜1
+        elif typ == '複勝':
+            q = float(p_top3[idx_of[h]])          # 0〜1
+        elif typ in ('ワイド','馬連','馬単') and a:
+            i = idx_of[h]; j = idx_of[a]
+            q = pair_prob(i, j, typ)
+        elif typ == '三連複' and a:
+            parts = [p.strip() for p in a.split('／') if p.strip()]
+            if len(parts) >= 2:
+                i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                q = trio_prob(i, j, k)
+        elif typ in ('三連単','三連単フォーメーション') and a:
+            parts = [p.strip() for p in a.split('／') if p.strip()]
+            if len(parts) >= 2:
+                i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                q = trifecta_prob(i, j, k)
+    except Exception:
         q = np.nan
-        try:
-            if typ == '単勝':
-                q = float(p_win[idx_of[h]])           # p_win は0〜1
-            elif typ == '複勝':
-                q = float(p_top3[idx_of[h]])          # p_top3 は0〜1
-            elif typ in ('ワイド','馬連','馬単') and a:
-                i = idx_of[h]; j = idx_of[a]
-                q = pair_prob(i, j, typ)
-        except Exception:
-            q = np.nan
-        q_list.append(q)
+    q_list.append(q)
 
-    _df['的中確率q'] = q_list
+_df['的中確率q'] = q_list
 
     # 2) オッズ入力UI（小数「倍」：例 3.5=100円→350円）
     if '想定オッズ(倍)' not in _df.columns:
