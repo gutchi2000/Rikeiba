@@ -529,19 +529,27 @@ points = alt.Chart(df_agg).mark_circle(size=100).encode(
     y=alt.Y('WStd:Q', title='加重標準偏差（小さいほど安定）'),
     tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts']
 )
+
+# ラベルだけ白
 labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='white').encode(
     x='FinalZ:Q', y='WStd:Q', text='馬名:N'
 )
-vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
-hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y='y:Q')
 
-st.altair_chart(
-    (points + labels + vline + hline +
-     alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold')
-       .encode(x='FinalZ:Q', y='WStd:Q', text='label:N')
-    ).properties(width=700, height=420).interactive(),
-    use_container_width=True
-)
+vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
+hline = alt.Chart(pd.DataFrame({'y':[df_agg["WStd"].mean()]})
+).mark_rule(color='gray').encode(y='y:Q')
+
+chart = (points + labels + vline + hline +
+         alt.Chart(pd.DataFrame([
+             {'FinalZ':70,'WStd':df_agg['WStd'].mean(),'label':'鉄板・本命'}
+         ])).mark_text(fontSize=14, fontWeight='bold', color='black')
+           .encode(x='FinalZ:Q', y='WStd:Q', text='label:N')
+        ).properties(width=700, height=420).interactive()
+
+# ★ ここで axis の色は触らない（=黒のまま）
+# chart = chart.configure_axis(labelColor='white', titleColor='white')  ←外す
+
+st.altair_chart(chart, use_container_width=True)
 
 # ===== 上位馬抽出（最終Z基準） =====
 topN = df_agg.sort_values('FinalZ', ascending=False).head(6).copy()
