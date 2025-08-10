@@ -529,7 +529,7 @@ points = alt.Chart(df_agg).mark_circle(size=100).encode(
     y=alt.Y('WStd:Q', title='加重標準偏差（小さいほど安定）'),
     tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts']
 )
-labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10).encode(
+labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='white').encode(
     x='FinalZ:Q', y='WStd:Q', text='馬名:N'
 )
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
