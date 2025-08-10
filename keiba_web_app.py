@@ -515,39 +515,58 @@ p_top3 = top3_counts / mc_iters
 df_agg['勝率%_MC']   = (p_win  * 100).round(2)
 df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
 
-# ===== 可視化 =====
-avg_st = df_agg['WStd'].mean()
-quad_labels = pd.DataFrame([
-    {'FinalZ':70, 'WStd': avg_st - (avg_st-df_agg['WStd'].min())/1.5, 'label':'鉄板・本命'},
-    {'FinalZ':70, 'WStd': avg_st + (df_agg['WStd'].max()-avg_st)/2, 'label':'波乱・ムラ馬'},
-    {'FinalZ':30, 'WStd': avg_st - (avg_st-df_agg['WStd'].min())/1.5, 'label':'堅実ヒモ'},
-    {'FinalZ':30, 'WStd': avg_st + (df_agg['WStd'].max()-avg_st)/2, 'label':'消し・大穴'},
-])
+# ===== 可視化（４象限＋白文字ラベル） =====
+avg_st = float(df_agg['WStd'].mean())
+x_mid = 50.0
+y_mid = avg_st
 
-points = alt.Chart(df_agg).mark_circle(size=100).encode(
-    x=alt.X('FinalZ:Q', title='最終偏差値'),
-    y=alt.Y('WStd:Q', title='加重標準偏差（小さいほど安定）'),
-    tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts']
+x_min, x_max = float(df_agg['FinalZ'].min()), float(df_agg['FinalZ'].max())
+y_min, y_max = float(df_agg['WStd'].min()),  float(df_agg['WStd'].max())
+
+# 薄い背景で４象限をハイライト
+quad_rect = pd.DataFrame([
+    {'x1': x_min, 'x2': x_mid, 'y1': y_mid, 'y2': y_max},  # 左上
+    {'x1': x_mid, 'x2': x_max, 'y1': y_mid, 'y2': y_max},  # 右上
+    {'x1': x_min, 'x2': x_mid, 'y1': y_min, 'y2': y_mid},  # 左下
+    {'x1': x_mid, 'x2': x_max, 'y1': y_min, 'y2': y_mid},  # 右下
+])
+rect = alt.Chart(quad_rect).mark_rect(opacity=0.07).encode(
+    x='x1:Q', x2='x2:Q', y='y1:Q', y2='y2:Q'
 )
 
-# ラベルだけ白
-labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='white').encode(
+# 散布点
+points = alt.Chart(df_agg).mark_circle(size=100).encode(
+    x=alt.X('FinalZ:Q', title='最終偏差値'),
+    y=alt.Y('WStd:Q',  title='加重標準偏差（小さいほど安定）'),
+    tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts','勝率%_MC','複勝率%_MC']
+)
+
+# 馬名ラベル（白文字＋黒縁で視認性UP）
+labels = alt.Chart(df_agg).mark_text(
+    dx=6, dy=-6, fontSize=10, color='white',
+    stroke='black', strokeWidth=2
+).encode(
     x='FinalZ:Q', y='WStd:Q', text='馬名:N'
 )
 
-vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
-hline = alt.Chart(pd.DataFrame({'y':[df_agg["WStd"].mean()]})
-).mark_rule(color='gray').encode(y='y:Q')
+# 基準線
+vline = alt.Chart(pd.DataFrame({'x':[x_mid]})).mark_rule(color='gray').encode(x='x:Q')
+hline = alt.Chart(pd.DataFrame({'y':[y_mid]})).mark_rule(color='gray').encode(y='y:Q')
 
-chart = (points + labels + vline + hline +
-         alt.Chart(pd.DataFrame([
-             {'FinalZ':70,'WStd':df_agg['WStd'].mean(),'label':'鉄板・本命'}
-         ])).mark_text(fontSize=14, fontWeight='bold', color='black')
-           .encode(x='FinalZ:Q', y='WStd:Q', text='label:N')
-        ).properties(width=700, height=420).interactive()
+# ４象限ラベル（白文字＋黒縁）
+quad_text = alt.Chart(pd.DataFrame([
+    {'label':'消し・大穴',   'x': (x_min + x_mid)/2, 'y': (y_mid + y_max)/2},  # 左上
+    {'label':'波乱・ムラ馬', 'x': (x_mid + x_max)/2, 'y': (y_mid + y_max)/2},  # 右上
+    {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + y_mid)/2},  # 左下
+    {'label':'鉄板・本命',   'x': (x_mid + x_max)/2, 'y': (y_min + y_mid)/2},  # 右下
+])).mark_text(
+    fontSize=14, fontWeight='bold', color='white',
+    stroke='black', strokeWidth=3
+).encode(x='x:Q', y='y:Q', text='label:N')
 
-# ★ ここで axis の色は触らない（=黒のまま）
-# chart = chart.configure_axis(labelColor='white', titleColor='white')  ←外す
+chart = (rect + points + labels + vline + hline + quad_text).properties(
+    width=700, height=420
+).interactive()
 
 st.altair_chart(chart, use_container_width=True)
 
