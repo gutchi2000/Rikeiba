@@ -800,44 +800,44 @@ df_map['番'] = pd.to_numeric(
 df_map = df_map.dropna(subset=['番']).astype({'番': int})
 df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
 
-# === サマリー ===
-st.subheader("現状サマリー")
+# ===== 現状サマリー（表） =====
+st.subheader("現状サマリー（表）")
 
-# ペース内訳
-tot = sum(pace_counter.values())
-if tot > 0:
-    pb = " / ".join([f"{k}:{pace_counter[k]/tot*100:.1f}%" 
-                     for k in ['ハイペース','ミドルペース','ややスローペース','スローペース']])
-else:
-    pb = "N/A"
+# 想定ペース＋脚質分布
+style_order = ['逃げ','先行','差し','追込']
+style_counts = (
+    df_map['脚質']
+    .value_counts()
+    .reindex(style_order)
+    .fillna(0)
+    .astype(int)
+)
+total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
+style_pct = (style_counts / total_heads * 100).round(1)
 
-# 脚質分布（手入力＋推定反映後）
-style_cnt = (df_agg['脚質']
-             .value_counts()
-             .reindex(['逃げ','先行','差し','追込'])
-             .fillna(0).astype(int).to_dict())
+pace_summary = pd.DataFrame([{
+    '想定ペース': pace_type,
+    '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
+    '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
+    '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
+    '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
+}])
+st.table(pace_summary)
 
-st.markdown(
-    f"**想定ペース**：**{pace_type}** 　｜　**ペース出現比**：{pb} 　｜　"
-    f"**脚質分布**：逃げ {style_cnt.get('逃げ',0)} / 先行 {style_cnt.get('先行',0)} / "
-    f"差し {style_cnt.get('差し',0)} / 追込 {style_cnt.get('追込',0)}"
+# 印つき上位馬テーブル（数値は見やすく丸め）
+pick_df = (
+    topN[['印','馬名']]
+    .merge(
+        df_agg[['馬名','FinalZ','WStd','勝率%_MC','複勝率%_MC']],
+        on='馬名', how='left'
+    )
+    .rename(columns={'勝率%_MC':'勝率(%)','複勝率%_MC':'複勝率(%)'})
 )
 
-# 上位の要点（◎〜△を1行サマリ）
-if len(topN) > 0:
-    lines = []
-    for _, r in topN.iterrows():
-        win = r['勝率%_MC'] if '勝率%_MC' in r else np.nan
-        plc = r['複勝率%_MC'] if '複勝率%_MC' in r else np.nan
-        lines.append(
-            f"{r['印']} **{r['馬名']}** — FinalZ {r['FinalZ']:.1f}, "
-            f"WStd {r['WStd']:.1f}"
-            + (f", 勝率 {win:.1f}%" if pd.notna(win) else "")
-            + (f", 複勝率 {plc:.1f}%" if pd.notna(plc) else "")
-        )
-    st.markdown("\n\n".join(lines))
-else:
-    st.info("上位抽出が空です。入力・列マッピングをご確認ください。")
+for c in ['FinalZ','WStd','勝率(%)','複勝率(%)']:
+    pick_df[c] = pick_df[c].map(lambda x: None if pd.isna(x) else round(float(x), 1))
+
+st.table(pick_df[['印','馬名','FinalZ','WStd','勝率(%)','複勝率(%)']])
 
 # ===== 展開ロケーション（視覚） =====
 df_map_show = df_map.sort_values(['番'])
