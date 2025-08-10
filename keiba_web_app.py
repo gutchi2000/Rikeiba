@@ -320,6 +320,28 @@ for c in ['頭数','確定着順','枠','番','斤量','馬体重','上3F順位'
 if '走破タイム秒' in df_score: df_score['走破タイム秒'] = df_score['走破タイム秒'].apply(_parse_time_to_sec)
 if '上がり3Fタイム' in df_score: df_score['上がり3Fタイム'] = df_score['上がり3Fタイム'].apply(_parse_time_to_sec)
 
+# --- 通過4角 / 頭数のクレンジング（0や範囲外→NaN、文字→数値） ---
+# 頭数: 文字混じり（例: "15頭"）も数字だけ抽出
+if '頭数' in df_score.columns:
+    df_score['頭数'] = (
+        df_score['頭数'].astype(str).str.extract(r'(\d+)')[0]
+        .apply(pd.to_numeric, errors='coerce')
+    )
+
+# 通過4角: 文字列なら末尾の数字を抽出（"1-2-3-2"→2 も想定）、数値ならそのまま
+if '通過4角' in df_score.columns:
+    s = df_score['通過4角']
+    if s.dtype.kind not in 'iu':  # int/uintでなければ文字→数値化
+        last_num = s.astype(str).str.extract(r'(\d+)(?!.*\d)')[0]
+        df_score['通過4角'] = pd.to_numeric(last_num, errors='coerce')
+
+    # 0やレンジ外（<1 または >頭数）は欠損扱いに
+    ok = df_score['頭数'].notna() & df_score['通過4角'].notna()
+    bad = ok & ((df_score['通過4角'] < 1) | (df_score['通過4角'] > df_score['頭数']))
+    df_score.loc[df_score['通過4角'].eq(0), '通過4角'] = np.nan
+    df_score.loc[bad, '通過4角'] = np.nan
+# --- ここまで ---
+
 # === sheet1（当日出走表／プロフィール） ===
 PAT_S1 = {
     '馬名'   : [r'馬名|名前|出走馬'],
