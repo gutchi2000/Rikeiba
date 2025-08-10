@@ -601,24 +601,31 @@ mark_rule = {
 }
 mark_to_pts = {'◎':2, '〇':1, '○':1, '△':0, '×':-1}
 
-# MC で PacePts の期待値を計算
+# --- Pace MC（EPI方式に変更） ---
 rng_pace = np.random.default_rng(int(mc_seed) + 12345)
 sum_pts = np.zeros(H, dtype=float)
 pace_counter = {'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
+
+ALPHA = 1.0   # 逃げの重み
+BETA  = 0.60  # 先行の重み（←ここを上げるとM寄り判定になりやすい）
 
 for _ in range(int(pace_mc_draws)):
     sampled = [rng_pace.choice(4, p=P[i]) for i in range(H)]
     nige  = sum(1 for s in sampled if s==0)
     sengo = sum(1 for s in sampled if s==1)
 
-    if nige >= 3 or (nige==2 and sengo>=4):
+    # Early Pressure Index（隊列の前圧）
+    epi = (ALPHA*nige + BETA*sengo) / max(1, H)
+
+    # しきい値（フィールド平均で調整済み）
+    if   epi >= 0.52:
         pace_t = "ハイペース"
-    elif nige == 1 and sengo <= 2:
-        pace_t = "スローペース"
-    elif nige <= 1:
+    elif epi >= 0.30:
+        pace_t = "ミドルペース"
+    elif epi >= 0.18:
         pace_t = "ややスローペース"
     else:
-        pace_t = "ミドルペース"
+        pace_t = "スローペース"
     pace_counter[pace_t] += 1
 
     mk = mark_rule[pace_t]
@@ -627,6 +634,8 @@ for _ in range(int(pace_mc_draws)):
         sum_pts[i] += mark_to_pts[ mk[style_name] ]
 
 df_agg['PacePts'] = sum_pts / max(1, int(pace_mc_draws))
+pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
+
 
 # 代表ペース（最多出現）を図用に
 pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
