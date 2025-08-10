@@ -263,6 +263,44 @@ edited = st.data_editor(
 )
 horses = edited.copy()
 
+# --- 4角順位×頭数から脚質を自動推定（直近N走の平均で判断） ---
+AUTO_OVERWRITE = True  # Trueにすると出走表の脚質を自動推定で上書き
+
+NRECENT = 3  # 直近何走で見るか
+need_cols = {'馬名','レース日','頭数','通過4角'}
+if need_cols.issubset(df_score.columns):
+    tmp = (
+        df_score[['馬名','レース日','頭数','通過4角']].dropna()
+        .sort_values(['馬名','レース日'], ascending=[True, False])
+        .groupby('馬名')
+        .head(NRECENT)
+        .copy()
+    )
+    # 先行度 = 4角順位 / 頭数（小さいほど前）
+    tmp['先行度'] = tmp['通過4角'] / tmp['頭数']
+    lead = tmp.groupby('馬名')['先行度'].mean()
+
+    def style_from_ratio(r: float) -> str:
+        if r <= 0.20: return '逃げ'
+        if r <= 0.50: return '先行'
+        if r <= 0.80: return '差し'
+        return '追込'
+
+    auto_style = lead.map(style_from_ratio)
+
+    # 出走表 horses に反映
+    if '脚質' not in horses.columns:
+        horses['脚質'] = ''
+    if AUTO_OVERWRITE:
+        # すべて上書き
+        horses['脚質'] = horses['馬名'].map(auto_style).fillna(horses['脚質'])
+    else:
+        # 空欄だけ埋める
+        mask_blank = horses['脚質'].astype(str).str.strip().eq('')
+        horses.loc[mask_blank, '脚質'] = horses.loc[mask_blank, '馬名'].map(auto_style)
+else:
+    st.warning("『通過順４角（通過4角）』『頭数』が見つからないため脚質の自動推定をスキップしました。サイドバーの列マッピングで対応してください。")
+
 # --- 戦績率（%→数値）＆ベストタイム抽出（任意） ---
 rate_cols = [c for c in ['勝率','連対率','複勝率'] if c in attrs.columns]
 if rate_cols:
