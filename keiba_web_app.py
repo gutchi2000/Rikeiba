@@ -544,9 +544,7 @@ points = alt.Chart(df_agg).mark_circle(size=100).encode(
 # 馬名ラベル（白文字＋黒縁で視認性UP）
 labels = alt.Chart(df_agg).mark_text(
     dx=6, dy=-6, fontSize=10,
-    color='#ffffff',      # 白
-    stroke='#000000',     # 黒フチ
-    strokeWidth=0.8       # ← 2 から 0.8（または 0.6）へ
+    color='#ffffff',      
 ).encode(
     x='FinalZ:Q', y='WStd:Q', text='馬名:N'
 )
