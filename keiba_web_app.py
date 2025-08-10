@@ -288,7 +288,7 @@ if need_cols.issubset(df_score.columns):
     tmp['_days'] = (today - pd.to_datetime(tmp['レース日'], errors='coerce')).dt.days.clip(lower=0).fillna(9999)
     tmp['_w'] = 0.5 ** (tmp['_days'] / float(HL_DAYS_STYLE))
 
-    # --- 位置取り 0（先頭）〜1（最後方） ← ここから “if need_cols ...:” の中に入れる
+    # 位置取り 0（先頭）〜1（最後方）
     denom = (pd.to_numeric(tmp['頭数'], errors='coerce') - 1).replace(0, np.nan)
     pos_ratio = (pd.to_numeric(tmp['通過4角'], errors='coerce') - 1) / denom
     pos_ratio = pos_ratio.clip(0, 1).fillna(0.5)
@@ -315,7 +315,6 @@ if need_cols.issubset(df_score.columns):
         if sw <= 0:
             continue
         pr = pos_ratio.loc[g.index].to_numpy()
-        cs = close_strength.loc[g.index].to_numpy()
 
         def wavg(v): return float((v*w).sum()/sw)
 
@@ -328,32 +327,31 @@ if need_cols.issubset(df_score.columns):
 
         pred = idx2style[int(np.argmax(p))]
 
-        # ガード：逃げ/追込はかなり偏っている時だけ
+        # ゆるめガード（ここは for ループの中）
         pr_mean = float((pr*w).sum()/sw)
         front_share = float(((pr <= 0.15)*w).sum()/sw)
         back_share  = float(((pr >= 0.85)*w).sum()/sw)
-       # 置き換え後（ゆるめ）
-if pred == '逃げ' and not (pr_mean <= 0.22 or front_share >= 0.25):
-    pred = '先行'
-if pred == '追込' and not (pr_mean >= 0.78 or back_share  >= 0.25):
-    pred = '差し'
+        if pred == '逃げ' and not (pr_mean <= 0.22 or front_share >= 0.25):
+            pred = '先行'
+        if pred == '追込' and not (pr_mean >= 0.78 or back_share  >= 0.25):
+            pred = '差し'
 
         rows.append([name, *p.tolist(), pred])
 
     if rows:
         df_style = pd.DataFrame(rows, columns=['馬名','p_逃げ','p_先行','p_差し','p_追込','推定脚質'])
-        
-# --- 逃げが0頭なら、最も前に行きやすい馬を“逃げ”に指定（手入力が優先）
-manual_has_nige = ('脚質' in horses.columns) and horses['脚質'].eq('逃げ').any()
-if (df_style['推定脚質'].eq('逃げ').sum() == 0) and (not manual_has_nige):
-    early = tmp.assign(
-        early=(1 - pos_ratio).clip(0, 1),
-        w=tmp['_w'].values
-    ).groupby('馬名').apply(lambda g: float((g['early']*g['w']).sum()/g['w'].sum()))
-    nige_cand = early.idxmax()
-    df_style.loc[df_style['馬名'] == nige_cand, '推定脚質'] = '逃げ'
 
-        # horses に反映（← ここは if rows: の中。余計なインデントを削除）
+        # 逃げが0頭なら、最も前に行きやすい1頭を逃げに（手入力を優先）
+        manual_has_nige = ('脚質' in horses.columns) and horses['脚質'].eq('逃げ').any()
+        if (df_style['推定脚質'].eq('逃げ').sum() == 0) and (not manual_has_nige):
+            early = tmp.assign(
+                early=(1 - pos_ratio).clip(0, 1),
+                w=tmp['_w'].values
+            ).groupby('馬名').apply(lambda g: float((g['early']*g['w']).sum()/g['w'].sum()))
+            nige_cand = early.idxmax()
+            df_style.loc[df_style['馬名'] == nige_cand, '推定脚質'] = '逃げ'
+
+        # horses に反映
         if '脚質' not in horses.columns:
             horses['脚質'] = ''
         pred_map = df_style.set_index('馬名')['推定脚質']
