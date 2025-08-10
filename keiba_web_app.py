@@ -993,7 +993,7 @@ def ai_comment(row):
 
 horses2['短評'] = horses2.apply(ai_comment, axis=1)
 
-# ======================== 買い目生成＆厳密配分 ========================
+# ======================== 買い目生成＆資金配分 ========================
 h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
 h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
 
@@ -1007,6 +1007,7 @@ three = ['馬連','ワイド','馬単']
 def round_to_unit(x, unit):
     return int(np.floor(x / unit) * unit)
 
+# まずは従来ロジックで買い目候補と初期配分（金額：整数のまま）
 main_share = 0.5
 pur1 = round_to_unit(total_budget * main_share * (1/4), min_unit)  # 単勝
 pur2 = round_to_unit(total_budget * main_share * (3/4), min_unit)  # 複勝
@@ -1120,79 +1121,75 @@ elif scenario == '余裕':
     else:
         st.info("連系はスキップ（相手不足 or 予算不足）")
 
-# ここで必ず DataFrame 化（←これが先にないと NameError になる）
+# ここで DataFrame を先に作る（以降この _df を使う）
 _df = pd.DataFrame(bets)
-if '金額' in _df:
-    _df['金額'] = pd.to_numeric(_df['金額'], errors='coerce').fillna(0).astype(int)
-else:
-    _df['金額'] = 0
 
-# === ハーフケリーによる最終配分（任意） ===
+# === ハーフケリー（任意・全券種対応） ===
 st.subheader("ハーフケリー配分（任意）")
-st.caption("※ 対応：単勝/複勝/ワイド/馬連/馬単（ほかは0円になります）")
 use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
 
 if use_kelly and len(_df) > 0:
-   # 1) 的中確率qを各券種で計算（MC結果を使用）
-idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
+    # 1) 的中確率qを各券種で計算（MC結果を使用）
+    idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
 
-def pair_prob(i, j, kind: str) -> float:
-    # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
-    if kind == 'ワイド':
+    def pair_prob(i, j, kind: str) -> float:
+        # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
+        if kind == 'ワイド':
+            top3 = rank_idx[:, :3]
+            ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
+            return (ci & cj).mean()
+        if kind == '馬連':
+            return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
+                    ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
+        if kind == '馬単':
+            return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
+        return np.nan
+
+    def trio_prob(i, j, k) -> float:
+        # 三連複：i/j/k が3着内に「順不同」で全員入る
         top3 = rank_idx[:, :3]
-        ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
-        return (ci & cj).mean()
-    if kind == '馬連':
-        return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
-                ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
-    if kind == '馬単':
-        return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
-    return np.nan
+        ci = np.any(top3 == i, axis=1)
+        cj = np.any(top3 == j, axis=1)
+        ck = np.any(top3 == k, axis=1)
+        return (ci & cj & ck).mean()
 
-def trio_prob(i, j, k) -> float:
-    # 三連複：i/j/k が3着内に「順不同」で全員入る
-    top3 = rank_idx[:, :3]
-    ci = np.any(top3 == i, axis=1)
-    cj = np.any(top3 == j, axis=1)
-    ck = np.any(top3 == k, axis=1)
-    return (ci & cj & ck).mean()
+    def trifecta_prob(i, j, k) -> float:
+        # 三連単：i→j→k の完全一致
+        return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
 
-def trifecta_prob(i, j, k) -> float:
-    # 三連単：i→j→k の完全一致
-    return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
-
-q_list = []
-for _, r in _df.iterrows():
-    typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
-    q = np.nan
-    try:
-        if typ == '単勝':
-            q = float(p_win[idx_of[h]])           # 0〜1
-        elif typ == '複勝':
-            q = float(p_top3[idx_of[h]])          # 0〜1
-        elif typ in ('ワイド','馬連','馬単') and a:
-            i = idx_of[h]; j = idx_of[a]
-            q = pair_prob(i, j, typ)
-        elif typ == '三連複' and a:
-            parts = [p.strip() for p in a.split('／') if p.strip()]
-            if len(parts) >= 2:
-                i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
-                q = trio_prob(i, j, k)
-        elif typ in ('三連単','三連単フォーメーション') and a:
-            parts = [p.strip() for p in a.split('／') if p.strip()]
-            if len(parts) >= 2:
-                i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
-                q = trifecta_prob(i, j, k)
-    except Exception:
+    q_list = []
+    for _, r in _df.iterrows():
+        typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
         q = np.nan
-    q_list.append(q)
+        try:
+            if typ == '単勝':
+                q = float(p_win[idx_of[h]])           # 0〜1
+            elif typ == '複勝':
+                q = float(p_top3[idx_of[h]])          # 0〜1
+            elif typ in ('ワイド','馬連','馬単') and a:
+                i = idx_of[h]; j = idx_of[a]
+                q = pair_prob(i, j, typ)
+            elif typ == '三連複' and a:
+                parts = [p.strip() for p in a.split('／') if p.strip()]
+                if len(parts) >= 2:
+                    i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                    q = trio_prob(i, j, k)
+            elif typ in ('三連単','三連単フォーメーション') and a:
+                parts = [p.strip() for p in a.split('／') if p.strip()]
+                if len(parts) >= 2:
+                    i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                    q = trifecta_prob(i, j, k)
+        except Exception:
+            q = np.nan
+        q_list.append(q)
 
-_df['的中確率q'] = q_list
+    _df['的中確率q'] = q_list
 
     # 2) オッズ入力UI（小数「倍」：例 3.5=100円→350円）
     if '想定オッズ(倍)' not in _df.columns:
         _df['想定オッズ(倍)'] = np.nan
 
+    st.caption("※ 例）期待払戻 420円/100円 → 4.2 と入力。未入力は0扱いで賭けません。")
     _df = st.data_editor(
         _df,
         column_config={
@@ -1200,50 +1197,50 @@ _df['的中確率q'] = q_list
         },
         use_container_width=True,
         num_rows='dynamic',
-        disabled=['券種','印','馬','相手','金額','的中確率q'],
-        key="kelly_editor"
+        disabled=['券種','印','馬','相手','金額','的中確率q']
     )
 
     # 3) f* を計算し、ハーフケリーで賭け額を算出
     o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
     q = pd.to_numeric(_df['的中確率q'], errors='coerce')
 
-    valid = (o > 1.01) & q.notna()
-    f_star = ((q * o - 1) / (o - 1)).where(valid, 0.0).clip(lower=0.0).fillna(0.0)  # 期待値<=0なら0
+    # f* = (q*o - 1)/(o - 1) の正の部分。負なら0。
+    f_star = (q * o - 1) / (o - 1)
+    f_star = f_star.where((o > 1.01) & q.notna(), np.nan)
+    f_star = f_star.clip(lower=0).fillna(0.0)
 
-    bankroll = float(total_budget)
+    bankroll = float(total_budget)  # ここでは総予算で最適配分
     stake_raw = bankroll * 0.5 * f_star  # ハーフケリー
 
     total_stake = float(stake_raw.sum())
     if total_stake > bankroll and total_stake > 0:
-        stake_raw *= bankroll / total_stake  # 念のため上限ガード
+        stake_raw *= bankroll / total_stake
 
-    # 最小賭け単位で丸め
+    # 最小賭け単位で丸め＋余り配分
     stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
-
-    # 余りを上から順に配分（min_unit刻み）
     rem_k = int(bankroll - stake_rounded.sum())
     i = 0
     while rem_k >= int(min_unit) and i < len(stake_rounded):
-        stake_rounded.iloc[i] += int(min_unit)
+        stake_rounded[i] += int(min_unit)
         rem_k -= int(min_unit)
         i += 1
 
-    # 4) 金額を数値のまま上書き（この時点では"円"を付けない！）
+    # 金額カラムを上書き（整数のまま保持）
     _df['金額'] = stake_rounded.astype(int)
 
-# 合計チェック（数値のまま） & 最終表示用に整形
-spent = int(pd.to_numeric(_df['金額'], errors='coerce').fillna(0).sum())
-diff = total_budget - spent
-if diff != 0 and len(_df) > 0:
-    for idx in _df.index:
-        cur = int(_df.at[idx,'金額'])
-        new = cur + diff
-        if new >= 0 and new % int(min_unit) == 0:
-            _df.at[idx,'金額'] = new
-            break
+else:
+    # ケリー未使用時は従来の“合計をぴったりに”調整
+    spent = int(_df['金額'].fillna(0).replace('',0).sum())
+    diff = total_budget - spent
+    if diff != 0 and len(_df) > 0:
+        for idx in _df.index:
+            cur = int(_df.at[idx,'金額'])
+            new = cur + diff
+            if new >= 0 and new % min_unit == 0:
+                _df.at[idx,'金額'] = new
+                break
 
-# 表示用に文字列化（ここで初めて "円" を付ける）
+# 表示用に“円”フォーマット（ここで初めて文字列化）
 _df_disp = _df.copy()
 _df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
 
