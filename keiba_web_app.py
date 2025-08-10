@@ -6,14 +6,18 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from itertools import combinations
 import altair as alt
+import io, json
 
 st.set_page_config(page_title="競馬予想アプリ", layout="wide")
 
-# ======================== 日本語フォント ========================
-try:
-    jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
-except:
-    jp_font = font_manager.FontProperties(fname="C:/Windows/Fonts/meiryo.ttc")
+# ======================== 日本語フォント（キャッシュ） ========================
+@st.cache_resource
+def get_jp_font():
+    try:
+        return font_manager.FontProperties(fname="ipaexg.ttf")
+    except:
+        return font_manager.FontProperties(fname="C:/Windows/Fonts/meiryo.ttc")
+jp_font = get_jp_font()
 
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'Meiryo', 'MS Gothic']
@@ -45,6 +49,47 @@ def normalize_grade_text(x: str | None) -> str | None:
     m = re.search(r'G\s*([123])', s, flags=re.I)
     return f"G{m.group(1)}" if m else None
 
+@st.cache_data(show_spinner=False)
+def load_excel_bytes(content: bytes):
+    xls = pd.ExcelFile(io.BytesIO(content))
+    s0 = pd.read_excel(xls, sheet_name=0)
+    s1 = pd.read_excel(xls, sheet_name=1)
+    return s0, s1
+
+@st.cache_data(show_spinner=False)
+def parse_blood_html_bytes(content: bytes) -> pd.DataFrame:
+    text = content.decode(errors='ignore')
+    rows = re.findall(r'<tr[\s\S]*?<\/tr>', text, flags=re.I)
+    buff = []
+    for r in rows:
+        cells = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', r, flags=re.I)
+        if len(cells) >= 2:
+            name = re.sub(r'<.*?>', '', cells[0]).strip()
+            blood = re.sub(r'<.*?>', '', cells[1]).strip()
+            buff.append((name, blood))
+    return pd.DataFrame(buff, columns=['馬名','血統'])
+
+def validate_inputs(df_score: pd.DataFrame, horses: pd.DataFrame):
+    problems = []
+    req = ['馬名','レース日','競走名','頭数','確定着順']
+    for c in req:
+        if c not in df_score.columns:
+            problems.append(f"sheet0 必須列が見つからない: {c}")
+        else:
+            null_rate = df_score[c].isna().mean()
+            if null_rate > 0.2:
+                problems.append(f"sheet0 列 {c} の欠損が多い（{null_rate:.0%}）")
+    if '斤量' in horses:
+        bad = horses['斤量'].dropna()
+        if len(bad)>0 and ((bad<45)|(bad>65)).any():
+            problems.append("sheet1 斤量がレンジ外（45–65）")
+    if {'通過4角','頭数'}.issubset(df_score.columns):
+        tmp = df_score[['通過4角','頭数']].dropna()
+        if len(tmp)>0 and ((tmp['通過4角']<1) | (tmp['通過4角']>tmp['頭数'])).any():
+            problems.append("sheet0 通過4角が頭数レンジ外")
+    if problems:
+        st.warning("⚠ 入力チェック：\n- " + "\n- ".join(problems))
+
 # ======================== サイドバー ========================
 st.sidebar.header("パラメータ設定")
 lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
@@ -65,7 +110,14 @@ besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
 with st.sidebar.expander("戦績率の重み（当該馬場）", expanded=False):
     win_w  = st.slider("勝率の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
     quin_w = st.slider("連対率の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
-    plc_w  = st.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")  # ← sidebarでなくst.sliderに統一
+    plc_w  = st.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
+
+with st.sidebar.expander("各種ボーナス設定", expanded=False):
+    grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
+    agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
+    agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
+    agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
+    bw_bonus     = st.slider("馬体重適正ボーナス(±10kg)", 0, 10, 2)
 
 # 新規: 時系列加重・安定性・ペース補正・点数制限
 st.sidebar.markdown("---")
@@ -122,6 +174,46 @@ with st.sidebar.expander("勝率シミュレーション（しっかり版）", 
         """
     )
 
+# --- サイドバー：設定保存/読み込み ---
+st.sidebar.markdown("---")
+def collect_params():
+    return {
+        "lambda_part": lambda_part, "orig_weight": orig_weight,
+        "gender_w": gender_w, "style_w": style_w, "season_w": season_w,
+        "age_w": age_w, "frame_w": frame_w, "besttime_w": besttime_w,
+        "win_w": win_w, "quin_w": quin_w, "plc_w": plc_w,
+        "grade_bonus": grade_bonus, "agari1_bonus": agari1_bonus,
+        "agari2_bonus": agari2_bonus, "agari3_bonus": agari3_bonus, "bw_bonus": bw_bonus,
+        "half_life_m": half_life_m, "stab_weight": stab_weight,
+        "pace_gain": pace_gain, "weight_coeff": weight_coeff,
+        "total_budget": total_budget, "min_unit": int(min_unit),
+        "max_lines": int(max_lines), "scenario": scenario,
+        "auto_style_on": auto_style_on, "AUTO_OVERWRITE": AUTO_OVERWRITE,
+        "NRECENT": int(NRECENT), "HL_DAYS_STYLE": int(HL_DAYS_STYLE),
+        "pace_mc_draws": int(pace_mc_draws),
+        "pace_mode": pace_mode, "pace_fixed": pace_fixed,
+        "epi_alpha": epi_alpha, "epi_beta": epi_beta,
+        "thr_hi": thr_hi, "thr_mid": thr_mid, "thr_slow": thr_slow,
+        "mc_iters": int(mc_iters), "mc_beta": mc_beta,
+        "mc_tau": mc_tau, "mc_seed": int(mc_seed),
+    }
+def apply_params(cfg: dict):
+    for k,v in cfg.items():
+        st.session_state[k] = v
+
+col_a, col_b = st.sidebar.columns(2)
+if col_a.button("設定を保存"):
+    cfg = json.dumps(collect_params(), ensure_ascii=False, indent=2)
+    st.sidebar.download_button("JSONをDL", data=cfg, file_name="keiba_config.json", mime="application/json")
+cfg_file = col_b.file_uploader("設定読み込み", type=["json"], key="cfg_up")
+if cfg_file is not None:
+    try:
+        cfg = json.loads(cfg_file.read().decode("utf-8"))
+        apply_params(cfg)
+        st.sidebar.success("設定を読み込みました（必要なら再実行）。")
+    except Exception as e:
+        st.sidebar.error(f"設定ファイルの読み込みエラー: {e}")
+
 # ======================== ファイルアップロード（ここでゲート） ========================
 st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
 st.subheader("ファイルアップロード")
@@ -134,6 +226,8 @@ if excel_file is None:
     st.stop()
 
 # ---- データ読み込み + インタラクティブ・マッピング ----
+sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
+
 def _norm_col(s: str) -> str:
     s = str(s).strip()
     s = re.sub(r'\s+', '', s)
@@ -163,7 +257,6 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
     cmap = {c: _norm_col(c) for c in cols}
     auto = {k: st.session_state.get(f"{state_key}:{k}") or _auto_guess(cmap, pats)
             for k, pats in patterns.items()}
-
     if not show_ui:
         missing = [k for k in required_keys if not auto.get(k)]
         if not missing:
@@ -174,7 +267,6 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
         else:
             st.warning(f"{title} の必須列が自動認識できませんでした: " + ", ".join(missing))
             show_ui = True
-
     with st.expander(f"列マッピング：{title}", expanded=True):
         mapping = {}
         for key, pats in patterns.items():
@@ -187,15 +279,11 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
             )
             if mapping[key] != '<未選択>':
                 st.session_state[f"{state_key}:{key}"] = mapping[key]
-
     missing = [k for k in required_keys if mapping.get(k) in (None, '<未選択>')]
-    if missing:
-        st.stop()
-
+    if missing: st.stop()
     return {k: (None if v=='<未選択>' else v) for k, v in mapping.items()}
 
 # === sheet0（過去走データ） ===
-sheet0 = pd.read_excel(excel_file, sheet_name=0)
 PAT_S0 = {
     '馬名'         : [r'馬名|名前|出走馬'],
     'レース日'     : [r'レース日|日付S|日付|年月日'],
@@ -233,7 +321,6 @@ if '走破タイム秒' in df_score: df_score['走破タイム秒'] = df_score['
 if '上がり3Fタイム' in df_score: df_score['上がり3Fタイム'] = df_score['上がり3Fタイム'].apply(_parse_time_to_sec)
 
 # === sheet1（当日出走表／プロフィール） ===
-sheet1 = pd.read_excel(excel_file, sheet_name=1)
 PAT_S1 = {
     '馬名'   : [r'馬名|名前|出走馬'],
     '枠'     : [r'枠|枠番'],
@@ -276,6 +363,9 @@ edited = st.data_editor(
     num_rows='static'
 )
 horses = edited.copy()
+
+# 入力の早期チェック
+validate_inputs(df_score, horses)
 
 # --- 脚質 自動推定（強化版） ---
 df_style = pd.DataFrame({'馬名': [], 'p_逃げ': [], 'p_先行': [], 'p_差し': [], 'p_追込': [], '推定脚質': []})
@@ -385,14 +475,7 @@ else:
 
 # ---- 血統（HTML）パース：任意 ----
 if html_file is not None:
-    cont = html_file.read().decode(errors='ignore')
-    rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
-    blood = []
-    for r in rows:
-        c = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', r)
-        if len(c) >= 2:
-            blood.append((re.sub(r'<.*?>','',c[0]).strip(), re.sub(r'<.*?>','',c[1]).strip()))
-    blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
+    blood_df = parse_blood_html_bytes(html_file.getvalue())
 else:
     blood_df = pd.DataFrame({'馬名': [], '血統': []})
 
@@ -600,7 +683,7 @@ for _ in range(int(pace_mc_draws)):
     nige  = sum(1 for s in sampled if s==0)
     sengo = sum(1 for s in sampled if s==1)
 
-    epi = (epi_alpha*nige + epi_beta*sengo) / max(1, H)  # ← UIのα/βを反映
+    epi = (epi_alpha*nige + epi_beta*sengo) / max(1, H)
 
     if   epi >= thr_hi:
         pace_t = "ハイペース"
@@ -742,12 +825,10 @@ df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行
 
 # ===== 現状サマリー（表） =====
 st.subheader("現状サマリー（表）")
-st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")  # ← 追加
+st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
 
 style_order = ['逃げ','先行','差し','追込']
-style_counts = (
-    df_map['脚質'].value_counts().reindex(style_order).fillna(0).astype(int)
-)
+style_counts = df_map['脚質'].value_counts().reindex(style_order).fillna(0).astype(int)
 total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
 style_pct = (style_counts / total_heads * 100).round(1)
 pace_summary = pd.DataFrame([{
@@ -771,21 +852,24 @@ st.table(pick_df[['印','馬名','FinalZ','WStd','勝率(%)','複勝率(%)']])
 
 # ===== 展開ロケーション（視覚） =====
 df_map_show = df_map.sort_values(['番'])
-fig, ax = plt.subplots(figsize=(10,3))
-colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
-for _, row in df_map_show.iterrows():
-    if row['脚質'] in colors:
-        x = row['番']; y = ['逃げ','先行','差し','追込'].index(row['脚質'])
-        ax.scatter(x, y, color=colors[row['脚質']], s=200)
-        lab = row['馬名']
-        ax.text(x, y, lab, ha='center', va='center', color='white', fontsize=9, weight='bold',
-                bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
-                fontproperties=jp_font)
-ax.set_yticks([0,1,2,3]); ax.set_yticklabels(['逃げ','先行','差し','追込'], fontproperties=jp_font)
-ax.set_xticks(sorted(df_map_show['番'].unique())); ax.set_xticklabels([f"{i}番" for i in sorted(df_map_show['番'].unique())], fontproperties=jp_font)
-ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
-ax.set_title(f"展開ロケーション（{pace_type}想定）", fontproperties=jp_font)
-st.pyplot(fig)
+if len(df_map_show) > 0:
+    fig, ax = plt.subplots(figsize=(10,3))
+    colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
+    for _, row in df_map_show.iterrows():
+        if row['脚質'] in colors:
+            x = row['番']; y = ['逃げ','先行','差し','追込'].index(row['脚質'])
+            ax.scatter(x, y, color=colors[row['脚質']], s=200)
+            lab = row['馬名']
+            ax.text(x, y, lab, ha='center', va='center', color='white', fontsize=9, weight='bold',
+                    bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
+                    fontproperties=jp_font)
+    ax.set_yticks([0,1,2,3]); ax.set_yticklabels(['逃げ','先行','差し','追込'], fontproperties=jp_font)
+    ax.set_xticks(sorted(df_map_show['番'].unique())); ax.set_xticklabels([f"{i}番" for i in sorted(df_map_show['番'].unique())], fontproperties=jp_font)
+    ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
+    ax.set_title(f"展開ロケーション（{pace_type}想定）", fontproperties=jp_font)
+    st.pyplot(fig)
+else:
+    st.info("展開ロケーション：表示対象がありません（馬番が未入力かも）。")
 
 # ===== 重賞好走ハイライト =====
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
