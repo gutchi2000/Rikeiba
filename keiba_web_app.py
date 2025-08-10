@@ -61,9 +61,9 @@ with st.sidebar.expander("枠順重み", expanded=False):
 
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
 with st.sidebar.expander("戦績率の重み（当該馬場）", expanded=False):
-    win_w  = st.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
-    quin_w = st.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
-    plc_w  = st.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
+    win_w  = st.slider("勝率の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
+    quin_w = st.slider("連対率の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
+    plc_w  = st.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
     grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
@@ -72,7 +72,7 @@ with st.sidebar.expander("各種ボーナス設定", expanded=False):
     agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
     bw_bonus     = st.slider("馬体重適正ボーナス(±10kg)", 0, 10, 2)
 
-# ★ 新規: 時系列加重・安定性・ペース補正・点数制限
+# 新規: 時系列加重・安定性・ペース補正・点数制限
 st.sidebar.markdown("---")
 half_life_m = st.sidebar.slider("時系列半減期(月)", 0.0, 12.0, 6.0, 0.5)
 stab_weight = st.sidebar.slider("安定性(小さいほど◎)の係数", 0.0, 2.0, 0.7, 0.1)
@@ -86,7 +86,7 @@ max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
 # ======================== メイン ========================
-st.title("競馬予想アプリ（強化版）")
+st.title("競馬予想アプリ（完成系・汎用戦績＆修正版）")
 st.subheader("ファイルアップロード")
 excel_file = st.file_uploader("Excel (成績＆属性)", type='xlsx')
 html_file  = st.file_uploader("HTML (血統)", type='html')
@@ -103,7 +103,7 @@ attrs.columns = ['枠','番','馬名','性別','年齢']
 attrs['脚質'] = ''
 attrs['斤量'] = np.nan
 
-# ===== [M1] 戦績率(芝)＆ベストタイム抽出 =====
+# ===== [M1] 戦績率＆ベストタイム抽出（汎用） =====
 def norm_col(s: str) -> str:
     s = str(s).strip()
     s = re.sub(r'\s+', '', s)
@@ -121,21 +121,22 @@ def find_col(patterns):
     return None
 
 name_col = find_col([r'馬名|名前|出走馬']) or sheet2.columns[2]
-col_win  = find_col([r'勝率.*芝', r'芝.*勝率', r'^勝率(\(芝\))?$'])
-col_quin = find_col([r'連対率.*芝', r'芝.*連対率', r'^連対率(\(芝\))?$'])
-col_plc  = find_col([r'複勝率.*芝', r'芝.*複勝率', r'^複勝率(\(芝\))?$'])
+# 汎用マッチ
+col_win  = find_col([r'勝率'])
+col_quin = find_col([r'連対率|連対'])
+col_plc  = find_col([r'複勝率|複勝'])
 col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ', r'タイム.*(最速|ベスト)'])
 
 if any(c is None for c in [col_win, col_quin, col_plc, col_bt]):
     st.warning("2枚目シートの列自動検出に失敗。手動で選んでください。")
     options = list(sheet2.columns)
-    if col_win  is None:  col_win  = st.selectbox("勝率(芝)の列", options, key="wincol")
-    if col_quin is None:  col_quin = st.selectbox("連対率(芝)の列", options, key="quincol")
-    if col_plc  is None:  col_plc  = st.selectbox("複勝率(芝)の列", options, key="plccol")
-    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options, key="btcol")
+    if col_win  is None:  col_win  = st.selectbox("勝率の列", options, key="wincol_any")
+    if col_quin is None:  col_quin = st.selectbox("連対率の列", options, key="quincol_any")
+    if col_plc  is None:  col_plc  = st.selectbox("複勝率の列", options, key="plccol_any")
+    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options, key="btcol_any")
 
 rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
-rate.columns = ['馬名','勝率','連対率','複勝率','ベストタイム']  # ← 汎用に改名
+rate.columns = ['馬名','勝率','連対率','複勝率','ベストタイム']
 
 for c in ['勝率','連対率','複勝率']:
     rate[c] = (
@@ -196,6 +197,7 @@ df_score = (
     .merge(horses, on='馬名', how='inner')
     .merge(blood_df, on='馬名', how='left')
     .merge(rate[['馬名','勝率','連対率','複勝率','ベストタイム秒']], on='馬名', how='left')
+)  # ★ ここで閉じる
 
 # ===== [M3] ベストタイム正規化レンジ =====
 bt_min = df_score['ベストタイム秒'].min(skipna=True)
@@ -276,13 +278,13 @@ def calc_score(r):
                 body_bonus = bw_bonus
     except: pass
 
-   # 戦績（当該馬場が既に反映されている前提で汎用カラムを使用）
-rate_bonus = 0.0
-try:
-    if pd.notna(r.get('勝率', np.nan)):   rate_bonus += win_w  * (float(r['勝率'])  / 100.0)
-    if pd.notna(r.get('連対率', np.nan)): rate_bonus += quin_w * (float(r['連対率']) / 100.0)
-    if pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
-except: pass
+    # 戦績（当該馬場が既に反映されている前提で汎用カラムを使用）
+    rate_bonus = 0.0
+    try:
+        if pd.notna(r.get('勝率', np.nan)):   rate_bonus += win_w  * (float(r['勝率'])  / 100.0)
+        if pd.notna(r.get('連対率', np.nan)): rate_bonus += quin_w * (float(r['連対率']) / 100.0)
+        if pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
+    except: pass
 
     # ベストタイム（速いほど+）
     bt_bonus = 0.0
