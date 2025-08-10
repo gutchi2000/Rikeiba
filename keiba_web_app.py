@@ -722,6 +722,16 @@ prob_view = (
 )
 st.table(prob_view)
 
+# 展開図用のマップ（馬番を数値化／脚質は combined_style を反映）
+df_map = horses.copy()
+df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
+df_map['番'] = pd.to_numeric(
+    df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')),
+    errors='coerce'
+)
+df_map = df_map.dropna(subset=['番']).astype({'番': int})
+df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
+
 # ===== 展開ロケーション（視覚） =====
 df_map_show = df_map.sort_values(['番'])
 fig, ax = plt.subplots(figsize=(10,3))
