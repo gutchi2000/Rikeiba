@@ -473,19 +473,20 @@ def calc_score(r):
     gnorm = normalize_grade_text(r.get('クラス名'))
     grade_point = grade_bonus if gnorm in ['G1','G2','G3'] else 0
 
-    agari_bonus = 0
+        agari_bonus = 0
     try:
         ao = int(r.get('上3F順位', np.nan))
         if   ao == 1: agari_bonus = agari1_bonus
         elif ao == 2: agari_bonus = agari2_bonus
         elif ao == 3: agari_bonus = agari3_bonus
-    except: pass
+    except:
+        pass
 
-       body_bonus = 0
+    body_bonus = 0
     try:
         name = r['馬名']
         now_bw = float(r.get('馬体重', np.nan))
-        tekitai = float(best_bw_map.get(name, np.nan))  # ← 過去走から先取りした値
+        tekitai = float(best_bw_map.get(name, np.nan))  # マージ前に作った適正体重
         if not np.isnan(now_bw) and not np.isnan(tekitai) and abs(now_bw - tekitai) <= 10:
             body_bonus = bw_bonus
     except Exception:
