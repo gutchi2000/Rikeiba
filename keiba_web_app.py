@@ -1120,16 +1120,24 @@ elif scenario == '余裕':
     else:
         st.info("連系はスキップ（相手不足 or 予算不足）")
 
+# ここで必ず DataFrame 化（←これが先にないと NameError になる）
+_df = pd.DataFrame(bets)
+if '金額' in _df:
+    _df['金額'] = pd.to_numeric(_df['金額'], errors='coerce').fillna(0).astype(int)
+else:
+    _df['金額'] = 0
+
 # === ハーフケリーによる最終配分（任意） ===
 st.subheader("ハーフケリー配分（任意）")
+st.caption("※ 対応：単勝/複勝/ワイド/馬連/馬単（ほかは0円になります）")
 use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
 
 if use_kelly and len(_df) > 0:
     # 1) 的中確率qを各券種で計算（MC結果を使用）
-    idx_of = {name: i for i, name in enumerate(name_list)}  # name_listは既出
+    idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
 
     def pair_prob(i, j, kind: str) -> float:
-        # rank_idx は (mc_iters, n) の着順配列（既出）
+        # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
         if kind == 'ワイド':
             top3 = rank_idx[:, :3]
             ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
@@ -1153,7 +1161,7 @@ if use_kelly and len(_df) > 0:
             elif typ in ('ワイド','馬連','馬単') and a:
                 i = idx_of[h]; j = idx_of[a]
                 q = pair_prob(i, j, typ)
-        except KeyError:
+        except Exception:
             q = np.nan
         q_list.append(q)
 
@@ -1163,7 +1171,6 @@ if use_kelly and len(_df) > 0:
     if '想定オッズ(倍)' not in _df.columns:
         _df['想定オッズ(倍)'] = np.nan
 
-    st.caption("※ ワイド/連系は“期待払い戻し/100円”を100で割った値を入れてOK（例 420円→4.2）")
     _df = st.data_editor(
         _df,
         column_config={
@@ -1171,26 +1178,23 @@ if use_kelly and len(_df) > 0:
         },
         use_container_width=True,
         num_rows='dynamic',
-        disabled=['券種','印','馬','相手','金額','的中確率q']  # 金額はここで一旦無効化して後で上書き
+        disabled=['券種','印','馬','相手','金額','的中確率q'],
+        key="kelly_editor"
     )
 
     # 3) f* を計算し、ハーフケリーで賭け額を算出
     o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
     q = pd.to_numeric(_df['的中確率q'], errors='coerce')
 
-    # f* = (q*o - 1)/(o - 1) の正の部分。負なら0。
-    f_star = (q * o - 1) / (o - 1)
-    f_star = f_star.where((o > 1.01) & q.notna(), np.nan)
-    f_star = f_star.clip(lower=0).fillna(0.0)
+    valid = (o > 1.01) & q.notna()
+    f_star = ((q * o - 1) / (o - 1)).where(valid, 0.0).clip(lower=0.0).fillna(0.0)  # 期待値<=0なら0
 
-    # 総予算に対してハーフケリー
     bankroll = float(total_budget)
-    stake_raw = bankroll * 0.5 * f_star
+    stake_raw = bankroll * 0.5 * f_star  # ハーフケリー
 
-    # 0円 or NaN を除外しつつ、合計が予算を超えたら比例スケール
     total_stake = float(stake_raw.sum())
     if total_stake > bankroll and total_stake > 0:
-        stake_raw *= bankroll / total_stake
+        stake_raw *= bankroll / total_stake  # 念のため上限ガード
 
     # 最小賭け単位で丸め
     stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
@@ -1199,39 +1203,38 @@ if use_kelly and len(_df) > 0:
     rem_k = int(bankroll - stake_rounded.sum())
     i = 0
     while rem_k >= int(min_unit) and i < len(stake_rounded):
-        stake_rounded[i] += int(min_unit)
+        stake_rounded.iloc[i] += int(min_unit)
         rem_k -= int(min_unit)
         i += 1
 
-    # 4) 最終「金額」をハーフケリー結果で上書き
-    _df['金額'] = stake_rounded.map(lambda x: f"{int(x):,}円" if x > 0 else "")
+    # 4) 金額を数値のまま上書き（この時点では"円"を付けない！）
+    _df['金額'] = stake_rounded.astype(int)
 
-# （ここから下は既存の「タブ表示」ロジックをそのまま継続）
-
-# 合計チェック & 最終表示
-_df = pd.DataFrame(bets)
-spent = int(_df['金額'].fillna(0).replace('',0).sum())
+# 合計チェック（数値のまま） & 最終表示用に整形
+spent = int(pd.to_numeric(_df['金額'], errors='coerce').fillna(0).sum())
 diff = total_budget - spent
 if diff != 0 and len(_df) > 0:
     for idx in _df.index:
         cur = int(_df.at[idx,'金額'])
         new = cur + diff
-        if new >= 0 and new % min_unit == 0:
+        if new >= 0 and new % int(min_unit) == 0:
             _df.at[idx,'金額'] = new
             break
 
-_df['金額'] = _df['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
+# 表示用に文字列化（ここで初めて "円" を付ける）
+_df_disp = _df.copy()
+_df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
 
-unique_types = _df['券種'].unique().tolist() if len(_df)>0 else []
+unique_types = _df_disp['券種'].unique().tolist() if len(_df_disp)>0 else []
 tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types)>0 else st.tabs(['サマリー'])
 with tabs[0]:
     st.subheader("■ 最終買い目一覧（全券種まとめ）")
-    if len(_df)==0: st.info("現在、買い目はありません。")
+    if len(_df_disp)==0: st.info("現在、買い目はありません。")
     else:
-        st.table(_df[['券種','印','馬','相手','金額']])
+        st.table(_df_disp[['券種','印','馬','相手','金額']])
 
 for i, typ in enumerate(unique_types, start=1):
     with tabs[i]:
-        df_this = _df[_df['券種'] == typ]
+        df_this = _df_disp[_df_disp['券種'] == typ]
         st.subheader(f"{typ} 買い目一覧")
         st.table(df_this[['券種','印','馬','相手','金額']]) if len(df_this)>0 else st.info(f"{typ} の買い目はありません。")
