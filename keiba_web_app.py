@@ -87,6 +87,13 @@ min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], 
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 show_map_ui = st.sidebar.checkbox("列マッピングUIを表示", value=False)
+# === 脚質自動推定 & ペースMC 設定 ===
+with st.sidebar.expander("脚質自動推定（強化）", expanded=True):
+    auto_style_on   = st.checkbox("自動推定を使う（空欄を自動で埋める）", True)
+    AUTO_OVERWRITE  = st.checkbox("手入力より自動を優先して上書き", False)
+    NRECENT         = st.slider("直近レース数（脚質推定）", 1, 10, 5)
+    HL_DAYS_STYLE   = st.slider("半減期（日・脚質用）", 30, 365, 180, 15)
+    pace_mc_draws   = st.slider("ペースMC回数", 500, 30000, 5000, 500)
 
 # --- 勝率モンテカルロ設定（しっかり版） ---
 with st.sidebar.expander("勝率シミュレーション（しっかり版）", expanded=False):
@@ -263,43 +270,70 @@ edited = st.data_editor(
 )
 horses = edited.copy()
 
-# --- 4角順位×頭数から脚質を自動推定（直近N走の平均で判断） ---
-AUTO_OVERWRITE = True  # Trueにすると出走表の脚質を自動推定で上書き
+# --- 脚質 自動推定（強化版：確率モデル＋時間減衰） ---
+df_style = pd.DataFrame({'馬名': [], 'p_逃げ': [], 'p_先行': [], 'p_差し': [], 'p_追込': [], '推定脚質': []})
 
-NRECENT = 3  # 直近何走で見るか
 need_cols = {'馬名','レース日','頭数','通過4角'}
 if need_cols.issubset(df_score.columns):
     tmp = (
-        df_score[['馬名','レース日','頭数','通過4角']].dropna()
+        df_score[['馬名','レース日','頭数','通過4角','上3F順位']].copy()
+        .dropna(subset=['馬名','レース日','頭数','通過4角'])
         .sort_values(['馬名','レース日'], ascending=[True, False])
-        .groupby('馬名')
-        .head(NRECENT)
-        .copy()
     )
-    # 先行度 = 4角順位 / 頭数（小さいほど前）
-    tmp['先行度'] = tmp['通過4角'] / tmp['頭数']
-    lead = tmp.groupby('馬名')['先行度'].mean()
+    tmp['_rn'] = tmp.groupby('馬名').cumcount()+1
+    tmp = tmp[tmp['_rn'] <= int(NRECENT)].copy()
 
-    def style_from_ratio(r: float) -> str:
-        if r <= 0.20: return '逃げ'
-        if r <= 0.50: return '先行'
-        if r <= 0.80: return '差し'
-        return '追込'
+    # 時間減衰重み
+    today = pd.Timestamp.today()
+    tmp['_days'] = (today - pd.to_datetime(tmp['レース日'], errors='coerce')).dt.days.clip(lower=0).fillna(9999)
+    tmp['_w'] = 0.5 ** (tmp['_days'] / float(HL_DAYS_STYLE))
 
-    auto_style = lead.map(style_from_ratio)
+    # 位置取り 0（先頭）〜1（最後方）
+    denom = (pd.to_numeric(tmp['頭数'], errors='coerce') - 1).replace(0, np.nan)
+    pos_ratio = (pd.to_numeric(tmp['通過4角'], errors='coerce') - 1) / denom
+    pos_ratio = pos_ratio.clip(0,1).fillna(0.5)
 
-    # 出走表 horses に反映
-    if '脚質' not in horses.columns:
-        horses['脚質'] = ''
-    if AUTO_OVERWRITE:
-        # すべて上書き
-        horses['脚質'] = horses['馬名'].map(auto_style).fillna(horses['脚質'])
-    else:
-        # 空欄だけ埋める
-        mask_blank = horses['脚質'].astype(str).str.strip().eq('')
-        horses.loc[mask_blank, '脚質'] = horses.loc[mask_blank, '馬名'].map(auto_style)
+    # 差し・追込の“末脚補強” 上3F順位が良いほど +（無ければ0）
+    ag = pd.to_numeric(tmp['上3F順位'], errors='coerce')
+    close_strength = ((3.5 - ag) / 3.5).clip(lower=0, upper=1).fillna(0.0)
+
+    # 走ごとのロジット
+    tmp['L_nige']   =  2.5*(1 - pos_ratio) - 1.0*close_strength
+    tmp['L_sengo']  =  1.2*(1 - pos_ratio)
+    tmp['L_sashi']  =  1.2*(pos_ratio)     + 1.2*close_strength
+    tmp['L_oikomi'] =  2.5*(pos_ratio)     + 0.8*close_strength
+
+    rows = []
+    for name, g in tmp.groupby('馬名'):
+        w = g['_w'].to_numpy()
+        sw = w.sum()
+        if sw <= 0: 
+            continue
+        def wavg(col): 
+            v = g[col].to_numpy()
+            return float((v*w).sum()/sw)
+        Ln, Lse, Lsa, Lo = (wavg('L_nige'), wavg('L_sengo'), wavg('L_sashi'), wavg('L_oikomi'))
+        vec = np.array([Ln, Lse, Lsa, Lo], dtype=float)
+        vec = vec - np.max(vec)
+        ex  = np.exp(vec)
+        p   = ex / ex.sum()
+        idx2style = ['逃げ','先行','差し','追込']
+        rows.append([name, *p.tolist(), idx2style[int(np.argmax(p))]])
+
+    if rows:
+        df_style = pd.DataFrame(rows, columns=['馬名','p_逃げ','p_先行','p_差し','p_追込','推定脚質'])
+
+        # horses に反映（空欄だけ or 上書き）
+        if '脚質' not in horses.columns:
+            horses['脚質'] = ''
+        pred_map = df_style.set_index('馬名')['推定脚質']
+        if AUTO_OVERWRITE:
+            horses['脚質'] = horses['馬名'].map(pred_map).fillna(horses['脚質'])
+        elif auto_style_on:
+            mask_blank = horses['脚質'].astype(str).str.strip().eq('')
+            horses.loc[mask_blank, '脚質'] = horses.loc[mask_blank, '馬名'].map(pred_map).fillna(horses.loc[mask_blank,'脚質'])
 else:
-    st.warning("『通過順４角（通過4角）』『頭数』が見つからないため脚質の自動推定をスキップしました。サイドバーの列マッピングで対応してください。")
+    st.warning("『通過4角』『頭数』『レース日』が不足。脚質の自動推定をスキップしました。")
 
 # --- 戦績率（%→数値）＆ベストタイム抽出（任意） ---
 rate_cols = [c for c in ['勝率','連対率','複勝率'] if c in attrs.columns]
@@ -490,31 +524,84 @@ for c in ['Stdev','WStd']:
     if c in df_agg.columns:
         df_agg[c] = df_agg[c].fillna(df_agg[c].median())
 
-# ===== ペース想定 =====
-df_map = horses.copy()
-df_map['番'] = pd.to_numeric(df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９', '0123456789')), errors='coerce')
-df_map = df_map.dropna(subset=['番']).astype({'番':int})
-df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
-
-kakusitsu = ['逃げ','先行','差し','追込']
-counter = df_map['脚質'].value_counts().reindex(kakusitsu, fill_value=0)
-
-def pace_and_favor(counter):
-    nige = counter['逃げ']; sengo = counter['先行']
-    if nige >= 3 or (nige==2 and sengo>=4): return "ハイペース", {'逃げ':'△','先行':'△','差し':'◎','追込':'〇'}
-    if nige == 1 and sengo <= 2:           return "スローペース", {'逃げ':'◎','先行':'〇','差し':'△','追込':'×'}
-    if nige <= 1:                           return "ややスローペース", {'逃げ':'〇','先行':'◎','差し':'△','追込':'×'}
-    return "ミドルペース", {'逃げ':'〇','先行':'◎','差し':'〇','追込':'△'}
-
-pace_type, mark = pace_and_favor(counter)
-mark_to_pts = {'◎':2, '〇':1, '○':1, '△':0, '×':-1}
-
-# ===== 最終スコア合成 =====
+# ===== ペース想定（確率的MC）＋ 最終スコア合成 =====
+# まず RecencyZ / StabZ は従来通り
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'].fillna(df_agg['WStd'].median()))
-style_map = horses.set_index('馬名')['脚質']
-df_agg['脚質'] = df_agg['馬名'].map(style_map)
-df_agg['PacePts'] = df_agg['脚質'].map(lambda s: mark_to_pts.get(mark.get(s,'△'),0))
+
+# 表示用の脚質（手入力 > 推定 > 空欄）
+style_manual = horses.set_index('馬名')['脚質'] if '脚質' in horses.columns else pd.Series(dtype=str)
+style_pred   = df_style.set_index('馬名')['推定脚質'] if not df_style.empty else pd.Series(dtype=str)
+combined_style = style_manual.copy()
+need_fill = combined_style.isna() | combined_style.astype(str).str.strip().eq('')
+combined_style[need_fill] = style_pred.reindex(combined_style.index)[need_fill]
+df_agg['脚質'] = df_agg['馬名'].map(combined_style).fillna('')
+
+# スタイル確率行列 P を作る（推定が無ければ one-hot / 不明は均等）
+idx2style = ['逃げ','先行','差し','追込']
+name_list = df_agg['馬名'].tolist()
+H = len(name_list)
+P = np.zeros((H, 4), dtype=float)
+
+if not df_style.empty and {'p_逃げ','p_先行','p_差し','p_追込'}.issubset(df_style.columns):
+    pmap = df_style.set_index('馬名')[['p_逃げ','p_先行','p_差し','p_追込']]
+    for i, nm in enumerate(name_list):
+        if nm in pmap.index:
+            P[i, :] = pmap.loc[nm].to_numpy(dtype=float)
+        else:
+            stl = combined_style.get(nm, '')
+            if stl in idx2style:
+                P[i, idx2style.index(stl)] = 1.0
+            else:
+                P[i, :] = 0.25
+else:
+    for i, nm in enumerate(name_list):
+        stl = combined_style.get(nm, '')
+        if stl in idx2style:
+            P[i, idx2style.index(stl)] = 1.0
+        else:
+            P[i, :] = 0.25
+
+# ペース分類ルール
+mark_rule = {
+    'ハイペース':      {'逃げ':'△','先行':'△','差し':'◎','追込':'〇'},
+    'ミドルペース':    {'逃げ':'〇','先行':'◎','差し':'〇','追込':'△'},
+    'ややスローペース': {'逃げ':'〇','先行':'◎','差し':'△','追込':'×'},
+    'スローペース':    {'逃げ':'◎','先行':'〇','差し':'△','追込':'×'},
+}
+mark_to_pts = {'◎':2, '〇':1, '○':1, '△':0, '×':-1}
+
+# MC で PacePts の期待値を計算
+rng_pace = np.random.default_rng(int(mc_seed) + 12345)
+sum_pts = np.zeros(H, dtype=float)
+pace_counter = {'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
+
+for _ in range(int(pace_mc_draws)):
+    sampled = [rng_pace.choice(4, p=P[i]) for i in range(H)]
+    nige  = sum(1 for s in sampled if s==0)
+    sengo = sum(1 for s in sampled if s==1)
+
+    if nige >= 3 or (nige==2 and sengo>=4):
+        pace_t = "ハイペース"
+    elif nige == 1 and sengo <= 2:
+        pace_t = "スローペース"
+    elif nige <= 1:
+        pace_t = "ややスローペース"
+    else:
+        pace_t = "ミドルペース"
+    pace_counter[pace_t] += 1
+
+    mk = mark_rule[pace_t]
+    for i, s in enumerate(sampled):
+        style_name = idx2style[s]
+        sum_pts[i] += mark_to_pts[ mk[style_name] ]
+
+df_agg['PacePts'] = sum_pts / max(1, int(pace_mc_draws))
+
+# 代表ペース（最多出現）を図用に
+pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
+
+# 最終スコア
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
 
