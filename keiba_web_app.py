@@ -87,92 +87,126 @@ min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], 
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
-# ======================== メイン ========================
-st.title("競馬予想アプリ（完成系・汎用戦績＆修正版）")
-st.subheader("ファイルアップロード")
-excel_file = st.file_uploader("Excel (成績＆属性)", type='xlsx')
-html_file  = st.file_uploader("HTML (血統)", type='html')
-if not excel_file or not html_file:
-    st.info("ExcelとHTMLを両方アップロードしてください。")
-    st.stop()
-
-# ---- データ読み込み ----
-df_score = pd.read_excel(excel_file, sheet_name=0)
-sheet2   = pd.read_excel(excel_file, sheet_name=1)
-sheet2 = sheet2.drop_duplicates(subset=sheet2.columns[2], keep='first').reset_index(drop=True)
-attrs = sheet2.iloc[:, [0,1,2,3,4]].copy()
-attrs.columns = ['枠','番','馬名','性別','年齢']
-attrs['脚質'] = ''
-attrs['斤量'] = np.nan
-
-# ===== [M1] 戦績率＆ベストタイム抽出（汎用） =====
-def norm_col(s: str) -> str:
+# ---- データ読み込み + インタラクティブ・マッピング ----
+def _norm_col(s: str) -> str:
     s = str(s).strip()
     s = re.sub(r'\s+', '', s)
-    s = s.replace('（', '(').replace('）', ')').replace('％', '%')
-    s = s.replace('ﾍﾞｽﾄ', 'ベスト').replace('ﾀｲﾑ', 'タイム')
+    s = s.translate(str.maketrans('０-９','0-9'))
+    s = s.replace('（','(').replace('）',')').replace('％','%')
     return s
 
-col_map = {orig: norm_col(orig) for orig in sheet2.columns}
+def _parse_time_to_sec(x):
+    if x is None or (isinstance(x, float) and np.isnan(x)): return np.nan
+    s = str(x).strip()
+    m = re.match(r'^(\d+):(\d+)\.(\d+)$', s)
+    if m: return int(m.group(1))*60 + int(m.group(2)) + float('0.'+m.group(3))
+    m = re.match(r'^(\d+)[\.:](\d+)[\.:](\d+)$', s)
+    if m: return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
+    try:  return float(s)
+    except: return np.nan
 
-def find_col(patterns):
+def _auto_guess(col_map, pats):
     for orig, normed in col_map.items():
-        for pat in patterns:
-            if re.search(pat, normed, flags=re.I):
+        for p in pats:
+            if re.search(p, normed, flags=re.I):
                 return orig
     return None
 
-name_col = find_col([r'馬名|名前|出走馬']) or sheet2.columns[2]
-# 汎用マッチ
-col_win  = find_col([r'勝率'])
-col_quin = find_col([r'連対率|連対'])
-col_plc  = find_col([r'複勝率|複勝'])
-col_bt   = find_col([r'ベスト.*タイム', r'Best.*Time', r'ﾍﾞｽﾄ.*ﾀｲﾑ', r'タイム.*(最速|ベスト)'])
+def _interactive_map(df, patterns, required_keys, title, state_key):
+    st.markdown(f"#### 列マッピング：{title}")
+    cols = list(df.columns)
+    cmap = {c: _norm_col(c) for c in cols}
+    mapping = {}
+    for key, pats in patterns.items():
+        default = st.session_state.get(f"{state_key}:{key}") or _auto_guess(cmap, pats)
+        mapping[key] = st.selectbox(
+            f"{key}",
+            options=['<未選択>'] + cols,
+            index=(['<未選択>']+cols).index(default) if default in cols else 0,
+            key=f"map:{state_key}:{key}"
+        )
+        if mapping[key] != '<未選択>':
+            st.session_state[f"{state_key}:{key}"] = mapping[key]
 
-if any(c is None for c in [col_win, col_quin, col_plc, col_bt]):
-    st.warning("2枚目シートの列自動検出に失敗。手動で選んでください。")
-    options = list(sheet2.columns)
-    if col_win  is None:  col_win  = st.selectbox("勝率の列", options, key="wincol_any")
-    if col_quin is None:  col_quin = st.selectbox("連対率の列", options, key="quincol_any")
-    if col_plc  is None:  col_plc  = st.selectbox("複勝率の列", options, key="plccol_any")
-    if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options, key="btcol_any")
+    missing = [k for k in required_keys if mapping.get(k) in (None, '<未選択>')]
+    if missing:
+        st.warning("未選択の必須列: " + " / ".join(missing))
+        st.stop()
+    return {k: (None if v=='<未選択>' else v) for k,v in mapping.items()}
 
-rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
-rate.columns = ['馬名','勝率','連対率','複勝率','ベストタイム']
+# === sheet0（過去走データ） ===
+sheet0 = pd.read_excel(excel_file, sheet_name=0)
+PAT_S0 = {
+    '馬名'         : [r'馬名|名前|出走馬'],
+    'レース日'     : [r'レース日|日付S|日付|年月日'],
+    '競走名'       : [r'競走名|レース名|名称'],
+    'クラス名'     : [r'クラス名|格|条件|レースグレード'],
+    '頭数'         : [r'頭数|出走頭数'],
+    '確定着順'     : [r'確定着順|着順(?!率)'],
+    '枠'           : [r'枠|枠番'],
+    '番'           : [r'馬番|番'],
+    '斤量'         : [r'斤量'],
+    '馬体重'       : [r'馬体重|体重'],
+    '上がり3Fタイム': [r'上がり3Fタイム|上がり3F|上3Fタイム|上3F'],
+    '上3F順位'     : [r'上がり3F順位|上3F順位'],
+    '通過4角'      : [r'通過.*4角|4角.*通過|第4コーナー順位|4角順位'],
+    '性別'         : [r'性別'],
+    '年齢'         : [r'年齢|馬齢'],
+    '走破タイム秒' : [r'走破タイム.*秒|走破タイム|タイム$'],
+    '距離'         : [r'距離'],
+    '馬場'         : [r'馬場|馬場状態'],
+    '天候'         : [r'天候'],
+}
+REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
+MAP_S0 = _interactive_map(sheet0, PAT_S0, REQ_S0, "sheet0（過去走）", "s0")
 
-for c in ['勝率','連対率','複勝率']:
-    rate[c] = (
-        rate[c].astype(str)
-               .str.replace('%','', regex=False)
-               .str.replace('％','', regex=False)
-    )
-    rate[c] = pd.to_numeric(rate[c], errors='coerce')
+df_score = pd.DataFrame()
+for k, col in MAP_S0.items():
+    if col is None: continue
+    df_score[k] = sheet0[col]
 
-max_val = pd.concat([rate['勝率'], rate['連対率'], rate['複勝率']], axis=1).max().max()
-if pd.notna(max_val) and max_val <= 1.0:
-    for c in ['勝率','連対率','複勝率']:
-        rate[c] = rate[c] * 100.0
+# 型・パース
+df_score['レース日'] = pd.to_datetime(df_score['レース日'], errors='coerce')
+for c in ['頭数','確定着順','枠','番','斤量','馬体重','上3F順位','通過4角','距離']:
+    if c in df_score: df_score[c] = pd.to_numeric(df_score[c], errors='coerce')
+if '走破タイム秒' in df_score: df_score['走破タイム秒'] = df_score['走破タイム秒'].apply(_parse_time_to_sec)
+if '上がり3Fタイム' in df_score: df_score['上がり3Fタイム'] = df_score['上がり3Fタイム'].apply(_parse_time_to_sec)
 
-def parse_time_to_sec(x):
-    s = str(x).strip()
-    m = re.match(r'^(\d+):(\d+)\.(\d+)$', s)
-    if m:
-        return int(m.group(1))*60 + int(m.group(2)) + float('0.'+m.group(3))
-    m = re.match(r'^(\d+)[\.:](\d+)[\.:](\d+)$', s)
-    if m:
-        return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
-    return pd.to_numeric(s, errors='coerce')
+# === sheet1（当日出走表／プロフィール） ===
+sheet1 = pd.read_excel(excel_file, sheet_name=1)
+PAT_S1 = {
+    '馬名'   : [r'馬名|名前|出走馬'],
+    '枠'     : [r'枠|枠番'],
+    '番'     : [r'馬番|番'],
+    '性別'   : [r'性別'],
+    '年齢'   : [r'年齢|馬齢'],
+    '斤量'   : [r'斤量'],
+    '馬体重' : [r'馬体重|体重'],
+    '脚質'   : [r'脚質'],
+    '勝率'   : [r'勝率(?!.*率)|\b勝率\b'],
+    '連対率' : [r'連対率|連対'],
+    '複勝率' : [r'複勝率|複勝'],
+    'ベストタイム': [r'ベスト.*タイム|Best.*Time|ﾍﾞｽﾄ.*ﾀｲﾑ|タイム.*(最速|ベスト)'],
+}
+REQ_S1 = ['馬名','枠','番','性別','年齢']
+MAP_S1 = _interactive_map(sheet1, PAT_S1, REQ_S1, "sheet1（出走表）", "s1")
 
-rate['ベストタイム秒'] = rate['ベストタイム'].apply(parse_time_to_sec)
+attrs = pd.DataFrame()
+for k, col in MAP_S1.items():
+    if col is None: continue
+    attrs[k] = sheet1[col]
+for c in ['枠','番','斤量','馬体重']:
+    if c in attrs: attrs[c] = pd.to_numeric(attrs[c], errors='coerce')
+if 'ベストタイム' in attrs: attrs['ベストタイム秒'] = attrs['ベストタイム'].apply(_parse_time_to_sec)
 
-# --- 馬一覧＋脚質＋斤量＋馬体重入力 ---
+# --- 馬一覧の確認・編集（ここで 'horses' を作る） ---
+if '脚質' not in attrs.columns: attrs['脚質'] = ''
+if '斤量' not in attrs.columns: attrs['斤量'] = np.nan
+if '馬体重' not in attrs.columns: attrs['馬体重'] = np.nan
+
 st.subheader("馬一覧・脚質・斤量・当日馬体重入力")
-if '馬体重' not in attrs.columns:
-    attrs['馬体重'] = np.nan
-
 edited = st.data_editor(
-    attrs,
-    column_order=['枠','番','馬名','性別','年齢','脚質','斤量','馬体重'],
+    attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']],
     column_config={
         '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込']),
         '斤量': st.column_config.NumberColumn('斤量', min_value=45, max_value=65, step=0.5),
@@ -181,9 +215,24 @@ edited = st.data_editor(
     use_container_width=True,
     num_rows='static'
 )
-horses = edited.copy()[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']]
+horses = edited.copy()
 
-# ---- 血統パース ----
+# --- 戦績率（%→数値）＆ベストタイム抽出（任意） ---
+rate_cols = [c for c in ['勝率','連対率','複勝率'] if c in attrs.columns]
+if rate_cols:
+    rate = attrs[['馬名'] + rate_cols].copy()
+    for c in rate_cols:
+        rate[c] = rate[c].astype(str).str.replace('%','', regex=False).str.replace('％','', regex=False)
+        rate[c] = pd.to_numeric(rate[c], errors='coerce')
+    mx = pd.concat([rate[c] for c in rate_cols], axis=1).max().max()
+    if pd.notna(mx) and mx <= 1.0:
+        for c in rate_cols: rate[c] *= 100.0
+    if 'ベストタイム秒' in attrs:
+        rate = rate.merge(attrs[['馬名','ベストタイム秒']], on='馬名', how='left')
+else:
+    rate = pd.DataFrame({'馬名':[],'勝率':[],'連対率':[],'複勝率':[],'ベストタイム秒':[]})
+
+# ---- 血統（HTML）は従来どおりパース ----
 cont = html_file.read().decode(errors='ignore')
 rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
 blood = []
@@ -193,13 +242,21 @@ for r in rows:
         blood.append((re.sub(r'<.*?>','',c[0]).strip(), re.sub(r'<.*?>','',c[1]).strip()))
 blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
 
-# ===== [M2] マージ =====
+# ===== [M2] マージ（標準列へ統一） =====
+# df_score 側に同名カラムがあれば一旦落としてから attrs を上書き
+for dup in ['枠','番','性別','年齢','斤量','馬体重','脚質']:
+    df_score.drop(columns=[dup], errors='ignore', inplace=True)
+
 df_score = (
     df_score
-    .merge(horses, on='馬名', how='inner')
+    .merge(horses[['馬名','枠','番','性別','年齢','斤量','馬体重','脚質']], on='馬名', how='left')
     .merge(blood_df, on='馬名', how='left')
-    .merge(rate[['馬名','勝率','連対率','複勝率','ベストタイム秒']], on='馬名', how='left')
-)  # ★ ここで閉じる
+)
+
+if len(rate) > 0:
+    use_cols = ['馬名'] + [c for c in ['勝率','連対率','複勝率','ベストタイム秒'] if c in rate.columns]
+    df_score = df_score.merge(rate[use_cols], on='馬名', how='left')
+
 
 # ===== [M3] ベストタイム正規化レンジ =====
 bt_min = df_score['ベストタイム秒'].min(skipna=True)
