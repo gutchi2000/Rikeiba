@@ -288,40 +288,61 @@ if need_cols.issubset(df_score.columns):
     tmp['_days'] = (today - pd.to_datetime(tmp['レース日'], errors='coerce')).dt.days.clip(lower=0).fillna(9999)
     tmp['_w'] = 0.5 ** (tmp['_days'] / float(HL_DAYS_STYLE))
 
-    # 位置取り 0（先頭）〜1（最後方）
-    denom = (pd.to_numeric(tmp['頭数'], errors='coerce') - 1).replace(0, np.nan)
-    pos_ratio = (pd.to_numeric(tmp['通過4角'], errors='coerce') - 1) / denom
-    pos_ratio = pos_ratio.clip(0,1).fillna(0.5)
+   # --- 位置取り 0（先頭）〜1（最後方）
+denom = (pd.to_numeric(tmp['頭数'], errors='coerce') - 1).replace(0, np.nan)
+pos_ratio = (pd.to_numeric(tmp['通過4角'], errors='coerce') - 1) / denom
+pos_ratio = pos_ratio.clip(0, 1).fillna(0.5)
 
-    # 差し・追込の“末脚補強” 上3F順位が良いほど +（無ければ0）
+# 上がり補強（無ければ0）
+if '上3F順位' in tmp.columns:
     ag = pd.to_numeric(tmp['上3F順位'], errors='coerce')
     close_strength = ((3.5 - ag) / 3.5).clip(lower=0, upper=1).fillna(0.0)
+else:
+    close_strength = pd.Series(0.0, index=tmp.index)
 
-    # 走ごとのロジット
-    tmp['L_nige']   =  2.5*(1 - pos_ratio) - 1.0*close_strength
-    tmp['L_sengo']  =  1.2*(1 - pos_ratio)
-    tmp['L_sashi']  =  1.2*(pos_ratio)     + 1.2*close_strength
-    tmp['L_oikomi'] =  2.5*(pos_ratio)     + 0.8*close_strength
+# ★ ロジットを再チューニング（先行/差しを基準に、逃げ/追込は厳しめ）
+b_nige, b_sengo, b_sashi, b_oikomi = -1.2, 0.6, 0.3, -0.7
+tmp['L_nige']   = b_nige  + 1.6*(1 - pos_ratio) - 1.2*close_strength
+tmp['L_sengo']  = b_sengo + 1.1*(1 - pos_ratio) - 0.1*close_strength
+tmp['L_sashi']  = b_sashi + 1.1*(pos_ratio)     + 0.9*close_strength
+tmp['L_oikomi'] = b_oikomi+ 1.6*(pos_ratio)     + 0.5*close_strength
 
-    rows = []
-    for name, g in tmp.groupby('馬名'):
-        w = g['_w'].to_numpy()
-        sw = w.sum()
-        if sw <= 0: 
-            continue
-        def wavg(col): 
-            v = g[col].to_numpy()
-            return float((v*w).sum()/sw)
-        Ln, Lse, Lsa, Lo = (wavg('L_nige'), wavg('L_sengo'), wavg('L_sashi'), wavg('L_oikomi'))
-        vec = np.array([Ln, Lse, Lsa, Lo], dtype=float)
-        vec = vec - np.max(vec)
-        ex  = np.exp(vec)
-        p   = ex / ex.sum()
-        idx2style = ['逃げ','先行','差し','追込']
-        rows.append([name, *p.tolist(), idx2style[int(np.argmax(p))]])
+# ★ 集計：重み付き平均＆“本当に前/後ろ”かの判定を追加
+rows = []
+idx2style = ['逃げ','先行','差し','追込']
+for name, g in tmp.groupby('馬名'):
+    w  = g['_w'].to_numpy(); sw = w.sum()
+    if sw <= 0: 
+        continue
+    pr = pos_ratio.loc[g.index].to_numpy()
+    cs = close_strength.loc[g.index].to_numpy()
 
-    if rows:
-        df_style = pd.DataFrame(rows, columns=['馬名','p_逃げ','p_先行','p_差し','p_追込','推定脚質'])
+    def wavg(v): return float((v*w).sum()/sw)
+
+    Ln = wavg(g['L_nige']); Lse = wavg(g['L_sengo'])
+    Ls = wavg(g['L_sashi']); Lo  = wavg(g['L_oikomi'])
+
+    vec = np.array([Ln, Lse, Ls, Lo], dtype=float)
+    vec = vec - vec.max()
+    p = np.exp(vec); p = p / p.sum()
+
+    # 代表ラベル（先にsoftmaxで）
+    pred = idx2style[int(np.argmax(p))]
+
+    # ★ ガード：逃げ/追込は“かなり偏っている”時だけ
+    pr_mean = float((pr*w).sum()/sw)
+    front_share = float(((pr <= 0.15)*w).sum()/sw)   # 4角ほぼ先頭
+    back_share  = float(((pr >= 0.85)*w).sum()/sw)   # 4角ほぼ最後方
+
+    if pred == '逃げ' and not (pr_mean <= 0.18 and front_share >= 0.35):
+        pred = '先行'
+    if pred == '追込' and not (pr_mean >= 0.82 and back_share >= 0.35):
+        pred = '差し'
+
+    rows.append([name, *p.tolist(), pred])
+
+if rows:
+    df_style = pd.DataFrame(rows, columns=['馬名','p_逃げ','p_先行','p_差し','p_追込','推定脚質'])
 
         # horses に反映（空欄だけ or 上書き）
         if '脚質' not in horses.columns:
