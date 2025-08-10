@@ -95,6 +95,16 @@ with st.sidebar.expander("脚質自動推定（強化）", expanded=True):
     HL_DAYS_STYLE   = st.slider("半減期（日・脚質用）", 30, 365, 180, 15)
     pace_mc_draws   = st.slider("ペースMC回数", 500, 30000, 5000, 500)
 
+# === ペース設定（自動MC / 固定） ===
+with st.sidebar.expander("ペース設定", expanded=False):
+    pace_mode = st.radio("ペースの扱い", ["自動（MC）", "固定（手動）"], index=0)
+    pace_fixed = st.selectbox(
+        "固定ペースを選択",
+        ["ハイペース","ミドルペース","ややスローペース","スローペース"],
+        index=1,
+        disabled=(pace_mode=="自動（MC）")
+    )
+
 # --- 勝率モンテカルロ設定（しっかり版） ---
 with st.sidebar.expander("勝率シミュレーション（しっかり版）", expanded=False):
     mc_iters   = st.slider("反復回数", 1000, 100000, 20000, 1000)
@@ -647,6 +657,15 @@ for _ in range(int(pace_mc_draws)):
 
 df_agg['PacePts'] = sum_pts / max(1, int(pace_mc_draws))
 pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
+
+# --- ここから：固定ペースなら PacePts を上書き ---
+if pace_mode == "固定（手動）":
+    pace_type = pace_fixed  # 表示も固定に合わせる
+    # そのペース時に各脚質がもらう点のベクトル [逃げ,先行,差し,追込] を作成
+    v_pts = np.array([mark_to_pts[ mark_rule[pace_type][st] ] for st in idx2style], dtype=float)
+    # 各馬の脚質確率 P（H×4）との内積で期待点を算出
+    df_agg['PacePts'] = (P @ v_pts)
+# --- ここまで ---
 
 # 最終スコア
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
