@@ -150,6 +150,40 @@ pace_gain    = st.sidebar.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1,
 weight_coeff = st.sidebar.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1,
                                  help="56kgを基準に超過1kgあたりの減点。")
 
+# --- 斤量ベース（WFA/JRA簡略） ---
+with st.sidebar.expander("斤量ベース（WFA/JRA簡略）", expanded=True):
+    st.caption("画像の『馬齢重量』をそのまま使う簡略WFA。2歳は月で、牝は-1〜-2kg相当。必要なら下で微調整可。")
+    race_date = pd.to_datetime(
+        st.date_input("開催日", value=pd.Timestamp.today().date())
+    )
+    use_wfa_base = st.checkbox("WFA基準を使う（推奨）", value=True)
+
+    # 画像表の初期値（編集可）
+    wfa_2_early_m = st.number_input("2歳（〜9月） 牡/せん [kg]", 50.0, 60.0, 55.0, 0.5)
+    wfa_2_early_f = st.number_input("2歳（〜9月） 牝 [kg]"    , 48.0, 60.0, 54.0, 0.5)
+    wfa_2_late_m  = st.number_input("2歳（10-12月） 牡/せん [kg]", 50.0, 60.0, 56.0, 0.5)
+    wfa_2_late_f  = st.number_input("2歳（10-12月） 牝 [kg]"    , 48.0, 60.0, 55.0, 0.5)
+    wfa_3p_m      = st.number_input("3歳以上 牡/せん [kg]" , 50.0, 62.0, 57.0, 0.5)
+    wfa_3p_f      = st.number_input("3歳以上 牝 [kg]"     , 48.0, 60.0, 55.0, 0.5)
+
+def wfa_base_for(sex: str, age: int | None, dt: pd.Timestamp) -> float:
+    """画像の馬齢重量の簡略表に基づく基準斤量を返す（牡=‘牡’/‘セ’は同扱い）。"""
+    try:
+        a = int(age) if age is not None and not pd.isna(age) else None
+    except Exception:
+        a = None
+    m = int(dt.month) if isinstance(dt, pd.Timestamp) else 1
+
+    if a == 2:
+        male = wfa_2_early_m if m <= 9 else wfa_2_late_m
+        filly = wfa_2_early_f if m <= 9 else wfa_2_late_f
+    elif a is not None and a >= 3:
+        male, filly = wfa_3p_m, wfa_3p_f
+    else:
+        # 年齢が欠損したら3歳以上を既定に
+        male, filly = wfa_3p_m, wfa_3p_f
+    return male if sex in ("牡", "セ") else filly
+
 st.sidebar.markdown("---")
 st.sidebar.header("ペース / 脚質")
 with st.sidebar.expander("脚質自動推定（強化）", expanded=False):
@@ -250,6 +284,14 @@ def collect_params():
         "mc_iters": int(mc_iters), "mc_beta": mc_beta,
         "mc_tau": mc_tau, "mc_seed": int(mc_seed),
         "show_map_ui": show_map_ui,
+"race_date": str(race_date.date()),
+"use_wfa_base": use_wfa_base,
+"wfa_2_early_m": float(wfa_2_early_m),
+"wfa_2_early_f": float(wfa_2_early_f),
+"wfa_2_late_m": float(wfa_2_late_m),
+"wfa_2_late_f": float(wfa_2_late_f),
+"wfa_3p_m": float(wfa_3p_m),
+"wfa_3p_f": float(wfa_3p_f),
     }
 
 def apply_params(cfg: dict):
@@ -659,12 +701,23 @@ def calc_score(r):
             bt_bonus = besttime_w * bt_norm
     except: pass
 
-    kg_pen = 0.0
+       kg_pen = 0.0
     try:
         kg = float(r.get('斤量', np.nan))
         if not np.isnan(kg):
-            kg_pen = -max(0.0, kg - 56.0) * weight_coeff
-    except: pass
+            if use_wfa_base:
+                sex = str(r.get('性別', ''))
+                try:
+                    age_i = int(r.get('年齢'))
+                except Exception:
+                    age_i = None
+                base = wfa_base_for(sex, age_i, race_date)
+            else:
+                base = 56.0  # 旧仕様のフォールバック
+            # 基準超過分のみを減点（基準未満は加点しない設計のまま）
+            kg_pen = -max(0.0, kg - float(base)) * float(weight_coeff)
+    except Exception:
+        pass
 
     total_bonus = blood_bonus + grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus + kg_pen
     return raw * sw * gw * stw * fw * aw + total_bonus
