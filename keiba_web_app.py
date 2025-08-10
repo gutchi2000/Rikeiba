@@ -393,6 +393,19 @@ if html_file is not None:
 else:
     blood_df = pd.DataFrame({'馬名': [], '血統': []})
 
+# === 過去走から「適正馬体重」を先取り（マージ前に！） ===
+best_bw_map = {}
+if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
+    _bw = df_score[['馬名','馬体重','確定着順']].dropna()
+    # 念のため数値化
+    _bw['確定着順'] = pd.to_numeric(_bw['確定着順'], errors='coerce')
+    _bw = _bw[_bw['確定着順'].notna()]
+    # 各馬の “最良着順” の時の馬体重を採用
+    best_idx = _bw.groupby('馬名')['確定着順'].idxmin()
+    best_bw_map = _bw.loc[best_idx].set_index('馬名')['馬体重'].astype(float).to_dict()
+else:
+    best_bw_map = {}
+
 # ===== [M2] マージ（標準列へ統一） =====
 # df_score 側に同名カラムがあれば一旦落としてから attrs を上書き
 for dup in ['枠','番','性別','年齢','斤量','馬体重','脚質']:
@@ -468,17 +481,15 @@ def calc_score(r):
         elif ao == 3: agari_bonus = agari3_bonus
     except: pass
 
-    body_bonus = 0
+       body_bonus = 0
     try:
-        now_bw = r.get('馬体重', np.nan)
         name = r['馬名']
-        myhist = df_score[(df_score['馬名']==name) & (df_score['馬体重'].notna())]
-        if len(myhist) > 0:
-            best_row = myhist.loc[myhist['確定着順'].idxmin()]
-            tekitai = best_row['馬体重']
-            if not pd.isna(now_bw) and not pd.isna(tekitai) and abs(now_bw - tekitai) <= 10:
-                body_bonus = bw_bonus
-    except: pass
+        now_bw = float(r.get('馬体重', np.nan))
+        tekitai = float(best_bw_map.get(name, np.nan))  # ← 過去走から先取りした値
+        if not np.isnan(now_bw) and not np.isnan(tekitai) and abs(now_bw - tekitai) <= 10:
+            body_bonus = bw_bonus
+    except Exception:
+        pass
 
     rate_bonus = 0.0
     try:
