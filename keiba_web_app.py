@@ -701,7 +701,8 @@ def calc_score(r):
             bt_bonus = besttime_w * bt_norm
     except: pass
 
-       kg_pen = 0.0
+           # ここから（← 行頭はスペース4つ）
+    kg_pen = 0.0
     try:
         kg = float(r.get('斤量', np.nan))
         if not np.isnan(kg):
@@ -714,7 +715,7 @@ def calc_score(r):
                 base = wfa_base_for(sex, age_i, race_date)
             else:
                 base = 56.0  # 旧仕様のフォールバック
-            # 基準超過分のみを減点（基準未満は加点しない設計のまま）
+            # 基準超過分のみを減点（基準未満は加点しない）
             kg_pen = -max(0.0, kg - float(base)) * float(weight_coeff)
     except Exception:
         pass
