@@ -60,7 +60,7 @@ with st.sidebar.expander("枠順重み", expanded=False):
     frame_w = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 
 besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
-with st.sidebar.expander("戦績率の重み（すべて芝を使用）", expanded=False):
+with st.sidebar.expander("戦績率の重み（当該馬場）", expanded=False):
     win_w  = st.slider("勝率(芝)の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
     quin_w = st.slider("連対率(芝)の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
     plc_w  = st.slider("複勝率(芝)の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
@@ -135,9 +135,9 @@ if any(c is None for c in [col_win, col_quin, col_plc, col_bt]):
     if col_bt   is None:  col_bt   = st.selectbox("ベストタイムの列", options, key="btcol")
 
 rate = sheet2[[name_col, col_win, col_quin, col_plc, col_bt]].copy()
-rate.columns = ['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム']
+rate.columns = ['馬名','勝率','連対率','複勝率','ベストタイム']  # ← 汎用に改名
 
-for c in ['勝率_芝','連対率_芝','複勝率_芝']:
+for c in ['勝率','連対率','複勝率']:
     rate[c] = (
         rate[c].astype(str)
                .str.replace('%','', regex=False)
@@ -145,9 +145,9 @@ for c in ['勝率_芝','連対率_芝','複勝率_芝']:
     )
     rate[c] = pd.to_numeric(rate[c], errors='coerce')
 
-max_val = pd.concat([rate['勝率_芝'], rate['連対率_芝'], rate['複勝率_芝']], axis=1).max().max()
+max_val = pd.concat([rate['勝率'], rate['連対率'], rate['複勝率']], axis=1).max().max()
 if pd.notna(max_val) and max_val <= 1.0:
-    for c in ['勝率_芝','連対率_芝','複勝率_芝']:
+    for c in ['勝率','連対率','複勝率']:
         rate[c] = rate[c] * 100.0
 
 def parse_time_to_sec(x):
@@ -195,8 +195,7 @@ df_score = (
     df_score
     .merge(horses, on='馬名', how='inner')
     .merge(blood_df, on='馬名', how='left')
-    .merge(rate[['馬名','勝率_芝','連対率_芝','複勝率_芝','ベストタイム秒']], on='馬名', how='left')
-)
+    .merge(rate[['馬名','勝率','連対率','複勝率','ベストタイム秒']], on='馬名', how='left')
 
 # ===== [M3] ベストタイム正規化レンジ =====
 bt_min = df_score['ベストタイム秒'].min(skipna=True)
@@ -277,13 +276,13 @@ def calc_score(r):
                 body_bonus = bw_bonus
     except: pass
 
-    # 芝の勝率/連対率/複勝率
-    rate_bonus = 0.0
-    try:
-        if pd.notna(r.get('勝率_芝', np.nan)):   rate_bonus += win_w  * (float(r['勝率_芝'])  / 100.0)
-        if pd.notna(r.get('連対率_芝', np.nan)): rate_bonus += quin_w * (float(r['連対率_芝']) / 100.0)
-        if pd.notna(r.get('複勝率_芝', np.nan)): rate_bonus += plc_w  * (float(r['複勝率_芝'])  / 100.0)
-    except: pass
+   # 戦績（当該馬場が既に反映されている前提で汎用カラムを使用）
+rate_bonus = 0.0
+try:
+    if pd.notna(r.get('勝率', np.nan)):   rate_bonus += win_w  * (float(r['勝率'])  / 100.0)
+    if pd.notna(r.get('連対率', np.nan)): rate_bonus += quin_w * (float(r['連対率']) / 100.0)
+    if pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
+except: pass
 
     # ベストタイム（速いほど+）
     bt_bonus = 0.0
