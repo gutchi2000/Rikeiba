@@ -562,8 +562,6 @@ quad_text = alt.Chart(pd.DataFrame([
 ])).mark_text(
     fontSize=14, fontWeight='bold',
     color='#ffffff',      # 白
-    stroke='#000000',     # 黒フチ
-    strokeWidth=1.0       # ← 3 から 1.0 へ
 ).encode(x='x:Q', y='y:Q', text='label:N')
 
 chart = (rect + points + labels + vline + hline + quad_text).properties(
