@@ -7,6 +7,8 @@ from matplotlib import font_manager
 from itertools import combinations
 import altair as alt
 
+st.set_page_config(page_title="競馬予想アプリ", layout="wide")
+
 # ======================== 日本語フォント ========================
 try:
     jp_font = font_manager.FontProperties(fname="ipaexg.ttf")
