@@ -31,7 +31,7 @@ def season_of(month: int) -> str:
     if 9 <= month <= 11: return '秋'
     return '冬'
 
-_fwid = str.maketrans('０１２３','0123')  # 全角数字→半角
+_fwid = str.maketrans('０１２３','0123')  # 全角数字→半角（一部）
 
 def normalize_grade_text(x: str | None) -> str | None:
     if x is None or (isinstance(x, float) and np.isnan(x)): return None
@@ -65,7 +65,7 @@ besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
 with st.sidebar.expander("戦績率の重み（当該馬場）", expanded=False):
     win_w  = st.slider("勝率の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
     quin_w = st.slider("連対率の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
-    plc_w  = st.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
+    plc_w  = st.sidebar.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
     grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
@@ -87,11 +87,23 @@ min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], 
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 
+# ======================== ファイルアップロード（ここでゲート） ========================
+st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
+st.subheader("ファイルアップロード")
+
+excel_file = st.file_uploader("Excel（sheet0=過去走 / sheet1=出走表）", type=['xlsx'], key="excel_up")
+html_file  = st.file_uploader("HTML（血統）※任意", type=['html'], key="html_up")
+
+if excel_file is None:
+    st.info("まずExcel（.xlsx）をアップロードしてください。血統HTMLは無くても動きます。")
+    st.stop()
+
 # ---- データ読み込み + インタラクティブ・マッピング ----
 def _norm_col(s: str) -> str:
     s = str(s).strip()
     s = re.sub(r'\s+', '', s)
-    s = s.translate(str.maketrans('０-９','0-9'))
+    # ✅ 正しい全角→半角（0-9）変換
+    s = s.translate(str.maketrans('０１２３４５６７８９','0123456789'))
     s = s.replace('（','(').replace('）',')').replace('％','%')
     return s
 
@@ -232,15 +244,18 @@ if rate_cols:
 else:
     rate = pd.DataFrame({'馬名':[],'勝率':[],'連対率':[],'複勝率':[],'ベストタイム秒':[]})
 
-# ---- 血統（HTML）は従来どおりパース ----
-cont = html_file.read().decode(errors='ignore')
-rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
-blood = []
-for r in rows:
-    c = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', r)
-    if len(c) >= 2:
-        blood.append((re.sub(r'<.*?>','',c[0]).strip(), re.sub(r'<.*?>','',c[1]).strip()))
-blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
+# ---- 血統（HTML）パース：任意（未アップ時は空でOK） ----
+if html_file is not None:
+    cont = html_file.read().decode(errors='ignore')
+    rows = re.findall(r'<tr[\s\S]*?<\/tr>', cont)
+    blood = []
+    for r in rows:
+        c = re.findall(r'<t[dh][^>]*>([\s\S]*?)<\/[tdh]>', r)
+        if len(c) >= 2:
+            blood.append((re.sub(r'<.*?>','',c[0]).strip(), re.sub(r'<.*?>','',c[1]).strip()))
+    blood_df = pd.DataFrame(blood, columns=['馬名','血統'])
+else:
+    blood_df = pd.DataFrame({'馬名': [], '血統': []})
 
 # ===== [M2] マージ（標準列へ統一） =====
 # df_score 側に同名カラムがあれば一旦落としてから attrs を上書き
@@ -257,10 +272,9 @@ if len(rate) > 0:
     use_cols = ['馬名'] + [c for c in ['勝率','連対率','複勝率','ベストタイム秒'] if c in rate.columns]
     df_score = df_score.merge(rate[use_cols], on='馬名', how='left')
 
-
 # ===== [M3] ベストタイム正規化レンジ =====
-bt_min = df_score['ベストタイム秒'].min(skipna=True)
-bt_max = df_score['ベストタイム秒'].max(skipna=True)
+bt_min = df_score['ベストタイム秒'].min(skipna=True) if 'ベストタイム秒' in df_score else np.nan
+bt_max = df_score['ベストタイム秒'].max(skipna=True) if 'ベストタイム秒' in df_score else np.nan
 bt_span = (bt_max - bt_min) if pd.notna(bt_min) and pd.notna(bt_max) and (bt_max > bt_min) else 1.0
 
 # ===== スコア算出 (1走ごと) =====
@@ -277,11 +291,11 @@ CLASS_PTS = {
 def class_points(row) -> int:
     # まずグレードを優先
     g = normalize_grade_text(row.get('クラス名')) if 'クラス名' in row else None
-    if not g and 'レース名' in row:
-        g = normalize_grade_text(row.get('レース名'))
+    if not g and '競走名' in row:
+        g = normalize_grade_text(row.get('競走名'))
     if g in CLASS_PTS: return CLASS_PTS[g]
     # 条件戦
-    name = str(row.get('クラス名','')) + ' ' + str(row.get('レース名',''))
+    name = str(row.get('クラス名','')) + ' ' + str(row.get('競走名',''))
     if re.search(r'3\s*勝', name): return 3
     if re.search(r'2\s*勝', name): return 2
     if re.search(r'1\s*勝', name): return 1
@@ -290,20 +304,16 @@ def class_points(row) -> int:
     if re.search(r'リステッド|L\b', name, flags=re.I): return 5
     return 1
 
-# 1走スコア
 def calc_score(r):
     g = class_points(r)
-    # Raw: 着順が良いほど高い + 出走ボーナス
     raw = g * (r['頭数'] + 1 - r['確定着順']) + lambda_part * g
 
-    # 季節/性別/脚質/枠/年齢の重み
     sw  = season_w[season_of(pd.to_datetime(r['レース日']).month)]
-    gw  = gender_w.get(r['性別'], 1)
-    stw = style_w.get(r['脚質'], 1)
-    fw  = frame_w.get(str(r['枠']), 1)
-    aw  = age_w.get(str(r['年齢']), 1.0)
+    gw  = gender_w.get(r.get('性別'), 1)
+    stw = style_w.get(r.get('脚質'), 1)
+    fw  = frame_w.get(str(r.get('枠')), 1)
+    aw  = age_w.get(str(r.get('年齢')), 1.0)
 
-    # 血統ボーナス
     bloodline = str(r.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
     blood_bonus = 0
     for k in keys:
@@ -311,11 +321,9 @@ def calc_score(r):
             blood_bonus = bp
             break
 
-    # 重賞名ボーナス
     gnorm = normalize_grade_text(r.get('クラス名'))
     grade_point = grade_bonus if gnorm in ['G1','G2','G3'] else 0
 
-    # 上がり3F順位ボーナス
     agari_bonus = 0
     try:
         ao = int(r.get('上3F順位', np.nan))
@@ -324,7 +332,6 @@ def calc_score(r):
         elif ao == 3: agari_bonus = agari3_bonus
     except: pass
 
-    # 馬体重適正
     body_bonus = 0
     try:
         now_bw = r.get('馬体重', np.nan)
@@ -337,15 +344,13 @@ def calc_score(r):
                 body_bonus = bw_bonus
     except: pass
 
-    # 戦績（当該馬場が既に反映されている前提で汎用カラムを使用）
     rate_bonus = 0.0
     try:
-        if pd.notna(r.get('勝率', np.nan)):   rate_bonus += win_w  * (float(r['勝率'])  / 100.0)
-        if pd.notna(r.get('連対率', np.nan)): rate_bonus += quin_w * (float(r['連対率']) / 100.0)
-        if pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
+        if '勝率' in r and pd.notna(r.get('勝率', np.nan)):   rate_bonus += win_w  * (float(r['勝率'])  / 100.0)
+        if '連対率' in r and pd.notna(r.get('連対率', np.nan)): rate_bonus += quin_w * (float(r['連対率']) / 100.0)
+        if '複勝率' in r and pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
     except: pass
 
-    # ベストタイム（速いほど+）
     bt_bonus = 0.0
     try:
         if pd.notna(r.get('ベストタイム秒', np.nan)):
@@ -354,7 +359,6 @@ def calc_score(r):
             bt_bonus = besttime_w * bt_norm
     except: pass
 
-    # 斤量ペナルティ（基準56kg、超過1kgあたり weight_coeff pts 減点）
     kg_pen = 0.0
     try:
         kg = float(r.get('斤量', np.nan))
@@ -390,17 +394,12 @@ else:
     df_score['_w'] = 1.0
 
 # 重み付き平均＆標準偏差
-
 def w_mean(x, w):
-    w = np.array(w)
-    x = np.array(x)
-    s = w.sum()
+    w = np.array(w); x = np.array(x); s = w.sum()
     return float((x*w).sum()/s) if s>0 else np.nan
 
 def w_std(x, w):
-    w = np.array(w)
-    x = np.array(x)
-    s = w.sum()
+    w = np.array(w); x = np.array(x); s = w.sum()
     if s <= 0: return np.nan
     m = (x*w).sum()/s
     var = (w*((x-m)**2)).sum()/s
@@ -415,7 +414,6 @@ for name, g in df_score.groupby('馬名'):
     agg.append({'馬名':name,'AvgZ':avg,'Stdev':std,'WAvgZ':wavg,'WStd':wstd})
 
 df_agg = pd.DataFrame(agg)
-# 欠損補完
 for c in ['Stdev','WStd']:
     if c in df_agg.columns:
         df_agg[c] = df_agg[c].fillna(df_agg[c].median())
@@ -440,18 +438,11 @@ pace_type, mark = pace_and_favor(counter)
 mark_to_pts = {'◎':2, '〇':1, '○':1, '△':0, '×':-1}
 
 # ===== 最終スコア合成 =====
-# 1) 時系列加重平均を偏差値化 2) 安定性(小さいほど◎)を偏差値化 3) ペース適性点
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'].fillna(df_agg['WStd'].median()))
-
-# スタイル結合 → ペース点
 style_map = horses.set_index('馬名')['脚質']
 df_agg['脚質'] = df_agg['馬名'].map(style_map)
 df_agg['PacePts'] = df_agg['脚質'].map(lambda s: mark_to_pts.get(mark.get(s,'△'),0))
-
-# 最終 raw と 偏差値
-# FinalRaw = RecencyZ + a * StabZ + b * PacePts
-# ※ 係数はサイドバー。
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
 
@@ -475,17 +466,21 @@ labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10).encode(
 vline = alt.Chart(pd.DataFrame({'x':[50]})).mark_rule(color='gray').encode(x='x:Q')
 hline = alt.Chart(pd.DataFrame({'y':[avg_st]})).mark_rule(color='gray').encode(y='y:Q')
 
-st.altair_chart((points + labels + vline + hline + alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold').encode(x='FinalZ:Q', y='WStd:Q', text='label:N')).properties(width=700, height=420).interactive(), use_container_width=True)
+st.altair_chart(
+    (points + labels + vline + hline +
+     alt.Chart(quad_labels).mark_text(fontSize=14, fontWeight='bold')
+       .encode(x='FinalZ:Q', y='WStd:Q', text='label:N')
+    ).properties(width=700, height=420).interactive(),
+    use_container_width=True
+)
 
 # ===== 上位馬抽出（最終Z基準） =====
 topN = df_agg.sort_values('FinalZ', ascending=False).head(6).copy()
 if len(topN) == 0:
     st.warning("上位馬が抽出できませんでした。入力を確認してください。")
-
 topN['印'] = ['◎','〇','▲','☆','△','△'][:len(topN)]
 
 st.subheader("上位馬（最終偏差値ベース／根拠付き）")
-
 def reason(row):
     base = f"時系列加重平均{row['WAvgZ']:.1f}、安定度{row['WStd']:.1f}、ペース点{row['PacePts']}。"
     if row['FinalZ'] >= 65: base += "非常に高評価。"
@@ -495,7 +490,6 @@ def reason(row):
     style = str(row.get('脚質','')).strip()
     base += {"逃げ":"楽逃げなら粘り込み有力。","先行":"先行力で押し切り濃厚。","差し":"展開が向けば末脚強烈。","追込":"直線勝負の一撃に注意。"}.get(style,"")
     return base
-
 topN['根拠'] = topN.apply(reason, axis=1)
 st.table(topN[['馬名','印','根拠']])
 
@@ -534,7 +528,6 @@ dfg['着順num']  = pd.to_numeric(dfg[finish_col], errors='coerce')
 dfg['_date']    = pd.to_datetime(dfg['レース日'], errors='coerce')
 dfg['_date_str']= dfg['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 
-# レース名/上がりに改行が混ざっていても1行化
 def _clean_one_line(v):
     if pd.isna(v): return ''
     return str(v).replace('\r','').replace('\n','').strip()
@@ -546,7 +539,6 @@ dfg = dfg[dfg['GradeN'].isin(thr_map.keys()) & dfg['着順num'].notna()].copy()
 dfg = dfg[dfg.apply(lambda r: r['着順num'] <= thr_map[r['GradeN']], axis=1)]
 dfg = dfg.sort_values(['馬名','_date'], ascending=[True, False])
 
-
 def _fmt_ag(v):
     if v in [None, '', 'nan']: return ''
     s = str(v).replace('秒','').strip()
@@ -554,7 +546,6 @@ def _fmt_ag(v):
         return f"{float(s):.1f}"
     except:
         return s
-
 
 def make_table(d: pd.DataFrame) -> pd.DataFrame:
     n = len(d)
@@ -586,11 +577,11 @@ horses2 = horses.merge(df_agg[['馬名','WAvgZ','WStd','FinalZ','脚質','PacePt
 horses2['印'] = horses2['馬名'].map(印map).fillna('')
 horses2 = horses2.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'))
 
-
 def ai_comment(row):
     base = ""
     if row['印'] == '◎':
-        base += "本命評価。"; base += "高い安定感で信頼度抜群。" if row['WStd']<=8 else "能力上位もムラあり。"
+        base += "本命評価。"; base += "高い安定感で信頼度抜群。" if row['WStd']<=8 else "能力上位もムラあり。
+"
     elif row['印'] == '〇':
         base += "対抗評価。"; base += "近走安定しており軸候補。" if row['WStd']<=10 else "展開ひとつで逆転も。"
     elif row['印'] in ['▲','☆']:
@@ -622,9 +613,7 @@ others_names   = names[1:] if len(names) > 1 else []
 others_symbols = symbols[1:] if len(symbols) > 1 else []
 
 three = ['馬連','ワイド','馬単']
-scenario_map = {'通常': three, 'ちょい余裕': ['ワイド','三連複'], '余裕': ['ワイド','三連複','三連単']}
 
-# 単複：◎・〇 の2頭固定
 def round_to_unit(x, unit):
     return int(np.floor(x / unit) * unit)
 
@@ -647,27 +636,23 @@ if h2 is not None:
     bets += [{'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
              {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each}]
 
-# 連系の候補をスコア順で作る
 finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict()
-
-pair_candidates = []  # (券種, 表示印, 本命, 相手, 優先度)
-tri_candidates  = []  # 三連複 (◎-x-y)
-tri1_candidates = []  # 三連単フォーメーション (◎-s-t)
+pair_candidates = []   # (券種, 表示印, 本命, 相手, 優先度)
+tri_candidates  = []   # 三連複 (◎-x-y)
+tri1_candidates = []   # 三連単フォーメーション (◎-s-t)
 
 if h1 is not None and len(others_names) > 0:
-    # ワイド/馬連/馬単の相手候補（◎-相手）を FinalZ で優先
     for nm, mk in zip(others_names, others_symbols):
         score = finalZ_map.get(nm, 0)
         pair_candidates.append(('ワイド', f'◎–{mk}', h1, nm, score))
         pair_candidates.append(('馬連', f'◎–{mk}', h1, nm, score))
         pair_candidates.append(('馬単', f'◎→{mk}', h1, nm, score))
 
-    # 三連複：◎-x-y を相手2頭の合計スコアで優先
+    from itertools import combinations
     for a, b in combinations(others_names, 2):
         score = finalZ_map.get(a,0) + finalZ_map.get(b,0)
         tri_candidates.append(('三連複','◎-〇▲☆△△', h1, f"{a}／{b}", score))
 
-    # 三連単：2列目(上位2頭)→3列目(その他) の組み合わせを優先度付きで
     second_opts = others_names[:2]
     for s in second_opts:
         for t in others_names:
@@ -675,7 +660,6 @@ if h1 is not None and len(others_names) > 0:
             score = finalZ_map.get(s,0) + 0.7*finalZ_map.get(t,0)
             tri1_candidates.append(('三連単フォーメーション','◎-〇▲-〇▲☆△△', h1, f"{s}／{t}", score))
 
-# シナリオごとに採用券種
 if scenario == '通常':
     with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
         choice = st.radio("購入券種", options=three, index=1)
@@ -686,7 +670,6 @@ if scenario == '通常':
     if K > 0 and rem >= min_unit:
         base = round_to_unit(rem / K, min_unit)
         amounts = [base]*K
-        # 余りは上位から +min_unit ずつ
         leftover = rem - base*K
         i = 0
         while leftover >= min_unit and i < K:
@@ -702,7 +685,6 @@ elif scenario == 'ちょい余裕':
     st.write("▶ 残り予算を ワイド ＋ 三連複 で配分")
     cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
     cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
-    # 上限点数
     cut_w = min(len(cand_wide), max_lines//2 if max_lines>1 else 1)
     cut_t = min(len(cand_tri),  max_lines - cut_w)
     cand_wide, cand_tri = cand_wide[:cut_w], cand_tri[:cut_t]
@@ -727,7 +709,6 @@ elif scenario == '余裕':
     cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
     cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
     cand_tri1 = sorted(tri1_candidates, key=lambda x: x[-1], reverse=True)
-    # 点数配分: ワイド:三連複:三連単 = 2:2:1 の比率で上限
     r_w, r_t, r_t1 = 2, 2, 1
     denom = r_w + r_t + r_t1
     q_w = max(1, (max_lines * r_w)//denom)
@@ -753,7 +734,6 @@ elif scenario == '余裕':
 # 合計チェック & 最終表示用 DataFrame
 _df = pd.DataFrame(bets)
 spent = int(_df['金額'].fillna(0).replace('',0).sum())
-# 丸め誤差の微調整（単複 or 最初の連系に反映）
 diff = total_budget - spent
 if diff != 0 and len(_df) > 0:
     for idx in _df.index:
