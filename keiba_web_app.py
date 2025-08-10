@@ -90,17 +90,21 @@ def validate_inputs(df_score: pd.DataFrame, horses: pd.DataFrame):
     if problems:
         st.warning("⚠ 入力チェック：\n- " + "\n- ".join(problems))
 
-# ======================== サイドバー（整理版） ========================
+# ======================== サイドバー（折り畳み＆説明つき整理版） ========================
 st.sidebar.header("基本スコア & ボーナス")
-lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
-besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0)
+lambda_part  = st.sidebar.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05,
+                                 help="各レースの素点に加える“出走ボーナス”の強さ。大きいほど出走するだけで微加点。")
+besttime_w   = st.sidebar.slider("ベストタイム重み", 0.0, 2.0, 1.0,
+                                 help="出走表の『ベストタイム』が速いほど加点。大きいほどタイムを重視。")
 
 with st.sidebar.expander("戦績率の重み（当該馬場）", expanded=False):
+    st.caption("勝率・連対率・複勝率（％）を、1走スコアの“加点分”として取り込む時の係数です。")
     win_w  = st.slider("勝率の重み",   0.0, 5.0, 1.0, 0.1, key="w_win")
     quin_w = st.slider("連対率の重み", 0.0, 5.0, 0.7, 0.1, key="w_quin")
     plc_w  = st.slider("複勝率の重み", 0.0, 5.0, 0.5, 0.1, key="w_plc")
 
 with st.sidebar.expander("各種ボーナス設定", expanded=False):
+    st.caption("G1〜G3実績・上がり順位・当日馬体重の適合などの個別ボーナス。")
     grade_bonus  = st.slider("重賞実績ボーナス", 0, 20, 5)
     agari1_bonus = st.slider("上がり3F 1位ボーナス", 0, 10, 3)
     agari2_bonus = st.slider("上がり3F 2位ボーナス", 0, 5, 2)
@@ -108,31 +112,66 @@ with st.sidebar.expander("各種ボーナス設定", expanded=False):
     bw_bonus     = st.slider("馬体重適正ボーナス(±10kg)", 0, 10, 2)
 
 st.sidebar.markdown("---")
-st.sidebar.header("属性重み")
-with st.sidebar.expander("性別・脚質・季節・年齢・枠", expanded=False):
-    gender_w = {g: st.slider(f"性別重み: {g}", 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
-    style_w  = {s: st.slider(f"脚質重み: {s}", 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
-    season_w = {s: st.slider(f"四季重み: {s}", 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
-    age_w    = {str(age): st.slider(f"{age}歳重み", 0.0, 2.0, 1.0, 0.05) for age in range(3, 11)}
-    frame_w  = {str(i): st.slider(f"{i}枠重み", 0.0, 2.0, 1.0) for i in range(1,9)}
+st.sidebar.header("属性重み（1走スコアに掛ける係数）")
+# それぞれ独立の折り畳みブロックに分割
+with st.sidebar.expander("性別重み", expanded=False):
+    st.caption("性別に応じて増減。例：牝馬が得意な舞台なら『牝』を>1に。")
+    gender_w = {g: st.slider(f"{g}", 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
+
+with st.sidebar.expander("脚質重み", expanded=False):
+    st.caption("馬の脚質そのものにかける基本係数（ペース適性とは別枠）。")
+    style_w  = {s: st.slider(f"{s}", 0.0, 2.0, 1.0) for s in ['逃げ','先行','差し','追込']}
+
+with st.sidebar.expander("季節（四季）重み", expanded=False):
+    st.caption("開催月→四季を自動判定。季節要因（暑さ寒さ）をざっくり反映。")
+    season_w = {s: st.slider(f"{s}", 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
+
+with st.sidebar.expander("年齢重み", expanded=False):
+    st.caption("年齢別の適性差を任意に調整（3〜10歳）。")
+    age_w    = {str(age): st.slider(f"{age}歳", 0.0, 2.0, 1.0, 0.05) for age in range(3, 11)}
+
+with st.sidebar.expander("枠順重み", expanded=False):
+    st.caption("コース形状や馬場バイアスを枠単位で調整。")
+    frame_w  = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
 
 st.sidebar.markdown("---")
 st.sidebar.header("時系列・安定性・補正")
-half_life_m  = st.sidebar.slider("時系列半減期(月)", 0.0, 12.0, 6.0, 0.5)
-stab_weight  = st.sidebar.slider("安定性(小さいほど◎)の係数", 0.0, 2.0, 0.7, 0.1)
-pace_gain    = st.sidebar.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1)
-weight_coeff = st.sidebar.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1)
+st.caption("これらは最終指標に直接効きます：\n"
+           "- **時系列半減期**：過去走の“古さ”に応じた重み。半減期が短いほど『近走重視』。\n"
+           "- **安定性係数**：レースごとのブレ（WStd）をマイナス評価し、数値が大きいほど“ムラ”を強く減点。\n"
+           "- **ペース適性係数**：ペース想定による◎◯△×の点（PacePts）をどれだけ効かせるか。\n"
+           "- **斤量ペナルティ**：56kg超過分×係数だけ減点（例：58kg & 係数1 → -2pt）。")
+half_life_m  = st.sidebar.slider("時系列半減期(月)", 0.0, 12.0, 6.0, 0.5,
+                                 help="過去走の価値が半分になるまでの月数。小さいほど直近偏重。")
+stab_weight  = st.sidebar.slider("安定性(小さいほど◎)の係数", 0.0, 2.0, 0.7, 0.1,
+                                 help="WStd（加重標準偏差）を反転→偏差値化したStabZに掛ける係数。大きいほど安定重視。")
+pace_gain    = st.sidebar.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1,
+                                 help="PacePts（◎=+2,◯=+1,△=0,×=-1の期待値）を最終指標に足す強さ。")
+weight_coeff = st.sidebar.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1,
+                                 help="56kgを基準に超過1kgあたりの減点。")
 
 st.sidebar.markdown("---")
 st.sidebar.header("ペース / 脚質")
-with st.sidebar.expander("脚質自動推定（強化）", expanded=True):
+with st.sidebar.expander("脚質自動推定（強化）", expanded=False):
+    st.caption(
+        "内部ロジック：直近N走の『4角位置（頭数換算の百分位）』と『上がり順位』から、"
+        "逃げ/先行/差し/追込のロジットで確率を推定。走破日からの経過日数で**半減期(HL_DAYS_STYLE)**減衰。\n"
+        "・**NRECENT**：参照する直近走数\n"
+        "・**HL_DAYS_STYLE**：古いレースの重み減衰（日）\n"
+        "・**pace_mc_draws**：後述のペースMCで使うサンプル数（精度↔速度）\n"
+        "・**AUTO_OVERWRITE**：手入力より自動推定を優先して上書き"
+    )
     auto_style_on   = st.checkbox("自動推定を使う（空欄を自動で埋める）", True)
     AUTO_OVERWRITE  = st.checkbox("手入力より自動を優先して上書き", False)
     NRECENT         = st.slider("直近レース数（脚質推定）", 1, 10, 5)
     HL_DAYS_STYLE   = st.slider("半減期（日・脚質用）", 30, 365, 180, 15)
     pace_mc_draws   = st.slider("ペースMC回数", 500, 30000, 5000, 500)
 
-with st.sidebar.expander("ペース設定", expanded=False):
+with st.sidebar.expander("ペース設定（自動MC / 固定）", expanded=False):
+    st.caption(
+        "自動MC：各馬の『脚質確率』から**前圧EPI**をサンプリング→閾値でペース区分（ハイ/ミドル/ややスロー/スロー）。\n"
+        "固定：区分を手動指定。"
+    )
     pace_mode = st.radio("ペースの扱い", ["自動（MC）", "固定（手動）"], index=0)
     pace_fixed = st.selectbox(
         "固定ペースを選択",
@@ -142,6 +181,15 @@ with st.sidebar.expander("ペース設定", expanded=False):
     )
 
 with st.sidebar.expander("EPI（前圧）チューニング", expanded=False):
+    st.caption(
+        "EPI = (α×逃げ頭数 + β×先行頭数) / 出走頭数。\n"
+        "EPIが閾値**thr_hi / thr_mid / thr_slow**をまたぐ位置でペース区分：\n"
+        "・EPI ≥ thr_hi → ハイ\n"
+        "・thr_mid ≤ EPI < thr_hi → ミドル\n"
+        "・thr_slow ≤ EPI < thr_mid → ややスロー\n"
+        "・EPI < thr_slow → スロー\n"
+        "区分ごとに脚質別の印（◎◯△×）→点へ変換しPacePts（期待値）を作ります。"
+    )
     epi_alpha = st.slider("逃げ係数 α", 0.0, 2.0, 1.0, 0.05)
     epi_beta  = st.slider("先行係数 β", 0.0, 2.0, 0.60, 0.05)
     thr_hi    = st.slider("閾値: ハイペース ≥", 0.30, 1.00, 0.52, 0.01)
@@ -149,28 +197,32 @@ with st.sidebar.expander("EPI（前圧）チューニング", expanded=False):
     thr_slow  = st.slider("閾値: ややスロー ≥",0.00, 0.98, 0.18, 0.01)
 
 st.sidebar.markdown("---")
-st.sidebar.header("勝率シミュレーション（MC）")
+st.sidebar.header("勝率シミュレーション（モンテカルロ）")
 with st.sidebar.expander("詳細設定", expanded=False):
+    st.caption(
+        "FinalRaw（強さ）を標準化し U = β*S + τ*W*N(0,1) + Gumbel で各走を擬似再現、"
+        "順位で勝率/複勝率を集計。\n"
+        "・**β**：実力差の反映強度（↑で堅め）\n"
+        "・**τ**：ムラ（WStd）由来の揺らぎ（↑で荒れ）\n"
+        "・**反復回数**：精度↔速度のトレードオフ"
+    )
     mc_iters   = st.slider("反復回数", 1000, 100000, 20000, 1000)
     mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
     mc_tau     = st.slider("安定度ノイズ係数 τ", 0.0, 2.0, 0.6, 0.05)
     mc_seed    = st.number_input("乱数Seed", 0, 999999, 42, 1)
-    st.markdown(
-        """
-        **使い方の目安**
-        - **β（温度）**：差を強く反映（1.2〜2.0目安）
-        - **τ（ノイズ）**：ムラ反映で荒れ度↑（0.4〜0.8目安）
-        - **反復回数**：精度と速度のトレードオフ（2万〜5万推奨）
-        """
-    )
 
 st.sidebar.markdown("---")
 st.sidebar.header("資金・点数（購入戦略）")
-total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
-min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], index=0)
-max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
-scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
-show_map_ui  = st.sidebar.checkbox("列マッピングUIを表示", value=False)
+total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100,
+                                 help="全買い目の合計。ハーフケリー適用時はこの金額を上限に最適配分。")
+min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], index=0,
+                                   help="配分の丸め単位。端数は自動で調整します。")
+max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1,
+                                 help="自動生成する“連系”の最大組数。")
+scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'],
+                                   help="残り予算の配分方針（ワイド/連複/三単フォーメーションの比率）。")
+show_map_ui  = st.sidebar.checkbox("列マッピングUIを表示", value=False,
+                                  help="列名の自動認識に失敗した場合の手動マッピングUI。")
 
 with st.sidebar.expander("その他（開発者向け）", expanded=False):
     orig_weight  = st.slider("OrigZ の重み (未使用)", 0.0, 1.0, 0.5, 0.05)
@@ -216,8 +268,7 @@ if cfg_file is not None:
         st.sidebar.success("設定を読み込みました（必要なら再実行）。")
     except Exception as e:
         st.sidebar.error(f"設定ファイルの読み込みエラー: {e}")
-# ======================== サイドバー（整理版ここまで） ========================
-
+# ======================== サイドバー（ここまで） ========================
 
 # ======================== ファイルアップロード（ここでゲート） ========================
 st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
