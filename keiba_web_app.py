@@ -636,10 +636,6 @@ for _ in range(int(pace_mc_draws)):
 df_agg['PacePts'] = sum_pts / max(1, int(pace_mc_draws))
 pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
 
-
-# 代表ペース（最多出現）を図用に
-pace_type = max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else "ミドルペース"
-
 # 最終スコア
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
