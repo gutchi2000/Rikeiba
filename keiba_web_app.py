@@ -86,7 +86,7 @@ total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100)
 min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], index=0)
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
-
+show_map_ui = st.sidebar.checkbox("列マッピングUIを表示", value=False)
 # ======================== ファイルアップロード（ここでゲート） ========================
 st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
 st.subheader("ファイルアップロード")
@@ -124,30 +124,27 @@ def _auto_guess(col_map, pats):
                 return orig
     return None
 
-def _interactive_map(df, patterns, required_keys, title, state_key, show_ui):
+def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=False):
     cols = list(df.columns)
     cmap = {c: _norm_col(c) for c in cols}
 
-    # まず自動推定 or 前回の選択を使う
+    # 自動推定（前回選択があればそれも使う）
     auto = {k: st.session_state.get(f"{state_key}:{k}") or _auto_guess(cmap, pats)
             for k, pats in patterns.items()}
 
-    # UIを出さない設定で、必須が全部埋まっていればそのまま返す
+    # UIを出さない場合：必須が埋まっていればそのまま返す
     if not show_ui:
         missing = [k for k in required_keys if not auto.get(k)]
         if not missing:
-            # 記憶しておく
             for k, v in auto.items():
                 if v:
                     st.session_state[f"{state_key}:{k}"] = v
-            # うるさければ次の行は消してOK
-            st.caption(f"〔{title}：列は自動認識済み（UI非表示）〕")
             return auto
         else:
-            st.warning(f"{title} の必須列が自動認識できませんでした: " + ", ".join(missing) + "。下で指定してください。")
-            show_ui = True  # 不足があるのでUIを出す
+            st.warning(f"{title} の必須列が自動認識できませんでした: " + ", ".join(missing))
+            show_ui = True  # 不足があるのでUI表示に切替
 
-    # --- ここからUI（必要なときだけ/スイッチONのときだけ） ---
+    # 必要なときだけUIを表示
     with st.expander(f"列マッピング：{title}", expanded=True):
         mapping = {}
         for key, pats in patterns.items():
@@ -155,7 +152,7 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui):
             mapping[key] = st.selectbox(
                 key,
                 options=['<未選択>'] + cols,
-                index=(['<未選択>'] + cols).index(default) if default in cols else 0,
+                index=(['<未選択>']+cols).index(default) if default in cols else 0,
                 key=f"map:{state_key}:{key}"
             )
             if mapping[key] != '<未選択>':
@@ -164,7 +161,8 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui):
     missing = [k for k in required_keys if mapping.get(k) in (None, '<未選択>')]
     if missing:
         st.stop()
-    return {k: (None if v == '<未選択>' else v) for k, v in mapping.items()}
+
+    return {k: (None if v=='<未選択>' else v) for k, v in mapping.items()}
 
 # === sheet0（過去走データ） ===
 sheet0 = pd.read_excel(excel_file, sheet_name=0)
