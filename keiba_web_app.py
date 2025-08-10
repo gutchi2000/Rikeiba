@@ -87,6 +87,14 @@ min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], 
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1)
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
 show_map_ui = st.sidebar.checkbox("列マッピングUIを表示", value=False)
+
+# --- 勝率モンテカルロ設定（しっかり版） ---
+with st.sidebar.expander("勝率シミュレーション（しっかり版）", expanded=False):
+    mc_iters   = st.slider("反復回数", 1000, 100000, 20000, 1000)
+    mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
+    mc_tau     = st.slider("安定度ノイズ係数 τ", 0.0, 2.0, 0.6, 0.05)
+    mc_seed    = st.number_input("乱数Seed", 0, 999999, 42, 1)
+
 # ======================== ファイルアップロード（ここでゲート） ========================
 st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
 st.subheader("ファイルアップロード")
@@ -464,6 +472,41 @@ df_agg['PacePts'] = df_agg['脚質'].map(lambda s: mark_to_pts.get(mark.get(s,'�
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
 
+# ===== 勝率モンテカルロ（Plackett–Luce / Gumbel-max） =====
+# 強さベース: FinalRaw を標準化して使用（差が確率に直結しやすい）
+S = df_agg['FinalRaw'].to_numpy(dtype=float)
+S = (S - np.nanmean(S)) / (np.nanstd(S) + 1e-9)
+
+# 安定度（WStd）が大きいほどブレやすい → ノイズスケールに反映
+W = df_agg['WStd'].fillna(df_agg['WStd'].median()).to_numpy(dtype=float)
+W = (W - W.min()) / (W.max() - W.min() + 1e-9)  # 0〜1 に正規化
+
+n = len(S)
+rng = np.random.default_rng(int(mc_seed))
+
+# Gumbel-max のトリックで一括サンプリング
+# U = β*S + τ*W*Normal(0,1) + Gumbel(0,1)
+# 行列サイズ: (mc_iters, n)  — 5万×18頭でもメモリはOK
+gumbel = rng.gumbel(loc=0.0, scale=1.0, size=(mc_iters, n))
+noise  = (mc_tau * W)[None, :] * rng.standard_normal((mc_iters, n))
+U = mc_beta * S[None, :] + noise + gumbel
+
+# 各反復の順位（降順）を取得
+rank_idx = np.argsort(-U, axis=1)  # shape: (iters, n)
+
+# 勝率/3着内率を集計
+win_counts  = np.bincount(rank_idx[:, 0], minlength=n).astype(float)
+top3_counts = np.zeros(n, dtype=float)
+for k in range(3):
+    top3_counts += np.bincount(rank_idx[:, k], minlength=n).astype(float)
+
+p_win  = win_counts  / mc_iters
+p_top3 = top3_counts / mc_iters
+
+# df_aggに付与（%表示用に×100）
+df_agg['勝率%_MC']   = (p_win  * 100).round(2)
+df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
+
 # ===== 可視化 =====
 avg_st = df_agg['WStd'].mean()
 quad_labels = pd.DataFrame([
@@ -510,6 +553,14 @@ def reason(row):
     return base
 topN['根拠'] = topN.apply(reason, axis=1)
 st.table(topN[['馬名','印','根拠']])
+
+st.subheader("■ 推定勝率・複勝率（モンテカルロ）")
+prob_view = (
+    df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
+    .sort_values('勝率%_MC', ascending=False)
+    .reset_index(drop=True)
+)
+st.table(prob_view)
 
 # ===== 展開ロケーション（視覚） =====
 df_map_show = df_map.sort_values(['番'])
