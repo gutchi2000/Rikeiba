@@ -543,8 +543,10 @@ points = alt.Chart(df_agg).mark_circle(size=100).encode(
 
 # 馬名ラベル（白文字＋黒縁で視認性UP）
 labels = alt.Chart(df_agg).mark_text(
-    dx=6, dy=-6, fontSize=10, color='white',
-    stroke='black', strokeWidth=2
+    dx=6, dy=-6, fontSize=10,
+    color='#ffffff',      # 白
+    stroke='#000000',     # 黒フチ
+    strokeWidth=0.8       # ← 2 から 0.8（または 0.6）へ
 ).encode(
     x='FinalZ:Q', y='WStd:Q', text='馬名:N'
 )
@@ -555,13 +557,15 @@ hline = alt.Chart(pd.DataFrame({'y':[y_mid]})).mark_rule(color='gray').encode(y=
 
 # ４象限ラベル（白文字＋黒縁）
 quad_text = alt.Chart(pd.DataFrame([
-    {'label':'消し・大穴',   'x': (x_min + x_mid)/2, 'y': (y_mid + y_max)/2},  # 左上
-    {'label':'波乱・ムラ馬', 'x': (x_mid + x_max)/2, 'y': (y_mid + y_max)/2},  # 右上
-    {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + y_mid)/2},  # 左下
-    {'label':'鉄板・本命',   'x': (x_mid + x_max)/2, 'y': (y_min + y_mid)/2},  # 右下
+    {'label':'消し・大穴',   'x': (x_min + x_mid)/2, 'y': (y_mid + y_max)/2},
+    {'label':'波乱・ムラ馬', 'x': (x_mid + x_max)/2, 'y': (y_mid + y_max)/2},
+    {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + y_mid)/2},
+    {'label':'鉄板・本命',   'x': (x_mid + x_max)/2, 'y': (y_min + y_mid)/2},
 ])).mark_text(
-    fontSize=14, fontWeight='bold', color='white',
-    stroke='black', strokeWidth=3
+    fontSize=14, fontWeight='bold',
+    color='#ffffff',      # 白
+    stroke='#000000',     # 黒フチ
+    strokeWidth=1.0       # ← 3 から 1.0 へ
 ).encode(x='x:Q', y='y:Q', text='label:N')
 
 chart = (rect + points + labels + vline + hline + quad_text).properties(
