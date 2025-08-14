@@ -111,6 +111,12 @@ with st.sidebar.expander("各種ボーナス設定", expanded=False):
     agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
     bw_bonus     = st.slider("馬体重適正ボーナス(±10kg)", 0, 10, 2)
 
+# === 本レース条件（ベストタイム重み用） ===
+with st.sidebar.expander("本レース条件（ベストタイム重み用）", expanded=True):
+    TARGET_GRADE = st.selectbox("本レースの格", ["G1", "G2", "G3", "L", "OP"], index=4)
+    TARGET_SURFACE = st.selectbox("本レースの馬場", ["芝", "ダ"], index=0)
+    TARGET_DISTANCE_M = st.number_input("本レースの距離 [m]", min_value=1000, max_value=3600, value=1800, step=100)
+
 st.sidebar.markdown("---")
 st.sidebar.header("属性重み（1走スコアに掛ける係数）")
 # それぞれ独立の折り畳みブロックに分割
@@ -634,6 +640,31 @@ bt_span = (bt_max - bt_min) if pd.notna(bt_min) and pd.notna(bt_max) and (bt_max
 st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
+# === ベストタイム重み：クラス×芝ダ×距離 係数 ===
+CLASS_BASE_BT = {"OP": 1.50, "L": 1.38, "G3": 1.19, "G2": 1.00, "G1": 0.80}
+
+def surface_factor(surface: str) -> float:
+    # surface は "芝" or "ダ"
+    return 1.10 if str(surface) == "ダ" else 1.00
+
+def distance_factor(distance_m: int) -> float:
+    d = int(distance_m)
+    if d <= 1400:           return 1.20   # 短距離
+    if d == 1600:           return 1.10   # マイル
+    if 1800 <= d <= 2200:   return 1.00   # 中距離
+    if d >= 2400:           return 0.85   # 長距離
+    return 1.00
+
+def besttime_weight_final(grade: str, surface: str, distance_m: int, user_scale: float) -> float:
+    """
+    grade: 'G1','G2','G3','L','OP'
+    surface: '芝' or 'ダ'
+    distance_m: 本レース距離[m]
+    user_scale: サイドバーのベストタイム重み（0〜2）
+    """
+    base = CLASS_BASE_BT.get(str(grade), CLASS_BASE_BT["OP"])
+    w = base * surface_factor(surface) * distance_factor(distance_m) * float(user_scale)
+    return float(np.clip(w, 0.0, 2.0))  # 0〜2にクリップ
 
 CLASS_PTS = {'G1':10, 'G2':8, 'G3':6, 'リステッド':5, 'オープン特別':4}
 
@@ -695,13 +726,21 @@ def calc_score(r):
         if '複勝率' in r and pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
     except: pass
 
+       # --- ベストタイム加点（クラス×芝ダ×距離 係数を適用） ---
     bt_bonus = 0.0
     try:
         if pd.notna(r.get('ベストタイム秒', np.nan)):
             bt_norm = (bt_max - float(r['ベストタイム秒'])) / bt_span
-            bt_norm = max(0.0, min(1.0, bt_norm))
-            bt_bonus = besttime_w * bt_norm
-    except: pass
+            bt_norm = max(0.0, min(1.0, bt_norm))  # 0〜1
+            bt_w_final = besttime_weight_final(
+                grade=TARGET_GRADE,
+                surface=TARGET_SURFACE,
+                distance_m=int(TARGET_DISTANCE_M),
+                user_scale=besttime_w  # ← サイドバーの値（0〜2）
+            )
+            bt_bonus = bt_w_final * bt_norm
+    except Exception:
+        pass
 
            # ここから（← 行頭はスペース4つ）
     kg_pen = 0.0
