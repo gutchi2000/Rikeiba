@@ -927,24 +927,35 @@ quad_text = alt.Chart(pd.DataFrame([
 chart = (rect + points + labels + vline + hline + quad_text).properties(width=700, height=420).interactive()
 st.altair_chart(chart, use_container_width=True)
 
-# ===== 上位馬抽出 =====
-topN = df_agg.sort_values('FinalZ', ascending=False).head(6).copy()
-if len(topN) == 0:
-    st.warning("上位馬が抽出できませんでした。入力を確認してください。")
-topN['印'] = ['◎','〇','▲','☆','△','△'][:len(topN)]
+# ===== 上位馬抽出（閾値付き：FinalZ>=50、最大6頭） =====
+CUTOFF = 50.0
 
-st.subheader("上位馬（最終偏差値ベース／根拠付き）")
-def reason(row):
-    base = f"時系列加重平均{row['WAvgZ']:.1f}、安定度{row['WStd']:.1f}、ペース点{row['PacePts']}。"
-    if row['FinalZ'] >= 65: base += "非常に高評価。"
-    elif row['FinalZ'] >= 55: base += "高水準。"
-    if row['WStd'] < df_agg['WStd'].quantile(0.3): base += "安定感抜群。"
-    elif row['WStd'] < df_agg['WStd'].median(): base += "比較的安定。"
-    style = str(row.get('脚質','')).strip()
-    base += {"逃げ":"楽逃げなら粘り込み有力。","先行":"先行力で押し切り濃厚。","差し":"展開が向けば末脚強烈。","追込":"直線勝負の一撃に注意。"}.get(style,"")
-    return base
-topN['根拠'] = topN.apply(reason, axis=1)
-st.table(topN[['馬名','印','根拠']])
+# ① FinalZでフィルタ → ② FinalZ降順に並べ替え → ③ 最大6頭へ絞り込み
+cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
+topN = cand.head(6)  # 6頭未満ならそのまま
+
+# ④ 印を付与（頭数に応じて切り詰め）
+marks = ['◎','〇','▲','☆','△','△']
+topN['印'] = marks[:len(topN)]
+
+# ⑤ 表示（0頭なら注意を出す）
+st.subheader("上位馬（FinalZ≧50／最大6頭）")
+if len(topN) == 0:
+    st.warning(f"FinalZが{CUTOFF}以上の馬がいません。")
+else:
+    def reason(row):
+        base = f"時系列加重平均{row['WAvgZ']:.1f}、安定度{row['WStd']:.1f}、ペース点{row['PacePts']}。"
+        if row['FinalZ'] >= 65: base += "非常に高評価。"
+        elif row['FinalZ'] >= 55: base += "高水準。"
+        if row['WStd'] < df_agg['WStd'].quantile(0.3): base += "安定感抜群。"
+        elif row['WStd'] < df_agg['WStd'].median(): base += "比較的安定。"
+        style = str(row.get('脚質','')).strip()
+        base += {"逃げ":"楽逃げなら粘り込み有力。","先行":"先行力で押し切り濃厚。","差し":"展開が向けば末脚強烈。","追込":"直線勝負の一撃に注意。"}.get(style,"")
+        return base
+
+    topN['根拠'] = topN.apply(reason, axis=1)
+    st.table(topN[['馬名','印','根拠']])
+
 
 st.subheader("■ 推定勝率・複勝率（モンテカルロ）")
 prob_view = (
