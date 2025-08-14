@@ -113,13 +113,12 @@ with st.sidebar.expander("各種ボーナス設定", expanded=False):
 
 # === 本レース条件（ベストタイム重み用） ===
 with st.sidebar.expander("本レース条件（ベストタイム重み用）", expanded=True):
-    TARGET_GRADE = st.selectbox("本レースの格", ["G1", "G2", "G3", "L", "OP"], index=4)
-    TARGET_SURFACE = st.selectbox("本レースの馬場", ["芝", "ダ"], index=0)
-    TARGET_DISTANCE_M = st.number_input("本レースの距離 [m]", min_value=1000, max_value=3600, value=1800, step=100)
+    TARGET_GRADE = st.selectbox("本レースの格", ["G1", "G2", "G3", "L", "OP"], index=4, key="target_grade")
+    TARGET_SURFACE = st.selectbox("本レースの馬場", ["芝", "ダ"], index=0, key="target_surface")
+    TARGET_DISTANCE_M = st.number_input("本レースの距離 [m]", min_value=1000, max_value=3600, value=1800, step=100, key="target_distance_m")
 
 st.sidebar.markdown("---")
 st.sidebar.header("属性重み（1走スコアに掛ける係数）")
-# それぞれ独立の折り畳みブロックに分割
 with st.sidebar.expander("性別重み", expanded=False):
     st.caption("性別に応じて増減。例：牝馬が得意な舞台なら『牝』を>1に。")
     gender_w = {g: st.slider(f"{g}", 0.0, 2.0, 1.0) for g in ['牡','牝','セ']}
@@ -156,7 +155,7 @@ stab_weight  = st.sidebar.slider("安定性(小さいほど◎)の係数", 0.0, 
 pace_gain    = st.sidebar.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1,
                                  help="PacePts（◎=+2,◯=+1,△=0,×=-1の期待値）を最終指標に足す強さ。")
 weight_coeff = st.sidebar.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1,
-                                 help="56kgを基準に超過1kgあたりの減点。")
+                                 help="WFA基準超過1kgあたりの減点。")
 
 # --- 斤量ベース（WFA/JRA簡略） ---
 with st.sidebar.expander("斤量ベース（WFA/JRA簡略）", expanded=True):
@@ -188,7 +187,6 @@ def wfa_base_for(sex: str, age: int | None, dt: pd.Timestamp) -> float:
     elif a is not None and a >= 3:
         male, filly = wfa_3p_m, wfa_3p_f
     else:
-        # 年齢が欠損したら3歳以上を既定に
         male, filly = wfa_3p_m, wfa_3p_f
     return male if sex in ("牡", "セ") else filly
 
@@ -210,10 +208,7 @@ with st.sidebar.expander("脚質自動推定（強化）", expanded=False):
     pace_mc_draws   = st.slider("ペースMC回数", 500, 30000, 5000, 500)
 
 with st.sidebar.expander("ペース設定（自動MC / 固定）", expanded=False):
-    st.caption(
-        "自動MC：各馬の『脚質確率』から**前圧EPI**をサンプリング→閾値でペース区分（ハイ/ミドル/ややスロー/スロー）。\n"
-        "固定：区分を手動指定。"
-    )
+    st.caption("自動MC：各馬の『脚質確率』から前圧EPIをサンプリング→閾値で区分。固定：手動指定。")
     pace_mode = st.radio("ペースの扱い", ["自動（MC）", "固定（手動）"], index=0)
     pace_fixed = st.selectbox(
         "固定ペースを選択",
@@ -224,13 +219,7 @@ with st.sidebar.expander("ペース設定（自動MC / 固定）", expanded=Fals
 
 with st.sidebar.expander("EPI（前圧）チューニング", expanded=False):
     st.caption(
-        "EPI = (α×逃げ頭数 + β×先行頭数) / 出走頭数。\n"
-        "EPIが閾値**thr_hi / thr_mid / thr_slow**をまたぐ位置でペース区分：\n"
-        "・EPI ≥ thr_hi → ハイ\n"
-        "・thr_mid ≤ EPI < thr_hi → ミドル\n"
-        "・thr_slow ≤ EPI < thr_mid → ややスロー\n"
-        "・EPI < thr_slow → スロー\n"
-        "区分ごとに脚質別の印（◎◯△×）→点へ変換しPacePts（期待値）を作ります。"
+        "EPI = (α×逃げ頭数 + β×先行頭数) / 出走頭数。閾値 thr_hi/mid/slow で区分。"
     )
     epi_alpha = st.slider("逃げ係数 α", 0.0, 2.0, 1.0, 0.05)
     epi_beta  = st.slider("先行係数 β", 0.0, 2.0, 0.60, 0.05)
@@ -243,10 +232,7 @@ st.sidebar.header("勝率シミュレーション（モンテカルロ）")
 with st.sidebar.expander("詳細設定", expanded=False):
     st.caption(
         "FinalRaw（強さ）を標準化し U = β*S + τ*W*N(0,1) + Gumbel で各走を擬似再現、"
-        "順位で勝率/複勝率を集計。\n"
-        "・**β**：実力差の反映強度（↑で堅め）\n"
-        "・**τ**：ムラ（WStd）由来の揺らぎ（↑で荒れ）\n"
-        "・**反復回数**：精度↔速度のトレードオフ"
+        "順位で勝率/複勝率を集計。"
     )
     mc_iters   = st.slider("反復回数", 1000, 100000, 20000, 1000)
     mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
@@ -292,19 +278,24 @@ def collect_params():
         "mc_iters": int(mc_iters), "mc_beta": mc_beta,
         "mc_tau": mc_tau, "mc_seed": int(mc_seed),
         "show_map_ui": show_map_ui,
-"race_date": str(race_date.date()),
-"use_wfa_base": use_wfa_base,
-"wfa_2_early_m": float(wfa_2_early_m),
-"wfa_2_early_f": float(wfa_2_early_f),
-"wfa_2_late_m": float(wfa_2_late_m),
-"wfa_2_late_f": float(wfa_2_late_f),
-"wfa_3p_m": float(wfa_3p_m),
-"wfa_3p_f": float(wfa_3p_f),
+        # 追加：本レース条件（ウィジェットkeyと一致）
+        "target_grade": TARGET_GRADE,
+        "target_surface": TARGET_SURFACE,
+        "target_distance_m": int(TARGET_DISTANCE_M),
+        # 斤量関連
+        "race_date": str(race_date.date()),
+        "use_wfa_base": use_wfa_base,
+        "wfa_2_early_m": float(wfa_2_early_m),
+        "wfa_2_early_f": float(wfa_2_early_f),
+        "wfa_2_late_m": float(wfa_2_late_m),
+        "wfa_2_late_f": float(wfa_2_late_f),
+        "wfa_3p_m": float(wfa_3p_m),
+        "wfa_3p_f": float(wfa_3p_f),
     }
 
 def apply_params(cfg: dict):
     for k, v in cfg.items():
-        st.session_state[k] = v
+        st.session_state[k] = v  # key付きウィジェットは次リランで値が反映
 
 col_a, col_b = st.sidebar.columns(2)
 if col_a.button("設定を保存"):
@@ -426,22 +417,17 @@ for c in ['頭数','確定着順','枠','番','斤量','馬体重','上3F順位'
 if '走破タイム秒' in df_score: df_score['走破タイム秒'] = df_score['走破タイム秒'].apply(_parse_time_to_sec)
 if '上がり3Fタイム' in df_score: df_score['上がり3Fタイム'] = df_score['上がり3Fタイム'].apply(_parse_time_to_sec)
 
-# --- 通過4角 / 頭数のクレンジング（0や範囲外→NaN、文字→数値） ---
-# 頭数: 文字混じり（例: "15頭"）も数字だけ抽出
+# --- 通過4角 / 頭数のクレンジング ---
 if '頭数' in df_score.columns:
     df_score['頭数'] = (
         df_score['頭数'].astype(str).str.extract(r'(\d+)')[0]
         .apply(pd.to_numeric, errors='coerce')
     )
-
-# 通過4角: 文字列なら末尾の数字を抽出（"1-2-3-2"→2 も想定）、数値ならそのまま
 if '通過4角' in df_score.columns:
     s = df_score['通過4角']
-    if s.dtype.kind not in 'iu':  # int/uintでなければ文字→数値化
+    if s.dtype.kind not in 'iu':
         last_num = s.astype(str).str.extract(r'(\d+)(?!.*\d)')[0]
         df_score['通過4角'] = pd.to_numeric(last_num, errors='coerce')
-
-    # 0やレンジ外（<1 または >頭数）は欠損扱いに
     ok = df_score['頭数'].notna() & df_score['通過4角'].notna()
     bad = ok & ((df_score['通過4角'] < 1) | (df_score['通過4角'] > df_score['頭数']))
     df_score.loc[df_score['通過4角'].eq(0), '通過4角'] = np.nan
@@ -613,7 +599,7 @@ if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
     _bw = df_score[['馬名','馬体重','確定着順']].dropna()
     _bw['確定着順'] = pd.to_numeric(_bw['確定着順'], errors='coerce')
     _bw = _bw[_bw['確定着順'].notna()]
-    best_idx = _bw.groupby('馬名')['確定着順'].idxmin()
+    best_idx = _bw.groupby('馬名')['確定着順'].idx最小 = _bw.groupby('馬名')['確定着順'].idxmin()
     best_bw_map = _bw.loc[best_idx].set_index('馬名')['馬体重'].astype(float).to_dict()
 else:
     best_bw_map = {}
@@ -640,11 +626,11 @@ bt_span = (bt_max - bt_min) if pd.notna(bt_min) and pd.notna(bt_max) and (bt_max
 st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
+
 # === ベストタイム重み：クラス×芝ダ×距離 係数 ===
 CLASS_BASE_BT = {"OP": 1.50, "L": 1.38, "G3": 1.19, "G2": 1.00, "G1": 0.80}
 
 def surface_factor(surface: str) -> float:
-    # surface は "芝" or "ダ"
     return 1.10 if str(surface) == "ダ" else 1.00
 
 def distance_factor(distance_m: int) -> float:
@@ -656,12 +642,7 @@ def distance_factor(distance_m: int) -> float:
     return 1.00
 
 def besttime_weight_final(grade: str, surface: str, distance_m: int, user_scale: float) -> float:
-    """
-    grade: 'G1','G2','G3','L','OP'
-    surface: '芝' or 'ダ'
-    distance_m: 本レース距離[m]
-    user_scale: サイドバーのベストタイム重み（0〜2）
-    """
+    """grade: 'G1','G2','G3','L','OP' / surface: '芝' or 'ダ' / distance_m: m / user_scale: 0〜2"""
     base = CLASS_BASE_BT.get(str(grade), CLASS_BASE_BT["OP"])
     w = base * surface_factor(surface) * distance_factor(distance_m) * float(user_scale)
     return float(np.clip(w, 0.0, 2.0))  # 0〜2にクリップ
@@ -726,23 +707,23 @@ def calc_score(r):
         if '複勝率' in r and pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
     except: pass
 
-       # --- ベストタイム加点（クラス×芝ダ×距離 係数を適用） ---
+    # --- ベストタイム加点（クラス×芝ダ×距離 係数を適用） ---
     bt_bonus = 0.0
     try:
         if pd.notna(r.get('ベストタイム秒', np.nan)):
             bt_norm = (bt_max - float(r['ベストタイム秒'])) / bt_span
             bt_norm = max(0.0, min(1.0, bt_norm))  # 0〜1
             bt_w_final = besttime_weight_final(
-                grade=TARGET_GRADE,
-                surface=TARGET_SURFACE,
-                distance_m=int(TARGET_DISTANCE_M),
-                user_scale=besttime_w  # ← サイドバーの値（0〜2）
+                grade=st.session_state.get("target_grade", TARGET_GRADE),
+                surface=st.session_state.get("target_surface", TARGET_SURFACE),
+                distance_m=int(st.session_state.get("target_distance_m", TARGET_DISTANCE_M)),
+                user_scale=besttime_w
             )
             bt_bonus = bt_w_final * bt_norm
     except Exception:
         pass
 
-           # ここから（← 行頭はスペース4つ）
+    # --- 斤量ペナルティ ---
     kg_pen = 0.0
     try:
         kg = float(r.get('斤量', np.nan))
@@ -755,8 +736,7 @@ def calc_score(r):
                     age_i = None
                 base = wfa_base_for(sex, age_i, race_date)
             else:
-                base = 56.0  # 旧仕様のフォールバック
-            # 基準超過分のみを減点（基準未満は加点しない）
+                base = 56.0
             kg_pen = -max(0.0, kg - float(base)) * float(weight_coeff)
     except Exception:
         pass
@@ -1093,7 +1073,7 @@ tables_all = {name: make_table_all(d) for name, d in dfg_all.sort_values(['馬�
 thr_map = {'G1':5, 'G2':4, 'G3':3}
 dfg_good = dfg_all[dfg_all.apply(lambda r: r['着順num'] <= thr_map.get(r['GradeN'], 0), axis=1)]
 def make_table_good(d: pd.DataFrame) -> pd.DataFrame:
-    return make_table_all(d)  # 形式は同じでOK
+    return make_table_all(d)
 tables_good = {name: make_table_good(d) for name, d in dfg_good.groupby('馬名')}
 
 st.subheader("■ 重賞ハイライト（好走＋出走歴）")
@@ -1289,10 +1269,9 @@ use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（�
 
 if use_kelly and len(_df) > 0:
     # 1) 的中確率qを各券種で計算（MC結果を使用）
-    idx_of = {name: i for i, name in enumerate(name_list)}  # name_list は前段で作成済み
+    idx_of = {name: i for i, name in enumerate(name_list)}
 
     def pair_prob(i, j, kind: str) -> float:
-        # rank_idx は (mc_iters, n) の着順配列（前段で作成済み）
         if kind == 'ワイド':
             top3 = rank_idx[:, :3]
             ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
@@ -1305,7 +1284,6 @@ if use_kelly and len(_df) > 0:
         return np.nan
 
     def trio_prob(i, j, k) -> float:
-        # 三連複：i/j/k が3着内に「順不同」で全員入る
         top3 = rank_idx[:, :3]
         ci = np.any(top3 == i, axis=1)
         cj = np.any(top3 == j, axis=1)
@@ -1313,7 +1291,6 @@ if use_kelly and len(_df) > 0:
         return (ci & cj & ck).mean()
 
     def trifecta_prob(i, j, k) -> float:
-        # 三連単：i→j→k の完全一致
         return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
 
     q_list = []
@@ -1322,9 +1299,9 @@ if use_kelly and len(_df) > 0:
         q = np.nan
         try:
             if typ == '単勝':
-                q = float(p_win[idx_of[h]])           # 0〜1
+                q = float(p_win[idx_of[h]])
             elif typ == '複勝':
-                q = float(p_top3[idx_of[h]])          # 0〜1
+                q = float(p_top3[idx_of[h]])
             elif typ in ('ワイド','馬連','馬単') and a:
                 i = idx_of[h]; j = idx_of[a]
                 q = pair_prob(i, j, typ)
@@ -1344,7 +1321,7 @@ if use_kelly and len(_df) > 0:
 
     _df['的中確率q'] = q_list
 
-    # 2) オッズ入力UI（小数「倍」：例 3.5=100円→350円）
+    # 2) オッズ入力UI
     if '想定オッズ(倍)' not in _df.columns:
         _df['想定オッズ(倍)'] = np.nan
 
@@ -1363,19 +1340,17 @@ if use_kelly and len(_df) > 0:
     o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
     q = pd.to_numeric(_df['的中確率q'], errors='coerce')
 
-    # f* = (q*o - 1)/(o - 1) の正の部分。負なら0。
     f_star = (q * o - 1) / (o - 1)
     f_star = f_star.where((o > 1.01) & q.notna(), np.nan)
     f_star = f_star.clip(lower=0).fillna(0.0)
 
-    bankroll = float(total_budget)  # ここでは総予算で最適配分
+    bankroll = float(total_budget)
     stake_raw = bankroll * 0.5 * f_star  # ハーフケリー
 
     total_stake = float(stake_raw.sum())
     if total_stake > bankroll and total_stake > 0:
         stake_raw *= bankroll / total_stake
 
-    # 最小賭け単位で丸め＋余り配分
     stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
     rem_k = int(bankroll - stake_rounded.sum())
     i = 0
@@ -1384,11 +1359,9 @@ if use_kelly and len(_df) > 0:
         rem_k -= int(min_unit)
         i += 1
 
-    # 金額カラムを上書き（整数のまま保持）
     _df['金額'] = stake_rounded.astype(int)
 
 else:
-    # ケリー未使用時は従来の“合計をぴったりに”調整
     spent = int(_df['金額'].fillna(0).replace('',0).sum())
     diff = total_budget - spent
     if diff != 0 and len(_df) > 0:
@@ -1399,7 +1372,7 @@ else:
                 _df.at[idx,'金額'] = new
                 break
 
-# 表示用に“円”フォーマット（ここで初めて文字列化）
+# 表示用に“円”フォーマット
 _df_disp = _df.copy()
 _df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
 
