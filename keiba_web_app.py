@@ -1195,33 +1195,46 @@ if missing:
             if col not in horses2.columns:
                 horses2[col] = np.nan
 
-    # 印（短評、脚質）は基本空白で埋める（後処理で上書きされる）
-    if '印' not in horses2.columns:
-        horses2['印'] = ''
-    if '短評' not in horses2.columns:
-        horses2['短評'] = ''
-    if '脚質' not in horses2.columns:
-        horses2['脚質'] = horses2.get('脚質', '').fillna('')
+# ====== 安全ガード：印・短評・脚質の欠損補完（ここを差し替える） ======
+# 「印」「短評」「脚質」を確実に持つようにする（欠けていれば補完）
+if '印' not in horses2.columns:
+    horses2['印'] = ''
+# 短評は後で ai_comment で埋める可能性があるので空文字で作成
+if '短評' not in horses2.columns:
+    horses2['短評'] = ''
 
-# 最終確認：欠けている列が残っていれば表示して停止ではなく補完
-still_missing = [c for c in expected_cols if c not in horses2.columns]
-if still_missing:
-    st.error(f"依然として列が足りません：{still_missing}。処理を継続しますが、出力が不完全になる可能性があります。")
-    for c in still_missing:
-        if c in ['WAvgZ','WStd']:
-            horses2[c] = np.nan
-        else:
-            horses2[c] = ''
+# 脚質は存在すれば fillna()、無ければ空列を新規作成（.get(...).fillna は避ける）
+if '脚質' in horses2.columns:
+    # 安全に文字列化して欠損を空文字で埋める
+    horses2['脚質'] = horses2['脚質'].astype(str).fillna('').replace('nan','')
+else:
+    horses2['脚質'] = ''
 
-# （任意）短評を再計算（ai_comment が定義済みなら）
+# WAvgZ / WStd が df_agg から来ていなければ結合して補完
+for col in ['WAvgZ','WStd']:
+    if col not in horses2.columns:
+        if '馬名' in horses2.columns and '馬名' in df_agg.columns and col in df_agg.columns:
+            horses2 = horses2.merge(df_agg[['馬名', col]], on='馬名', how='left')
+        if col not in horses2.columns:
+            horses2[col] = np.nan
+
+# 血統（blood_df）も同様に補完
+if '血統' not in horses2.columns:
+    if '馬名' in horses2.columns and not blood_df.empty and '馬名' in blood_df.columns and '血統' in blood_df.columns:
+        horses2 = horses2.merge(blood_df[['馬名','血統']], on='馬名', how='left')
+    if '血統' not in horses2.columns:
+        horses2['血統'] = ''
+
+# 短評を再計算（ai_comment が存在するなら）
 try:
-    if '短評' in horses2.columns:
+    if '短評' in horses2.columns and callable(ai_comment):
         horses2['短評'] = horses2.apply(ai_comment, axis=1)
 except Exception as e:
-    st.warning(f"短評の再計算で例外が発生しました: {e}")
+    st.warning(f"短評の再計算で例外が発生しました（無視して続行）: {e}")
 
-# デバッグ出力（列一覧）
-st.write(">>> horses2 の列一覧（表示直前）:", horses2.columns.tolist())
+# デバッグ出力（必要なら）
+st.write(">>> horses2 columns (表示直前):", horses2.columns.tolist())
+
 
 st.dataframe(horses2[['馬名','印','脚質','血統','短評','WAvgZ','WStd']])
 
