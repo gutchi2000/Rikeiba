@@ -1424,3 +1424,428 @@ for i, typ in enumerate(unique_types, start=1):
         st.table(df_this[['券種','印','馬','相手','金額']]) if len(df_this)>0 else st.info(f"{typ} の買い目はありません。")
 
 # End of file
+# ---------------------------
+# LightGBM + 特徴量生成 + 学習 + 予測 + SHAP パネル（完成版）
+# そのまま Streamlit アプリに貼れるモジュール
+# ---------------------------
+
+import time
+import math
+import lightgbm as lgb if False else None  # dummy to keep linter happy; real import handled below
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score, accuracy_score, classification_report, log_loss
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import HistGradientBoostingClassifier
+import matplotlib.pyplot as plt
+
+# --- try imports with graceful fallback ---
+try:
+    import lightgbm as lgb
+    LGB_AVAILABLE = True
+except Exception:
+    lgb = None
+    LGB_AVAILABLE = False
+
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except Exception:
+    shap = None
+    SHAP_AVAILABLE = False
+
+# キャッシュ重めの処理はキャッシュ化
+@st.cache_data(show_spinner=False)
+def build_features_time_aware(df_score):
+    """
+    すべての過去走レコードについて「そのレースの直前までの履歴」を用いて
+    馬ごとの集計特徴量を作る（ローリング的に）。
+    戻り: DataFrame feats_rows, 各走に紐づく特徴量行（馬×レース）
+    必須カラム（できれば）: 馬名, レース日, 確定着順, 頭数, クラス名, 上3F順位, 通過4角, 斤量, 馬体重, 枠, 性別, 年齢
+    """
+    s = df_score.copy()
+    # ensure date
+    if 'レース日' in s.columns:
+        s['レース日'] = pd.to_datetime(s['レース日'], errors='coerce')
+    else:
+        raise ValueError("df_score に 'レース日' 列が必要です。")
+
+    # minimal normalization helpers
+    def class_point_guess(x):
+        try:
+            x = str(x)
+            if 'G1' in x or 'GⅠ' in x or 'G 1' in x: return 10
+            if 'G2' in x or 'GⅡ' in x or 'G 2' in x: return 8
+            if 'G3' in x or 'GⅢ' in x or 'G 3' in x: return 6
+            if 'リステッド' in x or 'L' in x: return 5
+            if 'オープン' in x or 'OP' in x: return 4
+            if '3勝' in x: return 3
+            if '2勝' in x: return 2
+            if '1勝' in x: return 1
+        except: pass
+        return 1
+
+    # precompute class point column
+    if 'クラス名' in s.columns:
+        s['_class_pt'] = s['クラス名'].apply(class_point_guess)
+    else:
+        s['_class_pt'] = 1
+
+    # order races chronologically
+    s = s.sort_values('レース日').reset_index(drop=True)
+
+    feats = []
+    # unique race identifiers (group per race)
+    # try to identify race grouping by レース日 + 競走名 or a provided race id
+    if '競走名' in s.columns:
+        s['_race_key'] = s['レース日'].dt.strftime('%Y%m%d') + '||' + s['競走名'].astype(str)
+    else:
+        s['_race_key'] = s['レース日'].dt.strftime('%Y%m%d') + '||' + s.get('レース名', s.get('競走', 'unknown')).astype(str)
+
+    race_keys = s['_race_key'].unique().tolist()
+
+    # for performance, build per-horse history dictionary incrementally
+    horse_history = {}  # 馬名 -> list of past rows (dict)
+    # We'll iterate races in chronological order (older -> newer)
+    for rk in race_keys:
+        race_rows = s[s['_race_key'] == rk]
+        race_date = pd.to_datetime(race_rows['レース日'].iloc[0])
+        for _, row in race_rows.iterrows():
+            name = row.get('馬名')
+            if name is None:
+                continue
+
+            # pull history for this horse strictly before current race_date
+            past = horse_history.get(name, [])
+            # compute basic features from past
+            n_start = len(past)
+            wins = sum(1 for p in past if p.get('確定着順') == 1)
+            top3 = sum(1 for p in past if (p.get('確定着順') is not None and p.get('確定着順') <= 3))
+            avg_finish = np.nan
+            avg_classpt = np.nan
+            avg_3frank = np.nan
+            avg_weight = np.nan
+            days_since_last = np.nan
+            recency_wavg = np.nan
+            recency_wstd = np.nan
+            best_time = np.nan
+
+            if n_start > 0:
+                finishes = np.array([p.get('確定着順') if p.get('確定着順') is not None else np.nan for p in past], dtype=float)
+                classpts = np.array([p.get('_class_pt', 1) for p in past], dtype=float)
+                ag3 = np.array([p.get('上3F順位') if p.get('上3F順位') is not None else np.nan for p in past], dtype=float)
+                weights = np.array([p.get('斤量') if p.get('斤量') is not None else np.nan for p in past], dtype=float)
+                times = np.array([p.get('走破タイム秒') if p.get('走破タイム秒') is not None else np.nan for p in past], dtype=float)
+                # averages ignoring nan
+                if np.nanstd(finishes) or True:
+                    avg_finish = np.nanmean(finishes)
+                if np.isnan(avg_finish):
+                    avg_finish = np.nan
+                if len(classpts) > 0:
+                    avg_classpt = np.nanmean(classpts)
+                if len(ag3) > 0:
+                    avg_3frank = np.nanmean(ag3)
+                if len(weights) > 0:
+                    avg_weight = np.nanmean(weights)
+
+                # best time historically
+                if np.any(~np.isnan(times)):
+                    best_time = np.nanmin(times)
+
+                # recency weighting: 0.5^(days/half_life_days)
+                days = np.array([(race_date - pd.to_datetime(p.get('レース日'))).days if p.get('レース日') is not None else 9999 for p in past], dtype=float)
+                hl_days = 30.4375 * max(0.1, 6.0)  # default 6 months half-life used for weighting (later overwritten by UI)
+                w = 0.5 ** (days / hl_days)
+                values_for_recency = np.array([ (p.get('score_raw') if p.get('score_raw') is not None else ( (p.get('頭数',1)+1 - (p.get('確定着順') or 1)) * p.get('_class_pt',1) ) ) for p in past ], dtype=float)
+                if np.sum(w) > 0:
+                    recency_wavg = float((values_for_recency * w).sum() / w.sum())
+                    # weighted std
+                    m = recency_wavg
+                    recency_wstd = float(math.sqrt(((w * ((values_for_recency - m) ** 2)).sum()) / (w.sum()))) if w.sum() > 0 else 0.0
+                # days since last
+                last_dates = [p.get('レース日') for p in past if p.get('レース日') is not None]
+                if len(last_dates) > 0:
+                    days_since_last = (race_date - pd.to_datetime(last_dates[-1])).days
+
+            # build a feature record for this horse x this race
+            rec = {
+                'race_key': rk,
+                'race_date': race_date,
+                '馬名': name,
+                'n_start': n_start,
+                'wins': wins,
+                'top3': top3,
+                'win_rate': (wins / n_start) if n_start > 0 else np.nan,
+                'top3_rate': (top3 / n_start) if n_start > 0 else np.nan,
+                'avg_finish': avg_finish,
+                'avg_classpt': avg_classpt,
+                'avg_3frank': avg_3frank,
+                'avg_weight': avg_weight,
+                'best_time': best_time,
+                'days_since_last': days_since_last,
+                'recency_wavg': recency_wavg,
+                'recency_wstd': recency_wstd,
+                'cur_class_pt': row.get('_class_pt', 1),
+                'cur_headcount': row.get('頭数', np.nan),
+                'cur_rank': row.get('確定着順', np.nan),
+                'cur_上3F順位': row.get('上3F順位', np.nan),
+                'cur_通過4角': row.get('通過4角', np.nan),
+                'cur_斤量': row.get('斤量', np.nan),
+                'cur_馬体重': row.get('馬体重', np.nan),
+                'cur_枠': row.get('枠', np.nan),
+                'cur_性別': row.get('性別', np.nan),
+                'cur_年齢': row.get('年齢', np.nan),
+                'score_raw_row': row.get('score_raw', np.nan)
+            }
+            feats.append(rec)
+
+        # after processing current race, append current race rows to history for each horse
+        for _, row in race_rows.iterrows():
+            name = row.get('馬名')
+            horse_history.setdefault(name, []).append(row.to_dict())
+
+    feats_df = pd.DataFrame(feats)
+    return feats_df
+
+# ---------------------------
+# UI 用の小さなヘルパーと学習ワークフロー
+# ---------------------------
+
+st.sidebar.markdown("---")
+st.sidebar.header("★ LightGBM モデル学習 (特徴量 自動生成)")
+
+target_choice = st.sidebar.selectbox("目的変数", ['win','top3'], index=0,
+                                     help="win=1着予測, top3=3着以内予測（1/0の二値分類）")
+# data split by date or fraction
+split_mode = st.sidebar.radio("学習/検証 分割方法", ['日付分割','割合分割'], index=0)
+if split_mode == '日付分割':
+    cutoff_date = st.sidebar.date_input("学習終了日（学習:それ以前 / 検証:それ以降）",
+                                        value=pd.to_datetime(df_score['レース日'].min()).date() if 'レース日' in df_score else pd.Timestamp.today().date())
+else:
+    test_frac = st.sidebar.slider("検証データ割合 (fraction)", 0.05, 0.5, 0.2, 0.01)
+
+# model hyperparams
+st.sidebar.subheader("モデル（LightGBM）ハイパーパラメータ")
+use_lgb = st.sidebar.checkbox("LightGBM を使う（利用可能なら）", value=True)
+n_estimators = st.sidebar.number_input("num_boost_round / n_estimators", min_value=10, max_value=5000, value=200, step=10)
+learning_rate = st.sidebar.number_input("learning_rate", min_value=0.001, max_value=1.0, value=0.05, step=0.01, format="%.3f")
+max_depth = st.sidebar.slider("max_depth (0=none)", 0, 16, 6)
+num_leaves = st.sidebar.slider("num_leaves", 2, 512, 31)
+random_state = int(st.sidebar.number_input("乱数シード", min_value=0, max_value=999999, value=42))
+
+# training controls
+st.sidebar.markdown("---")
+do_train = st.sidebar.button("学習 & 評価 実行")
+
+# when button clicked, run full pipeline
+if do_train:
+    t0 = time.time()
+    st.info("特徴量生成中...（時間かかることあります）")
+    with st.spinner("特徴量を作成しています..."):
+        feats_df = build_features_time_aware(df_score)
+
+    # create target label
+    feats_df['target_win'] = feats_df['cur_rank'].apply(lambda x: 1 if (pd.notna(x) and float(x)==1.0) else 0)
+    feats_df['target_top3'] = feats_df['cur_rank'].apply(lambda x: 1 if (pd.notna(x) and float(x) <= 3.0) else 0)
+    target_col = 'target_win' if target_choice == 'win' else 'target_top3'
+
+    # drop rows with no history at all (n_start==0) optionally
+    feats_df['n_start'] = feats_df['n_start'].fillna(0)
+    feats_trainable = feats_df[feats_df['n_start'] >= 1].copy()
+    if len(feats_trainable) < 50:
+        st.warning("学習可能な行数が少なすぎます（<50）。まずは履歴データを増やすか min_history の条件を下げてください。")
+    # features list (numerical + categorical encoded)
+    # pick sensible features from generated set
+    use_features = [
+        'n_start','win_rate','top3_rate','avg_finish','avg_classpt','avg_3frank','avg_weight',
+        'best_time','days_since_last','recency_wavg','recency_wstd',
+        'cur_class_pt','cur_headcount','cur_上3F順位','cur_通過4角','cur_斤量','cur_馬体重','cur_枠','cur_年齢'
+    ]
+    # ensure columns exist
+    use_features = [f for f in use_features if f in feats_trainable.columns]
+
+    # fill na
+    feats_trainable[use_features] = feats_trainable[use_features].fillna(feats_trainable[use_features].median())
+
+    # categorical encoding for 枠 if present
+    cat_cols = []
+    if 'cur_枠' in use_features:
+        feats_trainable['cur_枠'] = feats_trainable['cur_枠'].astype(float).astype(int).astype(str)
+        cat_cols.append('cur_枠')
+
+    # prepare X,y and split
+    X = feats_trainable[use_features].copy()
+    y = feats_trainable[target_col].astype(int)
+
+    # train/val split by date or fraction
+    if split_mode == '日付分割':
+        cutoff = pd.to_datetime(cutoff_date)
+        mask_train = feats_trainable['race_date'] <= cutoff
+        X_train, X_val = X[mask_train].copy(), X[~mask_train].copy()
+        y_train, y_val = y[mask_train].copy(), y[~mask_train].copy()
+    else:
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_frac, random_state=random_state, stratify=y if y.nunique()>1 else None)
+
+    # scale numeric features (optional)
+    numeric_cols = [c for c in X_train.columns if c not in cat_cols]
+    scaler = StandardScaler()
+    X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
+    X_val[numeric_cols] = scaler.transform(X_val[numeric_cols])
+
+    # model selection
+    model = None
+    if use_lgb and LGB_AVAILABLE:
+        # LightGBM classifier
+        lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols if len(cat_cols)>0 else 'auto', free_raw_data=False)
+        valid_sets = [lgb_train]
+        params = {
+            'objective': 'binary',
+            'metric': 'binary_logloss',
+            'learning_rate': float(learning_rate),
+            'num_leaves': int(num_leaves),
+            'max_depth': int(max_depth) if int(max_depth)>0 else -1,
+            'verbosity': -1,
+            'seed': int(random_state)
+        }
+        # train
+        model = lgb.train(params, lgb_train, num_boost_round=int(n_estimators))
+        y_pred_prob = model.predict(X_val)
+        y_pred = (y_pred_prob >= 0.5).astype(int)
+    else:
+        # fallback to sklearn's HistGradientBoostingClassifier
+        model = HistGradientBoostingClassifier(max_iter=int(n_estimators), learning_rate=float(learning_rate), max_leaf_nodes=int(num_leaves), random_state=int(random_state))
+        model.fit(X_train, y_train)
+        try:
+            y_pred_prob = model.predict_proba(X_val)[:,1]
+        except Exception:
+            y_pred_prob = model.predict(X_val)
+        y_pred = (y_pred_prob >= 0.5).astype(int)
+
+    # metrics
+    auc = roc_auc_score(y_val, y_pred_prob) if len(np.unique(y_val))>1 else float('nan')
+    acc = accuracy_score(y_val, y_pred)
+    ll = log_loss(y_val, y_pred_prob, labels=[0,1]) if len(np.unique(y_val))>1 else float('nan')
+
+    st.subheader("モデル評価")
+    st.write(f"学習データ: {len(X_train)} 行, 検証データ: {len(X_val)} 行")
+    st.write(f"AUC: {auc:.4f}  Accuracy: {acc:.3f}  LogLoss: {ll:.3f}")
+    st.text("分類レポート（検証）:")
+    st.text(classification_report(y_val, y_pred, zero_division=0))
+
+    # feature importance / SHAP
+    st.subheader("説明性（Feature Importance / SHAP）")
+    try:
+        if SHAP_AVAILABLE and LGB_AVAILABLE and isinstance(model, lgb.basic.Booster):
+            explainer = shap.TreeExplainer(model)
+            shap_vals = explainer.shap_values(X_val)
+            st.write("SHAP Summary (検証データ)")
+            fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
+            st.pyplot(fig_shap, bbox_inches='tight')
+        elif SHAP_AVAILABLE and not LGB_AVAILABLE:
+            # scikit-learn model: use TreeExplainer
+            explainer = shap.Explainer(model, X_train)
+            shap_vals = explainer(X_val)
+            fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
+            st.pyplot(fig_shap, bbox_inches='tight')
+        else:
+            # fallback: built-in feature_importances_
+            st.info("shap が利用できないため、feature_importances_ を表示します。 (pip install shap で詳細表示可能)")
+            if hasattr(model, 'feature_importances_'):
+                fi = pd.Series(model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
+                fig, ax = plt.subplots(figsize=(6,4))
+                fi.head(20).plot.bar(ax=ax)
+                ax.set_title("Feature importances")
+                st.pyplot(fig)
+            else:
+                st.write("モデルに feature_importances_ がありません。")
+    except Exception as e:
+        st.error(f"説明性算出中にエラー: {e}")
+
+    # === 当日出走馬への予測 ===
+    st.subheader("当日出走馬への予測（出走表に存在する馬）")
+    # prepare features for horses in current horses DataFrame: we will use last available history for each horse
+    try:
+        # get latest race date in df_score (most recent)
+        last_date = pd.to_datetime(df_score['レース日']).max()
+    except:
+        last_date = pd.Timestamp.today()
+    # build features for each horse in 'horses' DataFrame by querying df_score history up to last_date
+    cur_horses = horses.copy() if 'horses' in globals() else pd.DataFrame()
+    if cur_horses is None or cur_horses.empty:
+        st.info("出走表（horses）が見つかりません。学習済みモデルを検証用に使う場合は 'horses' を用意してください。")
+    else:
+        # compute same features for current entrants
+        def make_feat_for_horse(hn):
+            past = df_score[(df_score['馬名'] == hn) & (pd.to_datetime(df_score['レース日']) < last_date)].sort_values('レース日')
+            n_start = len(past)
+            wins = int((past['確定着順'] == 1).sum()) if '確定着順' in past else 0
+            top3 = int((past['確定着順'] <= 3).sum()) if '確定着順' in past else 0
+            win_rate = wins / n_start if n_start>0 else np.nan
+            top3_rate = top3 / n_start if n_start>0 else np.nan
+            avg_finish = past['確定着順'].dropna().astype(float).mean() if '確定着順' in past and len(past.dropna(subset=['確定着順']))>0 else np.nan
+            avg_classpt = past['_class_pt'].mean() if '_class_pt' in past else np.nan
+            avg_3fr = past['上3F順位'].dropna().astype(float).mean() if '上3F順位' in past and len(past.dropna(subset=['上3F順位']))>0 else np.nan
+            avg_weight = past['斤量'].dropna().astype(float).mean() if '斤量' in past and len(past.dropna(subset=['斤量']))>0 else np.nan
+            best_time = past['走破タイム秒'].dropna().astype(float).min() if '走破タイム秒' in past and len(past.dropna(subset=['走破タイム秒']))>0 else np.nan
+            if n_start>0:
+                days = (last_date - pd.to_datetime(past['レース日'])).dt.days.fillna(9999).clip(lower=0).values
+                hl_days = 30.4375 * 6.0
+                w = 0.5 ** (days / hl_days)
+                vals = past['score_raw'].fillna(0).astype(float).values if 'score_raw' in past else np.ones(len(past))
+                recency_wavg = float((vals * w).sum() / w.sum()) if w.sum()>0 else np.nan
+                # recency std
+                m = recency_wavg
+                recency_wstd = float(math.sqrt(((w * ((vals - m) ** 2)).sum()) / (w.sum()))) if w.sum()>0 else 0.0
+            else:
+                recency_wavg, recency_wstd = np.nan, np.nan
+            # current row metadata
+            cur_row = cur_horses[cur_horses['馬名'] == hn]
+            cur_class_pt = class_point_guess(cur_row.iloc[0].get('クラス名')) if ('クラス名' in cur_row.columns and len(cur_row)>0) else np.nan
+            cur_headcount = cur_row.iloc[0].get('頭数') if '頭数' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_上3F = cur_row.iloc[0].get('上3F順位') if '上3F順位' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_通過4 = cur_row.iloc[0].get('通過4角') if '通過4角' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_斤量 = cur_row.iloc[0].get('斤量') if '斤量' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_馬体重 = cur_row.iloc[0].get('馬体重') if '馬体重' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_枠 = cur_row.iloc[0].get('枠') if '枠' in cur_row.columns and len(cur_row)>0 else np.nan
+            cur_年齢 = cur_row.iloc[0].get('年齢') if '年齢' in cur_row.columns and len(cur_row)>0 else np.nan
+
+            return {
+                '馬名': hn, 'n_start': n_start, 'win_rate': win_rate, 'top3_rate': top3_rate, 'avg_finish': avg_finish,
+                'avg_classpt': avg_classpt, 'avg_3frank': avg_3fr, 'avg_weight': avg_weight, 'best_time': best_time,
+                'days_since_last': (last_date - pd.to_datetime(past['レース日']).max()).days if n_start>0 else np.nan,
+                'recency_wavg': recency_wavg, 'recency_wstd': recency_wstd,
+                'cur_class_pt': cur_class_pt, 'cur_headcount': cur_headcount, 'cur_上3F順位': cur_上3F,
+                'cur_通過4角': cur_通過4, 'cur_斤量': cur_斤量, 'cur_馬体重': cur_馬体重, 'cur_枠': cur_枠, 'cur_年齢': cur_年齢
+            }
+
+        rows = []
+        for hn in cur_horses['馬名'].tolist():
+            rows.append(make_feat_for_horse(hn))
+        pred_df = pd.DataFrame(rows)
+        # prepare X_pred using same use_features and scalers
+        X_pred = pred_df[[c for c in use_features if c in pred_df.columns]].copy()
+        X_pred = X_pred.fillna(X_pred.median())
+        # encode cur_枠 if necessary
+        if 'cur_枠' in X_pred.columns:
+            X_pred['cur_枠'] = X_pred['cur_枠'].astype(float).astype(int).astype(str)
+        # scale numeric
+        for c in numeric_cols:
+            if c in X_pred.columns:
+                X_pred[c] = scaler.transform(X_pred[[c]])
+        # predict
+        if LGB_AVAILABLE and use_lgb and isinstance(model, lgb.basic.Booster):
+            pred_prob = model.predict(X_pred)
+        else:
+            try:
+                pred_prob = model.predict_proba(X_pred)[:,1]
+            except:
+                pred_prob = model.predict(X_pred)
+        pred_df['pred_prob'] = pred_prob
+        # assign marks
+        # sort by prob desc
+        pred_df = pred_df.sort_values('pred_prob', ascending=False).reset_index(drop=True)
+        marks = ['◎','〇','▲','☆','△','△']
+        pred_df['印'] = [marks[i] if i < len(marks) else '' for i in range(len(pred_df))]
+        st.table(pred_df[['印','馬名','pred_prob','n_start','win_rate','recency_wavg']].head(12).rename(columns={'pred_prob':'勝率推定'}))
+
+    t1 = time.time()
+    st.success(f"学習と評価が完了しました（所要 {t1-t0:.1f} 秒）。")
