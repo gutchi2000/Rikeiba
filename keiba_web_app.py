@@ -1788,6 +1788,79 @@ if do_train:
                     # フォールバック：スケーリングをしない（このケースではそのまま進めます）
 
         model = None
+                # -------- LightGBM 学習前の安全ガード & デバッグ出力 --------
+        st.write("DEBUG: before LightGBM training")
+        st.write("DEBUG: X_train shape:", getattr(X_train, "shape", None))
+        st.write("DEBUG: X_val shape:", getattr(X_val, "shape", None))
+        st.write("DEBUG: y_train shape:", getattr(y_train, "shape", None))
+        st.write("DEBUG: numeric_cols:", numeric_cols)
+        st.write("DEBUG: cat_cols:", cat_cols)
+        st.write("DEBUG: X_train columns:", list(X_train.columns) if hasattr(X_train, 'columns') else None)
+        # 型情報と先頭数行を出す（Streamlit 上で確認）
+        try:
+            st.write("DEBUG: X_train dtypes:")
+            st.write(X_train.dtypes)
+            st.write("DEBUG: X_train head:")
+            st.write(X_train.head(5))
+        except Exception as _:
+            pass
+
+        # 基本チェック：行数 / 列数
+        if (not hasattr(X_train, "shape")) or X_train.shape[0] == 0:
+            st.error("学習データが空です（行数 0）。LightGBM 学習をスキップします。")
+            model = None
+        elif X_train.shape[1] == 0:
+            st.error("学習データに特徴量がありません（列数 0）。LightGBM 学習をスキップします。")
+            model = None
+        else:
+            # 追加ガード：object 型などの怪しい列を強制変換 / カテゴリ列を category にする
+            try:
+                for c in cat_cols:
+                    if c in X_train.columns:
+                        X_train[c] = X_train[c].astype('category')
+                        X_val[c]   = X_val[c].astype('category')
+            except Exception as e:
+                st.warning(f"カテゴリ変換で警告: {e}")
+
+            # (念のため) 全列が object 型でないかチェック
+            if all(str(dt).startswith('object') for dt in X_train.dtypes):
+                st.warning("警告: X_train の全列が object 型の可能性があります。数値列が存在するか確認してください。")
+
+            # 最終確認：numpy に変換して 2 次元であるか確認
+            try:
+                arr = np.asarray(X_train)
+                st.write("DEBUG: np.asarray(X_train).shape:", arr.shape, " ndim:", arr.ndim)
+                if arr.ndim != 2 or arr.size == 0:
+                    st.error("学習用配列が2次元でないか空です。学習を中止します。")
+                    model = None
+                else:
+                    # LightGBM に渡す（例外を捕まえて落ちないようにする）
+                    try:
+                        lgb_train = lgb.Dataset(X_train, label=y_train,
+                                                categorical_feature=cat_cols if len(cat_cols)>0 else 'auto',
+                                                free_raw_data=False)
+                        params = {
+                            'objective': 'binary',
+                            'metric': 'binary_logloss',
+                            'learning_rate': learning_rate,
+                            'num_leaves': num_leaves,
+                            'max_depth': (max_depth if max_depth>0 else -1),
+                            'verbosity': -1,
+                            'seed': random_state
+                        }
+                        model = lgb.train(params, lgb_train, num_boost_round=n_estimators)
+                    except Exception as e:
+                        st.error(f"LightGBM の学習中に例外が発生しました: {e}")
+                        # 追加のデバッグ情報
+                        try:
+                            st.write("DEBUG: lgb input X_train.shape:", X_train.shape, " dtypes:", X_train.dtypes.to_dict())
+                        except:
+                            pass
+                        model = None
+            except Exception as e:
+                st.error(f"学習データの numpy 変換で例外: {e}")
+                model = None
+
         if use_lgb and LGB_AVAILABLE:
             lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols if len(cat_cols)>0 else 'auto', free_raw_data=False)
             params = {
