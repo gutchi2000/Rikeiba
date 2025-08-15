@@ -1053,53 +1053,118 @@ df_map['番'] = pd.to_numeric(df_map['番'].astype(str).str.translate(str.maketr
 df_map = df_map.dropna(subset=['番']).astype({'番': int})
 df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
 
-# ===== 現状サマリー（表） =====
-st.subheader("現状サマリー（表）")
-st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
+# ===== 現状サマリー（表）＆展開ロケーション（視覚）【手入力フル対応版】 =====
+idx2style = ['逃げ','先行','差し','追込']
 
-style_order = ['逃げ','先行','差し','追込']
-style_counts = df_map['脚質'].value_counts().reindex(style_order).fillna(0).astype(int)
-total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
-style_pct = (style_counts / total_heads * 100).round(1)
-pace_summary = pd.DataFrame([{
-    '想定ペース': pace_type,
-    '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
-    '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
-    '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
-    '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
-}])
-st.table(pace_summary)
-
-# 印つき上位馬
-pick_df = (
-    topN[['印','馬名']]
-    .merge(df_agg[['馬名','FinalZ','WStd','勝率%_MC','複勝率%_MC']], on='馬名', how='left')
-    .rename(columns={'勝率%_MC':'勝率(%)','複勝率%_MC':'複勝率(%)'})
+# 全頭、編集テーブルの「脚質」が正しく手入力されているか？
+all_manual = (
+    ('脚質' in horses.columns) and
+    horses['脚質'].astype(str).isin(idx2style).all()
 )
-for c in ['FinalZ','WStd','勝率(%)','複勝率(%)']:
-    pick_df[c] = pick_df[c].map(lambda x: None if pd.isna(x) else round(float(x), 1))
-st.table(pick_df[['印','馬名','FinalZ','WStd','勝率(%)','複勝率(%)']])
 
-# ===== 展開ロケーション（視覚） =====
-df_map_show = df_map.sort_values(['番'])
-if len(df_map_show) > 0:
+if all_manual:
+    # ---- 手入力100%反映モード ----
+    st.subheader("現状サマリー（表）")
+    # horses からそのまま作る（combined_style も自動推定も使わない）
+    df_map_show = horses[['番','馬名','脚質']].copy()
+    df_map_show['番'] = pd.to_numeric(
+        df_map_show['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')),
+        errors='coerce'
+    )
+    df_map_show = df_map_show.dropna(subset=['番']).astype({'番': int})
+    df_map_show['脚質'] = pd.Categorical(df_map_show['脚質'], categories=idx2style, ordered=True)
+
+    # 手入力だけでペースを決定（EPI と同じ式）
+    style_counts = df_map_show['脚質'].value_counts().reindex(idx2style).fillna(0).astype(int)
+    total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
+    style_pct = (style_counts / total_heads * 100).round(1)
+
+    nige = int(style_counts['逃げ'])
+    sengo = int(style_counts['先行'])
+    Hm = max(1, total_heads)
+    epi_m = (epi_alpha * nige + epi_beta * sengo) / Hm
+    if   epi_m >= thr_hi:   pace_type_view = "ハイペース"
+    elif epi_m >= thr_mid:  pace_type_view = "ミドルペース"
+    elif epi_m >= thr_slow: pace_type_view = "ややスローペース"
+    else:                   pace_type_view = "スローペース"
+
+    st.caption(f"ペース: {pace_type_view}（手入力100%反映）")
+    pace_summary = pd.DataFrame([{
+        '想定ペース': pace_type_view,
+        '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
+        '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
+        '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
+        '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
+    }])
+    st.table(pace_summary)
+
+    # 展開ロケーション図（手入力のみで描画）
     fig, ax = plt.subplots(figsize=(10,3))
     colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
-    for _, row in df_map_show.iterrows():
-        if row['脚質'] in colors:
-            x = row['番']; y = ['逃げ','先行','差し','追込'].index(row['脚質'])
-            ax.scatter(x, y, color=colors[row['脚質']], s=200)
-            lab = row['馬名']
+    for _, row in df_map_show.sort_values('番').iterrows():
+        stl = str(row['脚質'])
+        if stl in colors:
+            x = int(row['番'])
+            y = idx2style.index(stl)
+            ax.scatter(x, y, color=colors[stl], s=200)
+            lab = str(row['馬名'])
             ax.text(x, y, lab, ha='center', va='center', color='white', fontsize=9, weight='bold',
-                    bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
+                    bbox=dict(facecolor=colors[stl], alpha=0.7, boxstyle='round'),
                     fontproperties=jp_font)
-    ax.set_yticks([0,1,2,3]); ax.set_yticklabels(['逃げ','先行','差し','追込'], fontproperties=jp_font)
-    ax.set_xticks(sorted(df_map_show['番'].unique())); ax.set_xticklabels([f"{i}番" for i in sorted(df_map_show['番'].unique())], fontproperties=jp_font)
-    ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
-    ax.set_title(f"展開ロケーション（{pace_type}想定）", fontproperties=jp_font)
+    ax.set_yticks([0,1,2,3])
+    ax.set_yticklabels(idx2style, fontproperties=jp_font)
+    xs = sorted(df_map_show['番'].unique())
+    ax.set_xticks(xs)
+    ax.set_xticklabels([f"{i}番" for i in xs], fontproperties=jp_font)
+    ax.set_xlabel("馬番", fontproperties=jp_font)
+    ax.set_ylabel("脚質", fontproperties=jp_font)
+    ax.set_title(f"展開ロケーション（{pace_type_view}想定・手入力）", fontproperties=jp_font)
     st.pyplot(fig)
+
 else:
-    st.info("展開ロケーション：表示対象がありません（馬番が未入力かも）。")
+    # ---- 既存ロジック（自動/混在モード） ----
+    # （元の「現状サマリー（表）」と「展開ロケーション（視覚）」ブロックをこの中に残してください）
+    df_map = horses.copy()
+    df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
+    df_map['番'] = pd.to_numeric(df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
+    df_map = df_map.dropna(subset=['番']).astype({'番': int})
+    df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=idx2style, ordered=True)
+
+    st.subheader("現状サマリー（表）")
+    st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
+    style_counts = df_map['脚質'].value_counts().reindex(idx2style).fillna(0).astype(int)
+    total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
+    style_pct = (style_counts / total_heads * 100).round(1)
+    pace_summary = pd.DataFrame([{
+        '想定ペース': pace_type,
+        '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
+        '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
+        '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
+        '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
+    }])
+    st.table(pace_summary)
+
+    # 展開ロケーション（従来どおり combined_style で描画）
+    df_map_show = df_map.sort_values(['番'])
+    if len(df_map_show) > 0:
+        fig, ax = plt.subplots(figsize=(10,3))
+        colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
+        for _, row in df_map_show.iterrows():
+            if row['脚質'] in colors:
+                x = row['番']; y = idx2style.index(row['脚質'])
+                ax.scatter(x, y, color=colors[row['脚質']], s=200)
+                lab = row['馬名']
+                ax.text(x, y, lab, ha='center', va='center', color='white', fontsize=9, weight='bold',
+                        bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
+                        fontproperties=jp_font)
+        ax.set_yticks([0,1,2,3]); ax.set_yticklabels(idx2style, fontproperties=jp_font)
+        ax.set_xticks(sorted(df_map_show['番'].unique())); ax.set_xticklabels([f"{i}番" for i in sorted(df_map_show['番'].unique())], fontproperties=jp_font)
+        ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
+        ax.set_title(f"展開ロケーション（{pace_type}想定）", fontproperties=jp_font)
+        st.pyplot(fig)
+    else:
+        st.info("展開ロケーション：表示対象がありません（馬番が未入力かも）。")
+
 
 # ===== 重賞ハイライト（好走と出走歴の両方を表示） =====
 race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
