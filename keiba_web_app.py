@@ -1482,9 +1482,12 @@ else:
                 break
 
 # 表示用に“円”フォーマット
-_df_disp = _df.copy()
-if len(_df_disp)>0:
-    _df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
+if len(_df_disp) > 0 and '券種' in _df_disp.columns:
+    unique_types = _df_disp['券種'].dropna().unique().tolist()
+else:
+    unique_types = []
+
+tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types) > 0 else st.tabs(['サマリー'])
 
 unique_types = __df_disp['券種'].unique().tolist() if len(_df_disp)>0 else []
 tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types)>0 else st.tabs(['サマリー'])
