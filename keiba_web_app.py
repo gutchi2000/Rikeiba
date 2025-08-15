@@ -1153,6 +1153,76 @@ def ai_comment(row):
 horses2['短評'] = horses2.apply(ai_comment, axis=1)
 
 st.subheader("■ 全頭AI診断コメント")
+# --- デバッグ & 安全ガード（horses2 表示直前に挿入） ---
+# 馬名の正規化（merge 前にやっておくと安全）
+try:
+    if '馬名' in horses2.columns:
+        horses2['馬名'] = horses2['馬名'].astype(str).str.strip()
+except Exception:
+    pass
+
+# df_agg / blood_df 側も念のため正規化（存在すれば）
+try:
+    if '馬名' in df_agg.columns:
+        df_agg['馬名'] = df_agg['馬名'].astype(str).str.strip()
+except Exception:
+    pass
+try:
+    if '馬名' in blood_df.columns:
+        blood_df['馬名'] = blood_df['馬名'].astype(str).str.strip()
+except Exception:
+    pass
+
+# 期待列をチェックして無ければ作る（デフォルト値）
+expected_cols = ['馬名','印','脚質','血統','短評','WAvgZ','WStd']
+missing = [c for c in expected_cols if c not in horses2.columns]
+
+if missing:
+    st.warning(f"表示に必要な列が不足しています： {missing}。自動補完します（後で原因を確認してください）。")
+    # 血統はblood_dfから取れるなら優先して埋める
+    if '血統' in missing:
+        if '馬名' in horses2.columns and not blood_df.empty and '馬名' in blood_df.columns and '血統' in blood_df.columns:
+            horses2 = horses2.merge(blood_df[['馬名','血統']], on='馬名', how='left')
+        # まだ無ければ空文字で埋める
+        if '血統' not in horses2.columns:
+            horses2['血統'] = ''
+
+    # WAvgZ/WStdはdf_aggから埋める
+    for col in ['WAvgZ','WStd']:
+        if col in missing:
+            if '馬名' in horses2.columns and '馬名' in df_agg.columns and col in df_agg.columns:
+                horses2 = horses2.merge(df_agg[['馬名',col]], on='馬名', how='left')
+            if col not in horses2.columns:
+                horses2[col] = np.nan
+
+    # 印（短評、脚質）は基本空白で埋める（後処理で上書きされる）
+    if '印' not in horses2.columns:
+        horses2['印'] = ''
+    if '短評' not in horses2.columns:
+        horses2['短評'] = ''
+    if '脚質' not in horses2.columns:
+        horses2['脚質'] = horses2.get('脚質', '').fillna('')
+
+# 最終確認：欠けている列が残っていれば表示して停止ではなく補完
+still_missing = [c for c in expected_cols if c not in horses2.columns]
+if still_missing:
+    st.error(f"依然として列が足りません：{still_missing}。処理を継続しますが、出力が不完全になる可能性があります。")
+    for c in still_missing:
+        if c in ['WAvgZ','WStd']:
+            horses2[c] = np.nan
+        else:
+            horses2[c] = ''
+
+# （任意）短評を再計算（ai_comment が定義済みなら）
+try:
+    if '短評' in horses2.columns:
+        horses2['短評'] = horses2.apply(ai_comment, axis=1)
+except Exception as e:
+    st.warning(f"短評の再計算で例外が発生しました: {e}")
+
+# デバッグ出力（列一覧）
+st.write(">>> horses2 の列一覧（表示直前）:", horses2.columns.tolist())
+
 st.dataframe(horses2[['馬名','印','脚質','血統','短評','WAvgZ','WStd']])
 
 # ======================== 買い目生成＆資金配分 ========================
