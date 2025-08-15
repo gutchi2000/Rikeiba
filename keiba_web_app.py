@@ -828,36 +828,59 @@ if not df_style.empty:
 combined_style = combined_style.fillna('')
 df_agg['脚質'] = df_agg['馬名'].map(combined_style)
 
-# build P matrix (脚質確率行列) with manual-first logic
+# build P matrix (manual-first) — fixed & robust
 idx2style = ['逃げ','先行','差し','追込']
 H = len(name_list)
 P = np.zeros((H, 4), dtype=float)
 
-# df_style から確率テーブル（あれば）
+# -------- df_style から確率テーブル（列名ゆれを吸収） --------
+need_cols = ['p_逃げ','p_先行','p_差し','p_追込']
 pmap = None
-if not df_style.empty and {'p_逃げ','p_先行','p_差し','p_追込'}.issubset(df_style.columns):
-    pmap = df_style.set_index('馬名')[['p_逃げ','p_先行','p_差込','p_追込' if 'p_追込' in df_style.columns else 'p_追込']].copy()
-    # ↑ 万一列名の表記揺れがあればここで合わせてください（上は例）
+if not df_style.empty and '馬名' in df_style.columns:
+    df_prob = df_style.copy()
 
-# 正式版（AUTO_OVERWRITEがFalseなら手入力を最優先）
+    # 列名ゆれを正規化
+    df_prob = df_prob.rename(columns={
+        'p_差込': 'p_差し',
+        'p_追い込み': 'p_追込',
+        'p_追込み': 'p_追込',
+        'p_逃げ率': 'p_逃げ', 'p_先行率': 'p_先行', 'p_差し率': 'p_差し', 'p_追込率': 'p_追込',
+    })
+
+    if set(need_cols).issubset(df_prob.columns):
+        # 数値化→NaNは0→各行で再正規化
+        for c in need_cols:
+            df_prob[c] = pd.to_numeric(df_prob[c], errors='coerce').fillna(0.0)
+        pmap = (df_prob[['馬名'] + need_cols]
+                .set_index('馬名')[need_cols])
+        row_sums = pmap.sum(axis=1).replace(0, np.nan)
+        pmap = pmap.div(row_sums, axis=0).fillna(0.0)
+
+# -------- P を組み立て（AUTO_OVERWRITE=Falseなら手入力を最優先） --------
 for i, nm in enumerate(name_list):
-    stl = combined_style.get(nm, '')  # 手入力＆補完済み
+    stl = combined_style.get(nm, '')
+
+    # 手入力があれば 1-hot を最優先
     if not AUTO_OVERWRITE and (stl in idx2style):
-        # 手入力があれば 1-hot を最優先
         P[i, :] = 0.0
         P[i, idx2style.index(stl)] = 1.0
         continue
 
-    # ここまで来たら、自動推定があればその確率、無ければ 1-hot / 一様
+    # 自動推定の確率があれば使用（全ゼロならフォールバック）
     if pmap is not None and nm in pmap.index:
-        vals = pmap.loc[nm].to_numpy(dtype=float)
-        s = vals.sum()
-        P[i, :] = vals / s if s > 0 else np.array([0.25, 0.25, 0.25, 0.25])
+        P[i, :] = pmap.loc[nm, need_cols].to_numpy(dtype=float)
+        if P[i, :].sum() == 0:
+            if stl in idx2style:
+                P[i, :] = 0.0
+                P[i, idx2style.index(stl)] = 1.0
+            else:
+                P[i, :] = np.array([0.25, 0.25, 0.25, 0.25])
     elif stl in idx2style:
         P[i, :] = 0.0
         P[i, idx2style.index(stl)] = 1.0
     else:
         P[i, :] = np.array([0.25, 0.25, 0.25, 0.25])
+
 
 
 # mark rules & pace MC
