@@ -1056,17 +1056,20 @@ df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行
 # ===== 現状サマリー（表）＆展開ロケーション（視覚）【手入力フル対応版】 =====
 idx2style = ['逃げ','先行','差し','追込']
 
-# 全頭、編集テーブルの「脚質」が正しく手入力されているか？
-all_manual = (
-    ('脚質' in horses.columns) and
-    horses['脚質'].astype(str).isin(idx2style).all()
+# 0行目などのダミー・未入力行を除外して判定（馬名/番が入っている行のみ）
+row_ok = (
+    horses['馬名'].astype(str).str.replace('\u3000',' ').str.strip().ne('') &
+    horses['番'].astype(str).str.translate(_fwid).str.strip().ne('')
 )
+style_ok = horses['脚質'].astype(str).isin(idx2style)
+# 全頭手入力の判定（有効行だけで判定）
+all_manual = style_ok[row_ok].all() and row_ok.any()
 
 if all_manual:
     # ---- 手入力100%反映モード ----
     st.subheader("現状サマリー（表）")
     # horses からそのまま作る（combined_style も自動推定も使わない）
-    df_map_show = horses[['番','馬名','脚質']].copy()
+    df_map_show = horses.loc[row_ok, ['番','馬名','脚質']].copy()
     df_map_show['番'] = pd.to_numeric(
         df_map_show['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')),
         errors='coerce'
@@ -1622,9 +1625,10 @@ if '金額' in _df_disp.columns and len(_df_disp) > 0:
     _df_disp['金額'] = _df_disp['金額'].map(fmt_money)
 
 # '券種' のユニーク種類を安全に取得（空や欠損は除外）
-unique_types = []
 if len(_df_disp) > 0 and '券種' in _df_disp.columns:
     unique_types = [str(x) for x in _df_disp['券種'].dropna().unique().tolist() if str(x).strip() != ""]
+else:
+    unique_types = []
 
 # タブを作成（'サマリー' は常に最初に）
 tabs = st.tabs(['サマリー'] + unique_types)
@@ -1716,7 +1720,7 @@ def build_features_time_aware(df_score, default_half_months=6.0):
     for rk in race_keys:
         race_rows = s[s['_race_key'] == rk]
         if race_rows.empty: continue
-        race_date = pd.to_datetime(race_rows['レース日'].iloc[0])
+        race_date = pd.to_datetime(race_rows['レース日']).iloc[0]
         for _, row in race_rows.iterrows():
             name = row.get('馬名')
             if pd.isna(name): continue
@@ -1902,9 +1906,7 @@ if do_train:
         else:
             X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_frac, random_state=random_state, stratify=y if y.nunique()>1 else None)
 
-        numeric_cols = [c for c in X_train.columns if c not in cat_cols]
-        scaler = StandardScaler()
-               # --- 安全な数値スケーリング処理（ここで既存のスケーリング周りを置き換えてください） ---
+        # --- 安全な数値スケーリング処理 ---
         numeric_cols = [c for c in X_train.columns if c not in cat_cols]
         scaler = StandardScaler()
 
@@ -1962,7 +1964,7 @@ if do_train:
                     # フォールバック：スケーリングをしない（このケースではそのまま進めます）
 
         model = None
-                # -------- LightGBM 学習前の安全ガード & デバッグ出力 --------
+        # -------- LightGBM 学習前の安全ガード & デバッグ出力 --------
         st.write("DEBUG: before LightGBM training")
         st.write("DEBUG: X_train shape:", getattr(X_train, "shape", None))
         st.write("DEBUG: X_val shape:", getattr(X_val, "shape", None))
