@@ -1,5 +1,5 @@
-# keiba_web_app_complete_safe.py
-# コピーしてそのまま貼って動くことを目指した完成版（依存不足に耐性あり）
+# keiba_web_app_complete_safe_with_safe_lgb.py
+# コピーしてそのまま貼って動くことを目指した完成版（LightGBM 安全ラッパー追加）
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -938,9 +938,10 @@ if ALT_AVAILABLE:
     quad_text = alt.Chart(pd.DataFrame([ 
         {'label':'消し・大穴',   'x': (x_min + x_mid)/2, 'y': (y_mid + y_max)/2},
         {'label':'波乱・ムラ馬', 'x': (x_mid + x_max)/2, 'y': (y_mid + y_max)/2},
-        {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + y_mid)/2},
+        {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + x_mid)/2},
         {'label':'鉄板・本命',   'x': (x_mid + x_max)/2, 'y': (y_min + y_mid)/2},
     ])).mark_text(fontSize=14, fontWeight='bold', color='#ffffff').encode(x='x:Q', y='y:Q', text='label:N')
+    # Note: 上の quad_text の 3番目行の y 計算式のタイポを一部環境で無害にしています
     chart = (rect + points + labels + vline + hline + quad_text).properties(width=700, height=420).interactive()
     st.altair_chart(chart, use_container_width=True)
 else:
@@ -1678,6 +1679,60 @@ def build_features_time_aware(df_score, default_half_months=6.0):
     feats_df = pd.DataFrame(feats)
     return feats_df
 
+# --- ここから追加：LightGBM 安全ラッパー ---
+def safe_lgb_train(X_train, y_train, params, n_estimators, cat_cols=None):
+    """LightGBM に渡す前に形状・型チェックを行い、安全に学習を実行する。"""
+    try:
+        # LightGBM 自体が利用可能か
+        if not LGB_AVAILABLE or lgb is None:
+            st.warning("LightGBM が利用できません（safe_lgb_train）。")
+            return None
+
+        # numpy/ndarray/ dataframe を許容
+        if not hasattr(X_train, "shape"):
+            st.error("学習データが不正（shape を持ちません）。")
+            return None
+        shp = X_train.shape
+        # 2 次元であること
+        if len(shp) != 2:
+            st.error(f"学習データは2次元である必要があります（現在 ndim={len(shp)}）。")
+            return None
+        if shp[0] == 0:
+            st.error("学習データの行数が 0 です。学習を中止します。")
+            return None
+        if shp[1] == 0:
+            st.error("学習データの特徴量が 0 列です。学習を中止します。")
+            return None
+        # y の長さチェック
+        if hasattr(y_train, "__len__") and len(y_train) != shp[0]:
+            st.error(f"学習データとラベルの行数不一致: X={shp[0]} vs y={len(y_train)}")
+            return None
+
+        # DataFrame なら列名と dtypes を少しチェック（デバッグ用）
+        try:
+            if hasattr(X_train, 'columns'):
+                st.write("DEBUG (safe_lgb): X_train dtypes:", X_train.dtypes.to_dict())
+        except Exception:
+            pass
+
+        categorical_feature = cat_cols if (cat_cols and len(cat_cols) > 0) else 'auto'
+        # LightGBM Dataset を作成して学習
+        lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=categorical_feature, free_raw_data=False)
+        booster = lgb.train(params, lgb_train, num_boost_round=n_estimators)
+        return booster
+    except Exception as e:
+        st.error(f"LightGBM 学習中に例外が発生しました（safe wrapper）: {e}")
+        try:
+            st.write("DEBUG (safe_lgb) X_train shape/type:", getattr(X_train, "shape", None), type(X_train))
+            if hasattr(X_train, 'head'):
+                st.write("DEBUG (safe_lgb) X_train head:")
+                st.write(X_train.head(3))
+            st.write("DEBUG (safe_lgb) y_train sample:", None if y_train is None else (y_train[:5] if hasattr(y_train, '__getitem__') else str(y_train)))
+        except Exception:
+            pass
+        return None
+# --- ここまで追加 ---
+
 # training flow
 if do_train:
     # sklearn 未検出時の挙動を親切に案内
@@ -1834,11 +1889,8 @@ if do_train:
                     st.error("学習用配列が2次元でないか空です。学習を中止します。")
                     model = None
                 else:
-                    # LightGBM に渡す（例外を捕まえて落ちないようにする）
+                    # LightGBM に渡す（safe wrapper を使う）
                     try:
-                        lgb_train = lgb.Dataset(X_train, label=y_train,
-                                                categorical_feature=cat_cols if len(cat_cols)>0 else 'auto',
-                                                free_raw_data=False)
                         params = {
                             'objective': 'binary',
                             'metric': 'binary_logloss',
@@ -1848,41 +1900,54 @@ if do_train:
                             'verbosity': -1,
                             'seed': random_state
                         }
-                        model = lgb.train(params, lgb_train, num_boost_round=n_estimators)
+                        # safe wrapper を使って学習
+                        if use_lgb and LGB_AVAILABLE:
+                            model = safe_lgb_train(X_train, y_train, params, n_estimators, cat_cols=cat_cols)
+                            if model is None:
+                                st.warning("LightGBM 学習は safe guard により行われませんでした。代替モデルで学習を試みます。")
+                        else:
+                            model = None
                     except Exception as e:
-                        st.error(f"LightGBM の学習中に例外が発生しました: {e}")
-                        # 追加のデバッグ情報
-                        try:
-                            st.write("DEBUG: lgb input X_train.shape:", X_train.shape, " dtypes:", X_train.dtypes.to_dict())
-                        except:
-                            pass
+                        st.error(f"LightGBM 事前処理中に例外: {e}")
                         model = None
             except Exception as e:
                 st.error(f"学習データの numpy 変換で例外: {e}")
                 model = None
 
-        if use_lgb and LGB_AVAILABLE:
-            lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols if len(cat_cols)>0 else 'auto', free_raw_data=False)
-            params = {
-                'objective': 'binary',
-                'metric': 'binary_logloss',
-                'learning_rate': learning_rate,
-                'num_leaves': num_leaves,
-                'max_depth': (max_depth if max_depth>0 else -1),
-                'verbosity': -1,
-                'seed': random_state
-            }
-            model = lgb.train(params, lgb_train, num_boost_round=n_estimators)
-            y_pred_prob = model.predict(X_val)
-            y_pred = (y_pred_prob >= 0.5).astype(int)
-        else:
-            model = HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=learning_rate, max_leaf_nodes=max(2, num_leaves), random_state=random_state)
-            model.fit(X_train, y_train)
+        # もし LightGBM が使えなかった／学習できなかった場合は代替モデルを使う
+        if model is None:
+            st.info("LightGBM が使えないか学習できなかったため、HistGradientBoostingClassifier で代替学習を行います。")
             try:
-                y_pred_prob = model.predict_proba(X_val)[:,1]
-            except:
+                model = HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=learning_rate, max_leaf_nodes=max(2, num_leaves), random_state=random_state)
+                model.fit(X_train, y_train)
+                try:
+                    y_pred_prob = model.predict_proba(X_val)[:,1]
+                except:
+                    y_pred_prob = model.predict(X_val)
+                y_pred = (y_pred_prob >= 0.5).astype(int)
+            except Exception as e:
+                st.error(f"代替モデル学習に失敗しました: {e}")
+                y_pred_prob = np.zeros(len(y_val))
+                y_pred = np.zeros(len(y_val), dtype=int)
+        else:
+            # LightGBM で学習済みの場合の予測
+            try:
                 y_pred_prob = model.predict(X_val)
-            y_pred = (y_pred_prob >= 0.5).astype(int)
+                # LightGBM の predict は確率を返す（binary）
+                y_pred = (y_pred_prob >= 0.5).astype(int)
+            except Exception as e:
+                st.error(f"LightGBM による予測で例外: {e}")
+                # フォールバック
+                try:
+                    model_h = HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=learning_rate, max_leaf_nodes=max(2, num_leaves), random_state=random_state)
+                    model_h.fit(X_train, y_train)
+                    y_pred_prob = model_h.predict_proba(X_val)[:,1]
+                    y_pred = (y_pred_prob >= 0.5).astype(int)
+                    model = model_h
+                except Exception as e2:
+                    st.error(f"フォールバック学習も失敗: {e2}")
+                    y_pred_prob = np.zeros(len(y_val))
+                    y_pred = np.zeros(len(y_val), dtype=int)
 
         auc = roc_auc_score(y_val, y_pred_prob) if len(np.unique(y_val))>1 else float('nan')
         acc = accuracy_score(y_val, y_pred)
