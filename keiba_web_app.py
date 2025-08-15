@@ -1,3 +1,4 @@
+# keiba_web_app_complete.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -35,7 +36,7 @@ def season_of(month: int) -> str:
     if 9 <= month <= 11: return '秋'
     return '冬'
 
-_fwid = str.maketrans('０１２３','0123')  # 全角数字→半角（一部）
+_fwid = str.maketrans('０１２３４５６７８９','0123456789')  # 全角数字→半角変換
 
 def normalize_grade_text(x: str | None) -> str | None:
     if x is None or (isinstance(x, float) and np.isnan(x)): return None
@@ -174,7 +175,6 @@ with st.sidebar.expander("斤量ベース（WFA/JRA簡略）", expanded=True):
     wfa_3p_f      = st.number_input("3歳以上 牝 [kg]"     , 48.0, 60.0, 55.0, 0.5)
 
 def wfa_base_for(sex: str, age: int | None, dt: pd.Timestamp) -> float:
-    """画像の馬齢重量の簡略表に基づく基準斤量を返す（牡=‘牡’/‘セ’は同扱い）。"""
     try:
         a = int(age) if age is not None and not pd.isna(age) else None
     except Exception:
@@ -195,11 +195,7 @@ st.sidebar.header("ペース / 脚質")
 with st.sidebar.expander("脚質自動推定（強化）", expanded=False):
     st.caption(
         "内部ロジック：直近N走の『4角位置（頭数換算の百分位）』と『上がり順位』から、"
-        "逃げ/先行/差し/追込のロジットで確率を推定。走破日からの経過日数で**半減期(HL_DAYS_STYLE)**減衰。\n"
-        "・**NRECENT**：参照する直近走数\n"
-        "・**HL_DAYS_STYLE**：古いレースの重み減衰（日）\n"
-        "・**pace_mc_draws**：後述のペースMCで使うサンプル数（精度↔速度）\n"
-        "・**AUTO_OVERWRITE**：手入力より自動推定を優先して上書き"
+        "逃げ/先行/差し/追込のロジットで確率を推定。走破日からの経過日数で半減期減衰。"
     )
     auto_style_on   = st.checkbox("自動推定を使う（空欄を自動で埋める）", True)
     AUTO_OVERWRITE  = st.checkbox("手入力より自動を優先して上書き", False)
@@ -218,9 +214,7 @@ with st.sidebar.expander("ペース設定（自動MC / 固定）", expanded=Fals
     )
 
 with st.sidebar.expander("EPI（前圧）チューニング", expanded=False):
-    st.caption(
-        "EPI = (α×逃げ頭数 + β×先行頭数) / 出走頭数。閾値 thr_hi/mid/slow で区分。"
-    )
+    st.caption("EPI = (α×逃げ頭数 + β×先行頭数) / 出走頭数。閾値 thr_hi/mid/slow で区分。")
     epi_alpha = st.slider("逃げ係数 α", 0.0, 2.0, 1.0, 0.05)
     epi_beta  = st.slider("先行係数 β", 0.0, 2.0, 0.60, 0.05)
     thr_hi    = st.slider("閾値: ハイペース ≥", 0.30, 1.00, 0.52, 0.01)
@@ -231,8 +225,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("勝率シミュレーション（モンテカルロ）")
 with st.sidebar.expander("詳細設定", expanded=False):
     st.caption(
-        "FinalRaw（強さ）を標準化し U = β*S + τ*W*N(0,1) + Gumbel で各走を擬似再現、"
-        "順位で勝率/複勝率を集計。"
+        "FinalRaw（強さ）を標準化し U = β*S + τ*W*N(0,1) + Gumbel で各走を擬似再現、順位で勝率/複勝率を集計。"
     )
     mc_iters   = st.slider("反復回数", 1000, 100000, 20000, 1000)
     mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
@@ -242,13 +235,13 @@ with st.sidebar.expander("詳細設定", expanded=False):
 st.sidebar.markdown("---")
 st.sidebar.header("資金・点数（購入戦略）")
 total_budget = st.sidebar.slider("合計予算", 500, 50000, 10000, 100,
-                                 help="全買い目の合計。ハーフケリー適用時はこの金額を上限に最適配分。")
+                                 help="全買い目の合計。")
 min_unit     = st.sidebar.selectbox("最小賭け単位", [100, 200, 300, 500], index=0,
                                    help="配分の丸め単位。端数は自動で調整します。")
 max_lines    = st.sidebar.slider("最大点数(連系)", 1, 60, 20, 1,
                                  help="自動生成する“連系”の最大組数。")
 scenario     = st.sidebar.selectbox("シナリオ", ['通常','ちょい余裕','余裕'],
-                                   help="残り予算の配分方針（ワイド/連複/三単フォーメーションの比率）。")
+                                   help="残り予算の配分方針。")
 show_map_ui  = st.sidebar.checkbox("列マッピングUIを表示", value=False,
                                   help="列名の自動認識に失敗した場合の手動マッピングUI。")
 
@@ -278,11 +271,9 @@ def collect_params():
         "mc_iters": int(mc_iters), "mc_beta": mc_beta,
         "mc_tau": mc_tau, "mc_seed": int(mc_seed),
         "show_map_ui": show_map_ui,
-        # 追加：本レース条件（ウィジェットkeyと一致）
         "target_grade": TARGET_GRADE,
         "target_surface": TARGET_SURFACE,
         "target_distance_m": int(TARGET_DISTANCE_M),
-        # 斤量関連
         "race_date": str(race_date.date()),
         "use_wfa_base": use_wfa_base,
         "wfa_2_early_m": float(wfa_2_early_m),
@@ -295,7 +286,7 @@ def collect_params():
 
 def apply_params(cfg: dict):
     for k, v in cfg.items():
-        st.session_state[k] = v  # key付きウィジェットは次リランで値が反映
+        st.session_state[k] = v
 
 col_a, col_b = st.sidebar.columns(2)
 if col_a.button("設定を保存"):
@@ -309,7 +300,6 @@ if cfg_file is not None:
         st.sidebar.success("設定を読み込みました（必要なら再実行）。")
     except Exception as e:
         st.sidebar.error(f"設定ファイルの読み込みエラー: {e}")
-# ======================== サイドバー（ここまで） ========================
 
 # ======================== ファイルアップロード（ここでゲート） ========================
 st.title("競馬予想アプリ（完成系・インタラクティブマッピング版）")
@@ -432,7 +422,6 @@ if '通過4角' in df_score.columns:
     bad = ok & ((df_score['通過4角'] < 1) | (df_score['通過4角'] > df_score['頭数']))
     df_score.loc[df_score['通過4角'].eq(0), '通過4角'] = np.nan
     df_score.loc[bad, '通過4角'] = np.nan
-# --- ここまで ---
 
 # === sheet1（当日出走表／プロフィール） ===
 PAT_S1 = {
@@ -467,7 +456,7 @@ if '馬体重' not in attrs.columns: attrs['馬体重'] = np.nan
 
 st.subheader("馬一覧・脚質・斤量・当日馬体重入力")
 edited = st.data_editor(
-    attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']],
+    attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']].copy(),
     column_config={
         '脚質': st.column_config.SelectboxColumn('脚質', options=['逃げ','先行','差し','追込']),
         '斤量': st.column_config.NumberColumn('斤量', min_value=45, max_value=65, step=0.5),
@@ -550,7 +539,7 @@ if need_cols.issubset(df_score.columns):
     if rows:
         df_style = pd.DataFrame(rows, columns=['馬名','p_逃げ','p_先行','p_差し','p_追込','推定脚質'])
 
-        # 逃げ0頭なら最も前に行きやすい馬を逃げに
+        # 逃げ0頭なら最も前に行きやすい馬を逃げに（既存ロジック）
         manual_has_nige = ('脚質' in horses.columns) and horses['脚質'].eq('逃げ').any()
         if (df_style['推定脚質'].eq('逃げ').sum() == 0) and (not manual_has_nige):
             early = tmp.assign(early=(1 - pos_ratio).clip(0, 1), w=tmp['_w'].values)\
@@ -558,17 +547,6 @@ if need_cols.issubset(df_score.columns):
             nige_cand = early.idxmax()
             df_style.loc[df_style['馬名'] == nige_cand, '推定脚質'] = '逃げ'
 
-        # horsesに反映
-        if '脚質' not in horses.columns:
-            horses['脚質'] = ''
-        pred_map = df_style.set_index('馬名')['推定脚質']
-        if AUTO_OVERWRITE:
-            horses['脚質'] = horses['馬名'].map(pred_map).fillna(horses['脚質'])
-        elif auto_style_on:
-            mask_blank = horses['脚質'].astype(str).str.strip().eq('')
-            horses.loc[mask_blank, '脚質'] = horses.loc[mask_blank, '馬名'].map(pred_map).fillna(
-                horses.loc[mask_blank, '脚質']
-            )
 else:
     st.warning("『通過4角』『頭数』『レース日』が不足。脚質の自動推定をスキップしました。")
 
@@ -593,14 +571,17 @@ if html_file is not None:
 else:
     blood_df = pd.DataFrame({'馬名': [], '血統': []})
 
-# === 過去走から「適正馬体重」先取り ===
+# === 過去走から「適正馬体重」先取り（**修正済み**） ===
 best_bw_map = {}
 if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
     _bw = df_score[['馬名','馬体重','確定着順']].dropna()
     _bw['確定着順'] = pd.to_numeric(_bw['確定着順'], errors='coerce')
     _bw = _bw[_bw['確定着順'].notna()]
-    best_idx = _bw.groupby('馬名')['確定着順'].idx最小 = _bw.groupby('馬名')['確定着順'].idxmin()
-    best_bw_map = _bw.loc[best_idx].set_index('馬名')['馬体重'].astype(float).to_dict()
+    try:
+        best_idx = _bw.groupby('馬名')['確定着順'].idxmin()
+        best_bw_map = _bw.loc[best_idx].set_index('馬名')['馬体重'].astype(float).to_dict()
+    except Exception:
+        best_bw_map = {}
 else:
     best_bw_map = {}
 
@@ -627,28 +608,25 @@ st.subheader("血統キーワードとボーナス")
 keys = st.text_area("系統名を1行ずつ入力", height=100).splitlines()
 bp   = st.slider("血統ボーナス点数", 0, 20, 5)
 
-# === ベストタイム重み：クラス×芝ダ×距離 係数 ===
 CLASS_BASE_BT = {"OP": 1.50, "L": 1.38, "G3": 1.19, "G2": 1.00, "G1": 0.80}
-
 def surface_factor(surface: str) -> float:
     return 1.10 if str(surface) == "ダ" else 1.00
-
 def distance_factor(distance_m: int) -> float:
-    d = int(distance_m)
-    if d <= 1400:           return 1.20   # 短距離
-    if d == 1600:           return 1.10   # マイル
-    if 1800 <= d <= 2200:   return 1.00   # 中距離
-    if d >= 2400:           return 0.85   # 長距離
+    try:
+        d = int(distance_m)
+    except:
+        return 1.0
+    if d <= 1400:           return 1.20
+    if d == 1600:           return 1.10
+    if 1800 <= d <= 2200:   return 1.00
+    if d >= 2400:           return 0.85
     return 1.00
-
 def besttime_weight_final(grade: str, surface: str, distance_m: int, user_scale: float) -> float:
-    """grade: 'G1','G2','G3','L','OP' / surface: '芝' or 'ダ' / distance_m: m / user_scale: 0〜2"""
     base = CLASS_BASE_BT.get(str(grade), CLASS_BASE_BT["OP"])
     w = base * surface_factor(surface) * distance_factor(distance_m) * float(user_scale)
-    return float(np.clip(w, 0.0, 2.0))  # 0〜2にクリップ
+    return float(np.clip(w, 0.0, 2.0))
 
 CLASS_PTS = {'G1':10, 'G2':8, 'G3':6, 'リステッド':5, 'オープン特別':4}
-
 def class_points(row) -> int:
     g = normalize_grade_text(row.get('クラス名')) if 'クラス名' in row else None
     if not g and '競走名' in row:
@@ -707,12 +685,11 @@ def calc_score(r):
         if '複勝率' in r and pd.notna(r.get('複勝率', np.nan)): rate_bonus += plc_w  * (float(r['複勝率'])  / 100.0)
     except: pass
 
-    # --- ベストタイム加点（クラス×芝ダ×距離 係数を適用） ---
     bt_bonus = 0.0
     try:
         if pd.notna(r.get('ベストタイム秒', np.nan)):
             bt_norm = (bt_max - float(r['ベストタイム秒'])) / bt_span
-            bt_norm = max(0.0, min(1.0, bt_norm))  # 0〜1
+            bt_norm = max(0.0, min(1.0, bt_norm))
             bt_w_final = besttime_weight_final(
                 grade=st.session_state.get("target_grade", TARGET_GRADE),
                 surface=st.session_state.get("target_surface", TARGET_SURFACE),
@@ -723,7 +700,6 @@ def calc_score(r):
     except Exception:
         pass
 
-    # --- 斤量ペナルティ ---
     kg_pen = 0.0
     try:
         kg = float(r.get('斤量', np.nan))
@@ -752,6 +728,13 @@ else:
     st.stop()
 
 df_score['score_raw']  = df_score.apply(calc_score, axis=1)
+
+# --- デバッグ出力（score_raw 分布） ----------
+st.write("=== デバッグ: score_raw の基本統計 ===")
+st.write(df_score['score_raw'].describe())
+st.write("unique count:", df_score['score_raw'].nunique())
+
+# 正規化
 if df_score['score_raw'].max() == df_score['score_raw'].min():
     df_score['score_norm'] = 50.0
 else:
@@ -793,15 +776,35 @@ for c in ['Stdev','WStd']:
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'].fillna(df_agg['WStd'].median()))
 
-style_manual = horses.set_index('馬名')['脚質'] if '脚質' in horses.columns else pd.Series(dtype=str)
-style_pred   = df_style.set_index('馬名')['推定脚質'] if not df_style.empty else pd.Series(dtype=str)
-combined_style = style_manual.copy()
-need_fill = combined_style.isna() | combined_style.astype(str).str.strip().eq('')
-combined_style[need_fill] = style_pred.reindex(combined_style.index)[need_fill]
-df_agg['脚質'] = df_agg['馬名'].map(combined_style).fillna('')
-
-idx2style = ['逃げ','先行','差し','追込']
+# ----- combined_style を安全に構築 -----
 name_list = df_agg['馬名'].tolist()
+combined_style = pd.Series(index=name_list, dtype=object)
+
+# 1) 手入力（horses）を反映
+if '脚質' in horses.columns:
+    try:
+        manual_series = horses.set_index('馬名')['脚質'].reindex(combined_style.index)
+        combined_style.update(manual_series)
+    except Exception:
+        pass
+
+# 2) 自動推定（df_style）を反映（AUTO_OVERWRITE に従う）
+if not df_style.empty:
+    try:
+        pred_series = df_style.set_index('馬名')['推定脚質'].reindex(combined_style.index)
+        if AUTO_OVERWRITE:
+            combined_style.update(pred_series)
+        else:
+            mask_blank = combined_style.isna() | combined_style.astype(str).str.strip().eq('')
+            combined_style.loc[mask_blank] = pred_series.loc[mask_blank]
+    except Exception:
+        pass
+
+combined_style = combined_style.fillna('')
+df_agg['脚質'] = df_agg['馬名'].map(combined_style)
+
+# build P matrix (脚質確率行列) with safe defaults
+idx2style = ['逃げ','先行','差し','追込']
 H = len(name_list)
 P = np.zeros((H, 4), dtype=float)
 
@@ -809,15 +812,24 @@ if not df_style.empty and {'p_逃げ','p_先行','p_差し','p_追込'}.issubset
     pmap = df_style.set_index('馬名')[['p_逃げ','p_先行','p_差し','p_追込']]
     for i, nm in enumerate(name_list):
         if nm in pmap.index:
-            P[i, :] = pmap.loc[nm].to_numpy(dtype=float)
+            vals = pmap.loc[nm].to_numpy(dtype=float)
+            s = vals.sum()
+            P[i, :] = vals / s if s>0 else np.array([0.25,0.25,0.25,0.25])
         else:
             stl = combined_style.get(nm, '')
-            P[i, idx2style.index(stl)] = 1.0 if stl in idx2style else 0.25
+            if stl in idx2style:
+                P[i, idx2style.index(stl)] = 1.0
+            else:
+                P[i, :] = 0.25
 else:
     for i, nm in enumerate(name_list):
         stl = combined_style.get(nm, '')
-        P[i, idx2style.index(stl)] = 1.0 if stl in idx2style else 0.25
+        if stl in idx2style:
+            P[i, idx2style.index(stl)] = 1.0
+        else:
+            P[i, :] = 0.25
 
+# mark rules & pace MC
 mark_rule = {
     'ハイペース':      {'逃げ':'△','先行':'△','差し':'◎','追込':'〇'},
     'ミドルペース':    {'逃げ':'〇','先行':'◎','差し':'〇','追込':'△'},
@@ -830,7 +842,6 @@ rng_pace = np.random.default_rng(int(mc_seed) + 12345)
 sum_pts = np.zeros(H, dtype=float)
 pace_counter = {'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
 
-# --- Pace MC（EPI方式） ---
 for _ in range(int(pace_mc_draws)):
     sampled = [rng_pace.choice(4, p=P[i]) for i in range(H)]
     nige  = sum(1 for s in sampled if s==0)
@@ -864,7 +875,17 @@ if pace_mode == "固定（手動）":
 
 # 最終スコア
 df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
-df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
+
+# ===== FinalZ 安定化（平坦対処） =====
+if (df_agg['FinalRaw'].max() - df_agg['FinalRaw'].min()) < 1e-9:
+    st.warning("FinalRaw がほぼ同値になっています。小さな補正を入れてFinalZを計算します。")
+    df_agg['FinalZ'] = 50 + (df_agg['WAvgZ'] - df_agg['WAvgZ'].mean()) * 0.1
+else:
+    df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
+
+# デバッグ出力（FinalRaw / FinalZ の分布）
+st.write("=== デバッグ: FinalRaw / FinalZ の基本統計 ===")
+st.write(df_agg[['FinalRaw','FinalZ']].describe())
 
 # ===== 勝率モンテカルロ =====
 S = df_agg['FinalRaw'].to_numpy(dtype=float)
@@ -897,12 +918,14 @@ y_mid = avg_st
 x_min, x_max = float(df_agg['FinalZ'].min()), float(df_agg['FinalZ'].max())
 y_min, y_max = float(df_agg['WStd'].min()),  float(df_agg['WStd'].max())
 
+# 四象限用矩形
 quad_rect = pd.DataFrame([
     {'x1': x_min, 'x2': x_mid, 'y1': y_mid, 'y2': y_max},
     {'x1': x_mid, 'x2': x_max, 'y1': y_mid, 'y2': y_max},
     {'x1': x_min, 'x2': x_mid, 'y1': y_min, 'y2': y_mid},
     {'x1': x_mid, 'x2': x_max, 'y1': y_min, 'y2': y_mid},
 ])
+
 rect = alt.Chart(quad_rect).mark_rect(opacity=0.07).encode(
     x='x1:Q', x2='x2:Q', y='y1:Q', y2='y2:Q'
 )
@@ -916,7 +939,7 @@ labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='#ffffff').
 )
 vline = alt.Chart(pd.DataFrame({'x':[x_mid]})).mark_rule(color='gray').encode(x='x:Q')
 hline = alt.Chart(pd.DataFrame({'y':[y_mid]})).mark_rule(color='gray').encode(y='y:Q')
-quad_text = alt.Chart(pd.DataFrame([
+quad_text = alt.Chart(pd.DataFrame([ 
     {'label':'消し・大穴',   'x': (x_min + x_mid)/2, 'y': (y_mid + y_max)/2},
     {'label':'波乱・ムラ馬', 'x': (x_mid + x_max)/2, 'y': (y_mid + y_max)/2},
     {'label':'堅実ヒモ',     'x': (x_min + x_mid)/2, 'y': (y_min + y_mid)/2},
@@ -929,16 +952,12 @@ st.altair_chart(chart, use_container_width=True)
 
 # ===== 上位馬抽出（閾値付き：FinalZ>=50、最大6頭） =====
 CUTOFF = 50.0
-
-# ① FinalZでフィルタ → ② FinalZ降順に並べ替え → ③ 最大6頭へ絞り込み
 cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
-topN = cand.head(6)  # 6頭未満ならそのまま
+topN = cand.head(6)
 
-# ④ 印を付与（頭数に応じて切り詰め）
 marks = ['◎','〇','▲','☆','△','△']
 topN['印'] = marks[:len(topN)]
 
-# ⑤ 表示（0頭なら注意を出す）
 st.subheader("上位馬（FinalZ≧50／最大6頭）")
 if len(topN) == 0:
     st.warning(f"FinalZが{CUTOFF}以上の馬がいません。")
@@ -956,7 +975,7 @@ else:
     topN['根拠'] = topN.apply(reason, axis=1)
     st.table(topN[['馬名','印','根拠']])
 
-
+# ===== 推定勝率・複勝率表示 =====
 st.subheader("■ 推定勝率・複勝率（モンテカルロ）")
 prob_view = (
     df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
@@ -980,7 +999,7 @@ with st.expander("この表の見方（クリックで開く）", expanded=False
 3. 降順で着順決定 → 勝率・3着内率を集計
 """)
 
-# 展開図
+# ===== 展開図 =====
 df_map = horses.copy()
 df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
 df_map['番'] = pd.to_numeric(df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
@@ -1143,6 +1162,9 @@ def ai_comment(row):
 
 horses2['短評'] = horses2.apply(ai_comment, axis=1)
 
+st.subheader("■ 全頭AI診断コメント")
+st.dataframe(horses2[['馬名','印','脚質','血統','短評','WAvgZ','WStd']])
+
 # ======================== 買い目生成＆資金配分 ========================
 h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
 h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
@@ -1279,7 +1301,6 @@ st.subheader("ハーフケリー配分（任意）")
 use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
 
 if use_kelly and len(_df) > 0:
-    # 1) 的中確率qを各券種で計算（MC結果を使用）
     idx_of = {name: i for i, name in enumerate(name_list)}
 
     def pair_prob(i, j, kind: str) -> float:
@@ -1373,7 +1394,7 @@ if use_kelly and len(_df) > 0:
     _df['金額'] = stake_rounded.astype(int)
 
 else:
-    spent = int(_df['金額'].fillna(0).replace('',0).sum())
+    spent = int(_df['金額'].fillna(0).replace('',0).sum()) if len(_df)>0 else 0
     diff = total_budget - spent
     if diff != 0 and len(_df) > 0:
         for idx in _df.index:
@@ -1385,7 +1406,8 @@ else:
 
 # 表示用に“円”フォーマット
 _df_disp = _df.copy()
-_df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
+if len(_df_disp)>0:
+    _df_disp['金額'] = _df_disp['金額'].map(lambda x: f"{int(x):,}円" if pd.notna(x) and int(x)>0 else "")
 
 unique_types = _df_disp['券種'].unique().tolist() if len(_df_disp)>0 else []
 tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types)>0 else st.tabs(['サマリー'])
@@ -1400,3 +1422,5 @@ for i, typ in enumerate(unique_types, start=1):
         df_this = _df_disp[_df_disp['券種'] == typ]
         st.subheader(f"{typ} 買い目一覧")
         st.table(df_this[['券種','印','馬','相手','金額']]) if len(df_this)>0 else st.info(f"{typ} の買い目はありません。")
+
+# End of file
