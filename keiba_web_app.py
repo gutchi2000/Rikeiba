@@ -1481,27 +1481,59 @@ else:
                 _df.at[idx,'金額'] = new
                 break
 
-# 表示用に“円”フォーマット
+# ---------- 表示用に“円”フォーマット（修正版） ----------
+# _df が無ければ空の DataFrame を用意（最低限のカラム）
+if '_df' not in globals() or _df is None:
+    _df = pd.DataFrame(columns=['券種','印','馬','相手','金額'])
+
+# 表示用コピーを作成
+_df_disp = _df.copy()
+
+# 金額列を表示用フォーマットに（安全に処理）
+if '金額' in _df_disp.columns and len(_df_disp) > 0:
+    def fmt_money(x):
+        try:
+            xv = float(x)
+            if np.isnan(xv) or int(xv) <= 0:
+                return ""
+            return f"{int(xv):,}円"
+        except Exception:
+            return ""
+    _df_disp['金額'] = _df_disp['金額'].map(fmt_money)
+
+# '券種' のユニーク種類を安全に取得（空や欠損は除外）
+unique_types = []
 if len(_df_disp) > 0 and '券種' in _df_disp.columns:
-    unique_types = _df_disp['券種'].dropna().unique().tolist()
-else:
-    unique_types = []
+    unique_types = [str(x) for x in _df_disp['券種'].dropna().unique().tolist() if str(x).strip() != ""]
 
-tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types) > 0 else st.tabs(['サマリー'])
+# タブを作成（'サマリー' は常に最初に）
+tabs = st.tabs(['サマリー'] + unique_types)
 
-unique_types = __df_disp['券種'].unique().tolist() if len(_df_disp)>0 else []
-tabs = st.tabs(['サマリー'] + unique_types) if len(unique_types)>0 else st.tabs(['サマリー'])
+# サマリータブ
 with tabs[0]:
     st.subheader("■ 最終買い目一覧（全券種まとめ）")
-    if len(_df_disp)==0: st.info("現在、買い目はありません。")
+    if len(_df_disp) == 0:
+        st.info("現在、買い目はありません。")
     else:
-        st.table(_df_disp[['券種','印','馬','相手','金額']])
+        # 表示したいカラムが揃っているかだけチェックして表示
+        show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in _df_disp.columns]
+        st.table(_df_disp[show_cols])
 
+# 各券種タブ（存在する場合のみ）
 for i, typ in enumerate(unique_types, start=1):
+    # タブインデックスの保険（念のため）
+    if i >= len(tabs):
+        continue
     with tabs[i]:
-        df_this = _df_disp[_df_disp['券種'] == typ]
+        df_this = _df_disp[_df_disp.get('券種','') == typ] if '券種' in _df_disp.columns else pd.DataFrame()
         st.subheader(f"{typ} 買い目一覧")
-        st.table(df_this[['券種','印','馬','相手','金額']]) if len(df_this)>0 else st.info(f"{typ} の買い目はありません。")
+        if len(df_this) > 0:
+            show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in df_this.columns]
+            st.table(df_this[show_cols])
+        else:
+            st.info(f"{typ} の買い目はありません。")
+# ---------- ここまで ----------
+
 
 # ---------------------------
 # LightGBM + 特徴量生成 + 学習 + 予測（安全化）
