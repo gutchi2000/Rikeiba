@@ -776,6 +776,31 @@ for c in ['Stdev','WStd']:
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'].fillna(df_agg['WStd'].median()))
 
+# --- 馬名の正規化（全角空白→半角/前後空白除去） ---
+def _trim_name(x):
+    try:
+        return str(x).replace('\u3000', ' ').strip()
+    except Exception:
+        return x
+
+try:
+    if '馬名' in horses.columns:
+        horses['馬名'] = horses['馬名'].map(_trim_name)
+except Exception:
+    pass
+
+try:
+    if '馬名' in df_agg.columns:
+        df_agg['馬名'] = df_agg['馬名'].map(_trim_name)
+except Exception:
+    pass
+
+try:
+    if not df_style.empty and '馬名' in df_style.columns:
+        df_style['馬名'] = df_style['馬名'].map(_trim_name)
+except Exception:
+    pass
+
 # ----- combined_style を安全に構築 -----
 name_list = df_agg['馬名'].tolist()
 combined_style = pd.Series(index=name_list, dtype=object)
@@ -803,31 +828,37 @@ if not df_style.empty:
 combined_style = combined_style.fillna('')
 df_agg['脚質'] = df_agg['馬名'].map(combined_style)
 
-# build P matrix (脚質確率行列) with safe defaults
+# build P matrix (脚質確率行列) with manual-first logic
 idx2style = ['逃げ','先行','差し','追込']
 H = len(name_list)
 P = np.zeros((H, 4), dtype=float)
 
+# df_style から確率テーブル（あれば）
+pmap = None
 if not df_style.empty and {'p_逃げ','p_先行','p_差し','p_追込'}.issubset(df_style.columns):
-    pmap = df_style.set_index('馬名')[['p_逃げ','p_先行','p_差し','p_追込']]
-    for i, nm in enumerate(name_list):
-        if nm in pmap.index:
-            vals = pmap.loc[nm].to_numpy(dtype=float)
-            s = vals.sum()
-            P[i, :] = vals / s if s>0 else np.array([0.25,0.25,0.25,0.25])
-        else:
-            stl = combined_style.get(nm, '')
-            if stl in idx2style:
-                P[i, idx2style.index(stl)] = 1.0
-            else:
-                P[i, :] = 0.25
-else:
-    for i, nm in enumerate(name_list):
-        stl = combined_style.get(nm, '')
-        if stl in idx2style:
-            P[i, idx2style.index(stl)] = 1.0
-        else:
-            P[i, :] = 0.25
+    pmap = df_style.set_index('馬名')[['p_逃げ','p_先行','p_差込','p_追込' if 'p_追込' in df_style.columns else 'p_追込']].copy()
+    # ↑ 万一列名の表記揺れがあればここで合わせてください（上は例）
+
+# 正式版（AUTO_OVERWRITEがFalseなら手入力を最優先）
+for i, nm in enumerate(name_list):
+    stl = combined_style.get(nm, '')  # 手入力＆補完済み
+    if not AUTO_OVERWRITE and (stl in idx2style):
+        # 手入力があれば 1-hot を最優先
+        P[i, :] = 0.0
+        P[i, idx2style.index(stl)] = 1.0
+        continue
+
+    # ここまで来たら、自動推定があればその確率、無ければ 1-hot / 一様
+    if pmap is not None and nm in pmap.index:
+        vals = pmap.loc[nm].to_numpy(dtype=float)
+        s = vals.sum()
+        P[i, :] = vals / s if s > 0 else np.array([0.25, 0.25, 0.25, 0.25])
+    elif stl in idx2style:
+        P[i, :] = 0.0
+        P[i, idx2style.index(stl)] = 1.0
+    else:
+        P[i, :] = np.array([0.25, 0.25, 0.25, 0.25])
+
 
 # mark rules & pace MC
 mark_rule = {
