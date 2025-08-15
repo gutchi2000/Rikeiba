@@ -5,3 +5,12 @@ numpy
 openpyxl
 streamlit
 adjustText
+
+scikit-learn
+lightgbm
+shap
+altair
+matplotlib
+pandas
+numpy
+streamlit
