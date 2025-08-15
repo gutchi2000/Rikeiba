@@ -1730,6 +1730,65 @@ if do_train:
 
         numeric_cols = [c for c in X_train.columns if c not in cat_cols]
         scaler = StandardScaler()
+        # --- ここは既存コードの置き換え候補 ---
+numeric_cols = [c for c in X_train.columns if c not in cat_cols]
+scaler = StandardScaler()
+
+# デバッグ情報を出す（Streamlit上に表示）
+st.write("DEBUG: numeric_cols:", numeric_cols)
+st.write("DEBUG: X_train shape:", X_train.shape, "  X_val shape:", X_val.shape)
+
+# 早期ガード：列が無ければスキップ
+if len(numeric_cols) == 0:
+    st.warning("数値スケーリング対象の列がありません（numeric_cols が空）。スケーリングはスキップします。")
+else:
+    # 1) 強制的に数値化（文字列などを NaN にする）
+    for c in numeric_cols:
+        X_train[c] = pd.to_numeric(X_train[c], errors='coerce')
+        X_val[c]   = pd.to_numeric(X_val[c], errors='coerce')
+
+    # 2) inf を NaN に置換
+    X_train[numeric_cols] = X_train[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    X_val[numeric_cols]   = X_val[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
+    # 3) 欠損率 / 非有限値を表示（診断用）
+    null_info = {c: X_train[c].isna().mean() for c in numeric_cols}
+    st.write("DEBUG: X_train null ratio (numeric_cols):", null_info)
+    # 例：非数値のサンプルを少し表示
+    bad_samples = {}
+    for c in numeric_cols:
+        mask = ~X_train[c].apply(lambda x: np.isfinite(x) if pd.notna(x) else False)
+        if mask.any():
+            bad_samples[c] = X_train.loc[mask, c].head(3).tolist()
+    if bad_samples:
+        st.write("DEBUG: 非有限値サンプル（X_train）:", bad_samples)
+
+    # 4) 補完：training の中央値で埋める（学習時は train の統計を使う）
+    med = X_train[numeric_cols].median()
+    X_train[numeric_cols] = X_train[numeric_cols].fillna(med)
+    X_val[numeric_cols]   = X_val[numeric_cols].fillna(med)
+
+    # 5) 最終チェック：まだ object 型が残っていないか
+    still_obj = [c for c in numeric_cols if X_train[c].dtype == 'O']
+    if still_obj:
+        st.warning(f"注意: 強制数値化後も object 型が残っています: {still_obj} → さらに coercion と 0 埋め を実行します。")
+        for c in still_obj:
+            X_train[c] = pd.to_numeric(X_train[c], errors='coerce').fillna(0.0)
+            X_val[c]   = pd.to_numeric(X_val[c], errors='coerce').fillna(0.0)
+
+    # 6) もし行数がゼロならスキップして早期リターン
+    if X_train[numeric_cols].shape[0] == 0:
+        st.error("学習用データが空です（行数 0）。スケーリング・学習を中止します。")
+    else:
+        # 7) スケーリング本体（例外をキャッチして落ちないように）
+        try:
+            X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
+            X_val[numeric_cols]   = scaler.transform(X_val[numeric_cols])
+        except Exception as e:
+            st.error(f"StandardScaler の適用で例外が発生しました: {e}")
+            # フォールバック：スケーリングをしない（代わりに 0-mean にする簡易処理なども可）
+            # ここでは何もしないで先に進めます（必要なら更に処理を追加してください）
+
         if len(numeric_cols) > 0:
             X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
             X_val[numeric_cols] = scaler.transform(X_val[numeric_cols])
