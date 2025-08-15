@@ -1,4 +1,4 @@
-# keiba_web_app_complete.py
+# keiba_web_app_complete_fixed.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,7 +7,11 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from itertools import combinations
 import altair as alt
-import io, json
+import io, json, time, math
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score, accuracy_score, classification_report, log_loss
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 st.set_page_config(page_title="競馬予想アプリ", layout="wide")
 
@@ -1003,7 +1007,7 @@ with st.expander("この表の見方（クリックで開く）", expanded=False
 df_map = horses.copy()
 df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
 df_map['番'] = pd.to_numeric(df_map['番'].astype(str).str.translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
-df_map = df_map.dropna(subset=['番']).astype({'番': int})
+df_map = df_map.dropna(subset=['番']).astype({'番': int}) if '番' in df_map.columns else df_map
 df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=['逃げ','先行','差し','追込'], ordered=True)
 
 # ===== 現状サマリー（表） =====
@@ -1011,31 +1015,31 @@ st.subheader("現状サマリー（表）")
 st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
 
 style_order = ['逃げ','先行','差し','追込']
-style_counts = df_map['脚質'].value_counts().reindex(style_order).fillna(0).astype(int)
+style_counts = df_map['脚質'].value_counts().reindex(style_order).fillna(0).astype(int) if '脚質' in df_map.columns else pd.Series({k:0 for k in style_order})
 total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
 style_pct = (style_counts / total_heads * 100).round(1)
 pace_summary = pd.DataFrame([{
     '想定ペース': pace_type,
-    '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
-    '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
-    '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
-    '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
+    '逃げ':  f"{style_counts.get('逃げ',0)}頭（{style_pct.get('逃げ',0)}%）",
+    '先行':  f"{style_counts.get('先行',0)}頭（{style_pct.get('先行',0)}%）",
+    '差し':  f"{style_counts.get('差し',0)}頭（{style_pct.get('差し',0)}%）",
+    '追込':  f"{style_counts.get('追込',0)}頭（{style_pct.get('追込',0)}%）",
 }])
 st.table(pace_summary)
 
 # 印つき上位馬
 pick_df = (
-    topN[['印','馬名']]
-    .merge(df_agg[['馬名','FinalZ','WStd','勝率%_MC','複勝率%_MC']], on='馬名', how='left')
+    topN[['印','馬名']].merge(df_agg[['馬名','FinalZ','WStd','勝率%_MC','複勝率%_MC']], on='馬名', how='left')
     .rename(columns={'勝率%_MC':'勝率(%)','複勝率%_MC':'複勝率(%)'})
 )
 for c in ['FinalZ','WStd','勝率(%)','複勝率(%)']:
-    pick_df[c] = pick_df[c].map(lambda x: None if pd.isna(x) else round(float(x), 1))
-st.table(pick_df[['印','馬名','FinalZ','WStd','勝率(%)','複勝率(%)']])
+    if c in pick_df.columns:
+        pick_df[c] = pick_df[c].map(lambda x: None if pd.isna(x) else round(float(x), 1))
+st.table(pick_df[['印','馬名','FinalZ','WStd','勝率(%)','複勝率(%)']]) if not pick_df.empty else st.info("印つき上位馬がありません。")
 
 # ===== 展開ロケーション（視覚） =====
-df_map_show = df_map.sort_values(['番'])
-if len(df_map_show) > 0:
+df_map_show = df_map.sort_values(['番']) if '番' in df_map.columns else df_map
+if len(df_map_show) > 0 and '番' in df_map_show.columns:
     fig, ax = plt.subplots(figsize=(10,3))
     colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
     for _, row in df_map_show.iterrows():
@@ -1122,48 +1126,78 @@ for name in topN['馬名'].tolist():
 
 # ===== horses 情報付与（短評） =====
 印map = dict(zip(topN['馬名'], topN['印']))
-horses2 = horses.merge(df_agg[['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts']], on='馬名', how='left')
-horses2['印'] = horses2['馬名'].map(印map).fillna('')
-horses2 = horses2.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'))
+
+# --- 安全に horses2 を作る（KeyError 回避） ---
+merge_cols = ['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts']
+exist_cols = [c for c in merge_cols if c in df_agg.columns]
+horses2 = horses.merge(df_agg[exist_cols], on='馬名', how='left')
+
+# 血統マージ（可能なら）
+if isinstance(blood_df, pd.DataFrame) and '馬名' in blood_df.columns:
+    horses2 = horses2.merge(blood_df, on='馬名', how='left', suffixes=('', '_血統'))
+    if '血統' not in horses2.columns:
+        possible = [c for c in horses2.columns if '血' in c or '血統' in c]
+        if possible:
+            horses2.rename(columns={possible[0]:'血統'}, inplace=True)
+
+# fill missing columns with safe defaults
+for col, default in [
+    ('印',''), ('脚質',''), ('血統',''), ('短評',''),
+    ('WAvgZ', np.nan), ('WStd', np.nan), ('FinalZ', np.nan), ('PacePts', np.nan)
+]:
+    if col not in horses2.columns:
+        horses2[col] = default
+
+horses2['印'] = horses2['馬名'].map(印map).fillna('').astype(str)
 
 def ai_comment(row):
     base = ""
-    if row['印'] == '◎':
-        base += "本命評価。" + ("高い安定感で信頼度抜群。" if row['WStd'] <= 8 else "能力上位もムラあり。")
-    elif row['印'] == '〇':
-        base += "対抗評価。" + ("近走安定しており軸候補。" if row['WStd'] <= 10 else "展開ひとつで逆転も。")
-    elif row['印'] in ['▲','☆']:
-        base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if row['WStd'] > 15 else "安定型で堅実。")
-    elif row['印'] == '△':
-        base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if row['WStd'] < 12 else "展開次第で浮上も。")
-    else:
-        if pd.notna(row['WAvgZ']) and pd.notna(row['WStd']):
-            base += ("実力十分。ヒモ穴候補。" if (row['WAvgZ'] >= 55 and row['WStd'] < 13)
-                     else ("実績からは厳しい。" if row['WAvgZ'] < 45 else "決定打に欠ける。"))
-    if pd.notna(row['WStd']) and row['WStd'] >= 18:
-        base += "波乱含み。"
-    elif pd.notna(row['WStd']) and row['WStd'] <= 8:
-        base += "非常に安定。"
+    try:
+        if row.get('印','') == '◎':
+            base += "本命評価。" + ("高い安定感で信頼度抜群。" if row.get('WStd', np.nan) <= 8 else "能力上位もムラあり。")
+        elif row.get('印','') == '〇':
+            base += "対抗評価。" + ("近走安定しており軸候補。" if row.get('WStd', np.nan) <= 10 else "展開ひとつで逆転も。")
+        elif row.get('印','') in ['▲','☆']:
+            base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if row.get('WStd', np.nan) > 15 else "安定型で堅実。")
+        elif row.get('印','') == '△':
+            base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if row.get('WStd', np.nan) < 12 else "展開次第で浮上も。")
+        else:
+            if pd.notna(row.get('WAvgZ')) and pd.notna(row.get('WStd')):
+                base += ("実力十分。ヒモ穴候補。" if (row.get('WAvgZ') >= 55 and row.get('WStd') < 13)
+                         else ("実績からは厳しい。" if row.get('WAvgZ') < 45 else "決定打に欠ける。"))
+        if pd.notna(row.get('WStd')) and row.get('WStd') >= 18:
+            base += "波乱含み。"
+        elif pd.notna(row.get('WStd')) and row.get('WStd') <= 8:
+            base += "非常に安定。"
 
-    bloodtxt = str(row.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
-    for k in keys:
-        if k.strip() and k.strip().lower() in bloodtxt:
-            base += f"血統的にも注目（{k.strip()}系統）。"
-            break
+        bloodtxt = str(row.get('血統','')).replace('\u3000',' ').replace('\n',' ').lower()
+        for k in keys:
+            if k.strip() and k.strip().lower() in bloodtxt:
+                base += f"血統的にも注目（{k.strip()}系統）。"
+                break
 
-    style = str(row.get('脚質','')).strip()
-    base += {
-        "逃げ":"ハナを奪えれば粘り込み十分。",
-        "先行":"先行力を活かして上位争い。",
-        "差し":"展開が向けば末脚強烈。",
-        "追込":"直線勝負の一撃に期待。"
-    }.get(style, "")
+        style = str(row.get('脚質','')).strip()
+        base += {
+            "逃げ":"ハナを奪えれば粘り込み十分。",
+            "先行":"先行力を活かして上位争い。",
+            "差し":"展開が向けば末脚強烈。",
+            "追込":"直線勝負の一撃に期待。"
+        }.get(style, "")
+    except Exception:
+        base += ""
     return base
 
-horses2['短評'] = horses2.apply(ai_comment, axis=1)
+# generate short comments
+try:
+    horses2['短評'] = horses2.apply(ai_comment, axis=1)
+except Exception:
+    horses2['短評'] = ''
 
 st.subheader("■ 全頭AI診断コメント")
-st.dataframe(horses2[['馬名','印','脚質','血統','短評','WAvgZ','WStd']])
+# safe subset of columns to display
+disp_cols = ['馬名','印','脚質','血統','短評','WAvgZ','WStd']
+disp_cols = [c for c in disp_cols if c in horses2.columns]
+st.dataframe(horses2[disp_cols])
 
 # ======================== 買い目生成＆資金配分 ========================
 h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
@@ -1199,7 +1233,7 @@ if h2 is not None:
     bets += [{'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
              {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each}]
 
-finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict()
+finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict() if 'FinalZ' in df_agg.columns else {}
 pair_candidates = []   # (券種, 表示印, 本命, 相手, 優先度)
 tri_candidates  = []   # 三連複 (◎-x-y)
 tri1_candidates = []   # 三連単フォーメーション (◎-s-t)
@@ -1423,19 +1457,9 @@ for i, typ in enumerate(unique_types, start=1):
         st.subheader(f"{typ} 買い目一覧")
         st.table(df_this[['券種','印','馬','相手','金額']]) if len(df_this)>0 else st.info(f"{typ} の買い目はありません。")
 
-# End of file
 # ---------------------------
-# 修正版：LightGBM + 特徴量生成 + 学習 + 予測 + SHAP パネル（完成版）
-# ※ 先のSyntaxErrorを修正し、class_point_guessをグローバルにしました
+# LightGBM + 特徴量生成 + 学習 + 予測 + SHAP パネル（完成版）
 # ---------------------------
-
-import time, math
-import numpy as np, pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, accuracy_score, classification_report, log_loss
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import HistGradientBoostingClassifier
 
 # try imports with graceful fallback
 try:
@@ -1577,7 +1601,7 @@ def build_features_time_aware(df_score, default_half_months=6.0):
     return feats_df
 
 # ---------------------------
-# UI: ハイレベルコントロール（必要ならsidebarに組み込んでください）
+# UI: LightGBM モデル学習 (特徴量 自動生成)
 # ---------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("★ LightGBM モデル学習 (特徴量 自動生成)")
@@ -1622,171 +1646,173 @@ if do_train:
         'cur_class_pt','cur_headcount','cur_上3F順位','cur_通過4角','cur_斤量','cur_馬体重','cur_枠','cur_年齢'
     ]
     use_features = [f for f in use_features if f in feats_trainable.columns]
-    feats_trainable[use_features] = feats_trainable[use_features].fillna(feats_trainable[use_features].median())
-
-    cat_cols = []
-    if 'cur_枠' in use_features:
-        feats_trainable['cur_枠'] = feats_trainable['cur_枠'].astype(float).astype(int).astype(str)
-        cat_cols.append('cur_枠')
-
-    X = feats_trainable[use_features].copy()
-    y = feats_trainable[target_col].astype(int)
-
-    if split_mode == '日付分割':
-        cutoff = pd.to_datetime(cutoff_date)
-        mask_train = feats_trainable['race_date'] <= cutoff
-        X_train, X_val = X[mask_train].copy(), X[~mask_train].copy()
-        y_train, y_val = y[mask_train].copy(), y[~mask_train].copy()
+    if len(use_features) == 0:
+        st.error("学習に使える特徴量が見つかりません。")
     else:
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_frac, random_state=random_state, stratify=y if y.nunique()>1 else None)
+        feats_trainable[use_features] = feats_trainable[use_features].fillna(feats_trainable[use_features].median())
 
-    numeric_cols = [c for c in X_train.columns if c not in cat_cols]
-    scaler = StandardScaler()
-    if len(numeric_cols) > 0:
-        X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
-        X_val[numeric_cols] = scaler.transform(X_val[numeric_cols])
+        cat_cols = []
+        if 'cur_枠' in use_features:
+            feats_trainable['cur_枠'] = feats_trainable['cur_枠'].astype(float).astype(int).astype(str)
+            cat_cols.append('cur_枠')
 
-    model = None
-    if use_lgb and LGB_AVAILABLE:
-        lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols if len(cat_cols)>0 else 'auto', free_raw_data=False)
-        params = {
-            'objective': 'binary',
-            'metric': 'binary_logloss',
-            'learning_rate': learning_rate,
-            'num_leaves': num_leaves,
-            'max_depth': (max_depth if max_depth>0 else -1),
-            'verbosity': -1,
-            'seed': random_state
-        }
-        model = lgb.train(params, lgb_train, num_boost_round=n_estimators)
-        y_pred_prob = model.predict(X_val)
-        y_pred = (y_pred_prob >= 0.5).astype(int)
-    else:
-        model = HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=learning_rate, max_leaf_nodes=max(2, num_leaves), random_state=random_state)
-        model.fit(X_train, y_train)
-        try:
-            y_pred_prob = model.predict_proba(X_val)[:,1]
-        except:
-            y_pred_prob = model.predict(X_val)
-        y_pred = (y_pred_prob >= 0.5).astype(int)
+        X = feats_trainable[use_features].copy()
+        y = feats_trainable[target_col].astype(int)
 
-    auc = roc_auc_score(y_val, y_pred_prob) if len(np.unique(y_val))>1 else float('nan')
-    acc = accuracy_score(y_val, y_pred)
-    ll = log_loss(y_val, y_pred_prob, labels=[0,1]) if len(np.unique(y_val))>1 else float('nan')
-
-    st.subheader("モデル評価")
-    st.write(f"学習: {len(X_train)} 行 / 検証: {len(X_val)} 行")
-    st.write(f"AUC: {auc:.4f}  Accuracy: {acc:.3f}  LogLoss: {ll:.3f}")
-    st.text("分類レポート（検証）:")
-    st.text(classification_report(y_val, y_pred, zero_division=0))
-
-    # SHAP / FI
-    st.subheader("説明性（Feature Importance / SHAP）")
-    try:
-        if SHAP_AVAILABLE and LGB_AVAILABLE and isinstance(model, lgb.basic.Booster):
-            explainer = shap.TreeExplainer(model)
-            shap_vals = explainer.shap_values(X_val)
-            st.write("SHAP Summary (検証データ)")
-            fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
-            st.pyplot(fig_shap, bbox_inches='tight')
-        elif SHAP_AVAILABLE:
-            explainer = shap.Explainer(model, X_train)
-            shap_vals = explainer(X_val)
-            fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
-            st.pyplot(fig_shap, bbox_inches='tight')
+        if split_mode == '日付分割':
+            cutoff = pd.to_datetime(cutoff_date)
+            mask_train = feats_trainable['race_date'] <= cutoff
+            X_train, X_val = X[mask_train].copy(), X[~mask_train].copy()
+            y_train, y_val = y[mask_train].copy(), y[~mask_train].copy()
         else:
-            st.info("shap が利用できないため、feature_importances_ を表示します。 (pip install shap で詳細表示可能)")
-            if hasattr(model, 'feature_importances_'):
-                fi = pd.Series(model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
-                fig, ax = plt.subplots(figsize=(6,4))
-                fi.head(20).plot.bar(ax=ax)
-                ax.set_title("Feature importances")
-                st.pyplot(fig)
-            else:
-                st.write("モデルに feature_importances_ がありません。")
-    except Exception as e:
-        st.error(f"説明性算出中にエラー: {e}")
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_frac, random_state=random_state, stratify=y if y.nunique()>1 else None)
 
-    # 当日出走馬への予測
-    st.subheader("当日出走馬への予測（出走表が存在すれば）")
-    try:
-        last_date = pd.to_datetime(df_score['レース日']).max()
-    except:
-        last_date = pd.Timestamp.today()
-
-    cur_horses = horses.copy() if 'horses' in globals() else pd.DataFrame()
-    if cur_horses is None or cur_horses.empty:
-        st.info("出走表（horses）が見つかりません。")
-    else:
-        def make_feat_for_horse(hn):
-            past = df_score[(df_score['馬名'] == hn) & (pd.to_datetime(df_score['レース日']) < last_date)].sort_values('レース日')
-            n_start = len(past)
-            wins = int((past['確定着順'] == 1).sum()) if '確定着順' in past else 0
-            top3 = int((past['確定着順'] <= 3).sum()) if '確定着順' in past else 0
-            win_rate = wins / n_start if n_start>0 else np.nan
-            top3_rate = top3 / n_start if n_start>0 else np.nan
-            avg_finish = past['確定着順'].dropna().astype(float).mean() if '確定着順' in past and len(past.dropna(subset=['確定着順']))>0 else np.nan
-            avg_classpt = past['_class_pt'].mean() if '_class_pt' in past else np.nan
-            avg_3fr = past['上3F順位'].dropna().astype(float).mean() if '上3F順位' in past and len(past.dropna(subset=['上3F順位']))>0 else np.nan
-            avg_weight = past['斤量'].dropna().astype(float).mean() if '斤量' in past and len(past.dropna(subset=['斤量']))>0 else np.nan
-            best_time = past['走破タイム秒'].dropna().astype(float).min() if '走破タイム秒' in past and len(past.dropna(subset=['走破タイム秒']))>0 else np.nan
-            if n_start>0:
-                days = (last_date - pd.to_datetime(past['レース日'])).dt.days.fillna(9999).clip(lower=0).values
-                hl_days = 30.4375 * 6.0
-                w = 0.5 ** (days / hl_days)
-                vals = past['score_raw'].fillna(0).astype(float).values if 'score_raw' in past else np.ones(len(past))
-                recency_wavg = float((vals * w).sum() / w.sum()) if w.sum()>0 else np.nan
-                m = recency_wavg
-                recency_wstd = float(np.sqrt(((w * ((vals - m) ** 2)).sum()) / (w.sum()))) if w.sum()>0 else 0.0
-            else:
-                recency_wavg, recency_wstd = np.nan, np.nan
-            cur_row = cur_horses[cur_horses['馬名'] == hn]
-            cur_class_pt = class_point_guess(cur_row.iloc[0].get('クラス名')) if ('クラス名' in cur_row.columns and len(cur_row)>0) else np.nan
-            cur_headcount = cur_row.iloc[0].get('頭数') if '頭数' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_上3F = cur_row.iloc[0].get('上3F順位') if '上3F順位' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_通過4 = cur_row.iloc[0].get('通過4角') if '通過4角' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_斤量 = cur_row.iloc[0].get('斤量') if '斤量' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_馬体重 = cur_row.iloc[0].get('馬体重') if '馬体重' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_枠 = cur_row.iloc[0].get('枠') if '枠' in cur_row.columns and len(cur_row)>0 else np.nan
-            cur_年齢 = cur_row.iloc[0].get('年齢') if '年齢' in cur_row.columns and len(cur_row)>0 else np.nan
-
-            return {
-                '馬名': hn, 'n_start': n_start, 'win_rate': win_rate, 'top3_rate': top3_rate, 'avg_finish': avg_finish,
-                'avg_classpt': avg_classpt, 'avg_3frank': avg_3fr, 'avg_weight': avg_weight, 'best_time': best_time,
-                'days_since_last': (last_date - pd.to_datetime(past['レース日']).max()).days if n_start>0 else np.nan,
-                'recency_wavg': recency_wavg, 'recency_wstd': recency_wstd,
-                'cur_class_pt': cur_class_pt, 'cur_headcount': cur_headcount, 'cur_上3F順位': cur_上3F,
-                'cur_通過4角': cur_通過4, 'cur_斤量': cur_斤量, 'cur_馬体重': cur_馬体重, 'cur_枠': cur_枠, 'cur_年齢': cur_年齢
-            }
-
-        rows = [make_feat_for_horse(hn) for hn in cur_horses['馬名'].tolist()]
-        pred_df = pd.DataFrame(rows)
-
-        # prepare X_pred using same use_features and scaler
-        X_pred = pred_df[[c for c in use_features if c in pred_df.columns]].copy()
-        X_pred = X_pred.fillna(X_pred.median())
-        if 'cur_枠' in X_pred.columns:
-            X_pred['cur_枠'] = X_pred['cur_枠'].astype(float).astype(int).astype(str)
-
-        # scale numeric columns consistently
+        numeric_cols = [c for c in X_train.columns if c not in cat_cols]
+        scaler = StandardScaler()
         if len(numeric_cols) > 0:
-            # ensure columns exist in X_pred
-            numeric_present = [c for c in numeric_cols if c in X_pred.columns]
-            if len(numeric_present) > 0:
-                X_pred[numeric_present] = scaler.transform(X_pred[numeric_present])
+            X_train[numeric_cols] = scaler.fit_transform(X_train[numeric_cols])
+            X_val[numeric_cols] = scaler.transform(X_val[numeric_cols])
 
-        if LGB_AVAILABLE and use_lgb and isinstance(model, lgb.basic.Booster):
-            pred_prob = model.predict(X_pred)
+        model = None
+        if use_lgb and LGB_AVAILABLE:
+            lgb_train = lgb.Dataset(X_train, label=y_train, categorical_feature=cat_cols if len(cat_cols)>0 else 'auto', free_raw_data=False)
+            params = {
+                'objective': 'binary',
+                'metric': 'binary_logloss',
+                'learning_rate': learning_rate,
+                'num_leaves': num_leaves,
+                'max_depth': (max_depth if max_depth>0 else -1),
+                'verbosity': -1,
+                'seed': random_state
+            }
+            model = lgb.train(params, lgb_train, num_boost_round=n_estimators)
+            y_pred_prob = model.predict(X_val)
+            y_pred = (y_pred_prob >= 0.5).astype(int)
         else:
+            model = HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=learning_rate, max_leaf_nodes=max(2, num_leaves), random_state=random_state)
+            model.fit(X_train, y_train)
             try:
-                pred_prob = model.predict_proba(X_pred)[:,1]
+                y_pred_prob = model.predict_proba(X_val)[:,1]
             except:
-                pred_prob = model.predict(X_pred)
-        pred_df['pred_prob'] = pred_prob
-        pred_df = pred_df.sort_values('pred_prob', ascending=False).reset_index(drop=True)
-        marks = ['◎','〇','▲','☆','△','△']
-        pred_df['印'] = [marks[i] if i < len(marks) else '' for i in range(len(pred_df))]
-        st.table(pred_df[['印','馬名','pred_prob','n_start','win_rate','recency_wavg']].head(12).rename(columns={'pred_prob':'勝率推定'}))
+                y_pred_prob = model.predict(X_val)
+            y_pred = (y_pred_prob >= 0.5).astype(int)
 
-    t1 = time.time()
-    st.success(f"学習と評価が完了しました（所要 {t1-t0:.1f} 秒）。")
+        auc = roc_auc_score(y_val, y_pred_prob) if len(np.unique(y_val))>1 else float('nan')
+        acc = accuracy_score(y_val, y_pred)
+        ll = log_loss(y_val, y_pred_prob, labels=[0,1]) if len(np.unique(y_val))>1 else float('nan')
+
+        st.subheader("モデル評価")
+        st.write(f"学習: {len(X_train)} 行 / 検証: {len(X_val)} 行")
+        st.write(f"AUC: {auc:.4f}  Accuracy: {acc:.3f}  LogLoss: {ll:.3f}")
+        st.text("分類レポート（検証）:")
+        st.text(classification_report(y_val, y_pred, zero_division=0))
+
+        # SHAP / FI
+        st.subheader("説明性（Feature Importance / SHAP）")
+        try:
+            if SHAP_AVAILABLE and LGB_AVAILABLE and isinstance(model, lgb.basic.Booster):
+                explainer = shap.TreeExplainer(model)
+                shap_vals = explainer.shap_values(X_val)
+                st.write("SHAP Summary (検証データ)")
+                fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
+                st.pyplot(fig_shap, bbox_inches='tight')
+            elif SHAP_AVAILABLE:
+                explainer = shap.Explainer(model, X_train)
+                shap_vals = explainer(X_val)
+                fig_shap = shap.summary_plot(shap_vals, X_val, show=False)
+                st.pyplot(fig_shap, bbox_inches='tight')
+            else:
+                st.info("shap が利用できないため、feature_importances_ を表示します。 (pip install shap で詳細表示可能)")
+                if hasattr(model, 'feature_importances_'):
+                    fi = pd.Series(model.feature_importances_, index=X_train.columns).sort_values(ascending=False)
+                    fig, ax = plt.subplots(figsize=(6,4))
+                    fi.head(20).plot.bar(ax=ax)
+                    ax.set_title("Feature importances")
+                    st.pyplot(fig)
+                else:
+                    st.write("モデルに feature_importances_ がありません。")
+        except Exception as e:
+            st.error(f"説明性算出中にエラー: {e}")
+
+        # 当日出走馬への予測
+        st.subheader("当日出走馬への予測（出走表が存在すれば）")
+        try:
+            last_date = pd.to_datetime(df_score['レース日']).max()
+        except:
+            last_date = pd.Timestamp.today()
+
+        cur_horses = horses.copy() if 'horses' in globals() else pd.DataFrame()
+        if cur_horses is None or cur_horses.empty:
+            st.info("出走表（horses）が見つかりません。")
+        else:
+            def make_feat_for_horse(hn):
+                past = df_score[(df_score['馬名'] == hn) & (pd.to_datetime(df_score['レース日']) < last_date)].sort_values('レース日')
+                n_start = len(past)
+                wins = int((past['確定着順'] == 1).sum()) if '確定着順' in past else 0
+                top3 = int((past['確定着順'] <= 3).sum()) if '確定着順' in past else 0
+                win_rate = wins / n_start if n_start>0 else np.nan
+                top3_rate = top3 / n_start if n_start>0 else np.nan
+                avg_finish = past['確定着順'].dropna().astype(float).mean() if '確定着順' in past and len(past.dropna(subset=['確定着順']))>0 else np.nan
+                avg_classpt = past['_class_pt'].mean() if '_class_pt' in past else np.nan
+                avg_3fr = past['上3F順位'].dropna().astype(float).mean() if '上3F順位' in past and len(past.dropna(subset=['上3F順位']))>0 else np.nan
+                avg_weight = past['斤量'].dropna().astype(float).mean() if '斤量' in past and len(past.dropna(subset=['斤量']))>0 else np.nan
+                best_time = past['走破タイム秒'].dropna().astype(float).min() if '走破タイム秒' in past and len(past.dropna(subset=['走破タイム秒']))>0 else np.nan
+                if n_start>0:
+                    days = (last_date - pd.to_datetime(past['レース日'])).dt.days.fillna(9999).clip(lower=0).values
+                    hl_days = 30.4375 * 6.0
+                    w = 0.5 ** (days / hl_days)
+                    vals = past['score_raw'].fillna(0).astype(float).values if 'score_raw' in past else np.ones(len(past))
+                    recency_wavg = float((vals * w).sum() / w.sum()) if w.sum()>0 else np.nan
+                    m = recency_wavg
+                    recency_wstd = float(np.sqrt(((w * ((vals - m) ** 2)).sum()) / (w.sum()))) if w.sum()>0 else 0.0
+                else:
+                    recency_wavg, recency_wstd = np.nan, np.nan
+                cur_row = cur_horses[cur_horses['馬名'] == hn]
+                cur_class_pt = class_point_guess(cur_row.iloc[0].get('クラス名')) if ('クラス名' in cur_row.columns and len(cur_row)>0) else np.nan
+                cur_headcount = cur_row.iloc[0].get('頭数') if '頭数' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_上3F = cur_row.iloc[0].get('上3F順位') if '上3F順位' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_通過4 = cur_row.iloc[0].get('通過4角') if '通過4角' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_斤量 = cur_row.iloc[0].get('斤量') if '斤量' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_馬体重 = cur_row.iloc[0].get('馬体重') if '馬体重' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_枠 = cur_row.iloc[0].get('枠') if '枠' in cur_row.columns and len(cur_row)>0 else np.nan
+                cur_年齢 = cur_row.iloc[0].get('年齢') if '年齢' in cur_row.columns and len(cur_row)>0 else np.nan
+
+                return {
+                    '馬名': hn, 'n_start': n_start, 'win_rate': win_rate, 'top3_rate': top3_rate, 'avg_finish': avg_finish,
+                    'avg_classpt': avg_classpt, 'avg_3frank': avg_3fr, 'avg_weight': avg_weight, 'best_time': best_time,
+                    'days_since_last': (last_date - pd.to_datetime(past['レース日']).max()).days if n_start>0 else np.nan,
+                    'recency_wavg': recency_wavg, 'recency_wstd': recency_wstd,
+                    'cur_class_pt': cur_class_pt, 'cur_headcount': cur_headcount, 'cur_上3F順位': cur_上3F,
+                    'cur_通過4角': cur_通過4, 'cur_斤量': cur_斤量, 'cur_馬体重': cur_馬体重, 'cur_枠': cur_枠, 'cur_年齢': cur_年齢
+                }
+
+            rows = [make_feat_for_horse(hn) for hn in cur_horses['馬名'].tolist()]
+            pred_df = pd.DataFrame(rows)
+
+            # prepare X_pred using same use_features and scaler
+            X_pred = pred_df[[c for c in use_features if c in pred_df.columns]].copy()
+            X_pred = X_pred.fillna(X_pred.median())
+            if 'cur_枠' in X_pred.columns:
+                X_pred['cur_枠'] = X_pred['cur_枠'].astype(float).astype(int).astype(str)
+
+            # scale numeric columns consistently
+            if len(numeric_cols) > 0:
+                numeric_present = [c for c in numeric_cols if c in X_pred.columns]
+                if len(numeric_present) > 0:
+                    X_pred[numeric_present] = scaler.transform(X_pred[numeric_present])
+
+            if LGB_AVAILABLE and use_lgb and isinstance(model, lgb.basic.Booster):
+                pred_prob = model.predict(X_pred)
+            else:
+                try:
+                    pred_prob = model.predict_proba(X_pred)[:,1]
+                except:
+                    pred_prob = model.predict(X_pred)
+            pred_df['pred_prob'] = pred_prob
+            pred_df = pred_df.sort_values('pred_prob', ascending=False).reset_index(drop=True)
+            marks = ['◎','〇','▲','☆','△','△']
+            pred_df['印'] = [marks[i] if i < len(marks) else '' for i in range(len(pred_df))]
+            st.table(pred_df[['印','馬名','pred_prob','n_start','win_rate','recency_wavg']].head(12).rename(columns={'pred_prob':'勝率推定'}))
+
+        t1 = time.time()
+        st.success(f"学習と評価が完了しました（所要 {t1-t0:.1f} 秒）。")
