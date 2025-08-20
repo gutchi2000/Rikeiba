@@ -9,6 +9,15 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from itertools import combinations
 
+# === ローカル指数DB ===
+try:
+    from local_index import init_db, upsert_index, fetch_race
+    init_db()
+    LOCAL_INDEX_AVAILABLE = True
+except Exception as e:
+    LOCAL_INDEX_AVAILABLE = False
+    LOCAL_INDEX_ERR = e
+
 # 外部ライブラリは存在しない可能性があるため try/except で安全に扱う
 try:
     import altair as alt
@@ -1657,3 +1666,33 @@ for i, typ in enumerate(unique_types, start=1):
         else:
             st.info(f"{typ} の買い目はありません。")
 # ---------- ここまで ----------
+
+
+# ======================== 外部指数もどき（ローカルDB連携） ========================
+st.header("外部指数もどき（ローカルDB）")
+
+if not LOCAL_INDEX_AVAILABLE:
+    st.info(f"ローカルDB機能が使えません: {LOCAL_INDEX_ERR}")
+else:
+    with st.expander("CSV/TSVを読み込んでDBに保存", expanded=False):
+        f = st.file_uploader("列: date,jyocd,racenum,umaban,score", type=["csv","tsv"])
+        sep = st.radio("区切り", ["タブ(TSV)","カンマ(CSV)"], horizontal=True, index=0)
+        enc = st.selectbox("文字コード", ["cp932","utf-8"], index=0)
+        ver = st.text_input("バージョン(ver)", "v1")
+        if f:
+            df_up = pd.read_csv(f, sep="\t" if sep.startswith("タブ") else ",", encoding=enc)
+            st.dataframe(df_up.head(20))
+            if st.button("DBに保存"):
+                upsert_index(df_up, ver=ver)
+                st.success(f"{len(df_up)} 行を保存しました（ver={ver}）。")
+
+    with st.expander("レースのスコアを表示", expanded=False):
+        c1,c2,c3,c4 = st.columns(4)
+        date    = c1.text_input("日付(YYYYMMDD)", "")
+        jyocd   = c2.text_input("場CD", "")
+        racenum = c3.text_input("R", "")
+        ver2    = c4.text_input("ver", "v1")
+        if st.button("表示") and date and jyocd and racenum:
+            out = fetch_race(date, jyocd, racenum, ver=ver2)
+            st.write("スコア順（高→低）")
+            st.table(out)
