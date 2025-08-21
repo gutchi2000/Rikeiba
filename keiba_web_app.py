@@ -82,18 +82,26 @@ def season_of(month: int) -> str:
     if 9 <= month <= 11: return '秋'
     return '冬'
 
-_fwid = str.maketrans('０１２３４５６７８９','0123456789')  # 全角数字→半角変換
+_fwid = str.maketrans('０１２３４５６７８９％','0123456789%')  # % も半角化
 
 def normalize_grade_text(x: str | None) -> str | None:
-    if x is None or (isinstance(x, float) and np.isnan(x)): return None
-    s = str(x)
-    s = s.translate(_fwid)
-    s = s.replace('Ｇ','G').replace('（','(').replace('）',')')
-    s = s.replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III')
+    if x is None or (isinstance(x, float) and np.isnan(x)): 
+        return None
+    s = str(x).translate(_fwid)
+    s = (s.replace('Ｇ','G')
+         .replace('（','(').replace('）',')')
+         .replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III'))
+    # G を正規化
     s = re.sub(r'G\s*III', 'G3', s, flags=re.I)
     s = re.sub(r'G\s*II',  'G2', s, flags=re.I)
     s = re.sub(r'G\s*I',   'G1', s, flags=re.I)
-    m = re.search(r'G\s*([123])', s, flags=re.I)
+    # Jpn を正規化 → 最終的に G に寄せる
+    s = re.sub(r'ＪＰＮ', 'Jpn', s, flags=re.I)
+    s = re.sub(r'JPN',    'Jpn', s, flags=re.I)
+    s = re.sub(r'Jpn\s*III', 'Jpn3', s, flags=re.I)
+    s = re.sub(r'Jpn\s*II',  'Jpn2', s, flags=re.I)
+    s = re.sub(r'Jpn\s*I',   'Jpn1', s, flags=re.I)
+    m = re.search(r'(?:G|Jpn)\s*([123])', s, flags=re.I)
     return f"G{m.group(1)}" if m else None
 
 @st.cache_data(show_spinner=False)
@@ -483,7 +491,7 @@ validate_inputs(df_score, horses)
 df_style = pd.DataFrame({'馬名': [], 'p_逃げ': [], 'p_先行': [], 'p_差し': [], 'p_追込': [], '推定脚質': []})
 
 need_cols = {'馬名','レース日','頭数','通過4角'}
-if need_cols.issubset(df_score.columns):
+if need_cols.issubset(df_score.columns):if auto_style_on and need_cols.issubset(df_score.columns):
     tmp = (
         df_score[['馬名','レース日','頭数','通過4角','上3F順位']].copy()
         .dropna(subset=['馬名','レース日','頭数','通過4角'])
@@ -593,6 +601,20 @@ if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
         best_bw_map = {}
 else:
     best_bw_map = {}
+    
+# 追記）マージ前の重複ガード
+try: 
+    horses = horses.drop_duplicates('馬名', keep='first')
+except: 
+    pass
+try: 
+    blood_df = blood_df.drop_duplicates('馬名', keep='first')
+except: 
+    pass
+try: 
+    df_score = df_score.drop_duplicates(subset=['馬名','レース日','競走名'], keep='first')
+except: 
+    pass
 
 # ===== マージ =====
 for dup in ['枠','番','性別','年齢','斤量','馬体重','脚質']:
@@ -722,7 +744,10 @@ def calc_score(r):
                 base = wfa_base_for(sex, age_i, race_date)
             else:
                 base = 56.0
-            kg_pen = -max(0.0, kg - float(base)) * float(weight_coeff)
+            delta = kg - float(base)
+kg_pen = (-max(0.0,  delta) * float(weight_coeff)
+          + 0.5 * max(0.0, -delta) * float(weight_coeff))
+
     except Exception:
         pass
 
@@ -823,7 +848,7 @@ if '脚質' in horses.columns:
         pass
 
 # 2) 自動推定（df_style）を反映（AUTO_OVERWRITE に従う）
-if not df_style.empty:
+if not df_style.empty and auto_style_on:
     try:
         pred_series = df_style.set_index('馬名')['推定脚質'].reindex(combined_style.index)
         if AUTO_OVERWRITE:
@@ -1505,102 +1530,87 @@ st.subheader("ハーフケリー配分（任意）")
 use_kelly = st.checkbox("ハーフケリーで全買い目を再配分する（オッズ入力が必要）", value=False)
 
 if use_kelly and len(_df) > 0:
-    if not SKLEARN_AVAILABLE:
-        st.error("学習/確率推定に必要なライブラリ（scikit-learn 等）が見つかりません。\n"
-                 "ハーフケリー再配分は利用できません。インストールする場合のコマンド例：\n\n"
-                 "`pip install scikit-learn lightgbm shap`")
-    else:
-        idx_of = {name: i for i, name in enumerate(name_list)}
+    idx_of = {name: i for i, name in enumerate(name_list)}
 
-        def pair_prob(i, j, kind: str) -> float:
-            if kind == 'ワイド':
-                top3 = rank_idx[:, :3]
-                ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
-                return (ci & cj).mean()
-            if kind == '馬連':
-                return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
-                        ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
-            if kind == '馬単':
-                return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
-            return np.nan
-
-        def trio_prob(i, j, k) -> float:
+    def pair_prob(i, j, kind: str) -> float:
+        if kind == 'ワイド':
             top3 = rank_idx[:, :3]
-            ci = np.any(top3 == i, axis=1)
-            cj = np.any(top3 == j, axis=1)
-            ck = np.any(top3 == k, axis=1)
-            return (ci & cj & ck).mean()
+            ci = np.any(top3 == i, axis=1); cj = np.any(top3 == j, axis=1)
+            return (ci & cj).mean()
+        if kind == '馬連':
+            return (((rank_idx[:,0]==i) & (rank_idx[:,1]==j)) |
+                    ((rank_idx[:,0]==j) & (rank_idx[:,1]==i))).mean()
+        if kind == '馬単':
+            return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j)).mean()
+        return np.nan
 
-        def trifecta_prob(i, j, k) -> float:
-            return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
+    def trio_prob(i, j, k) -> float:
+        top3 = rank_idx[:, :3]
+        ci = np.any(top3 == i, axis=1)
+        cj = np.any(top3 == j, axis=1)
+        ck = np.any(top3 == k, axis=1)
+        return (ci & cj & ck).mean()
 
-        q_list = []
-        for _, r in _df.iterrows():
-            typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
+    def trifecta_prob(i, j, k) -> float:
+        return ((rank_idx[:,0]==i) & (rank_idx[:,1]==j) & (rank_idx[:,2]==k)).mean()
+
+    q_list = []
+    for _, r in _df.iterrows():
+        typ, h, a = r['券種'], str(r['馬']), str(r['相手'])
+        q = np.nan
+        try:
+            if typ == '単勝':
+                q = float(p_win[idx_of[h]])
+            elif typ == '複勝':
+                q = float(p_top3[idx_of[h]])
+            elif typ in ('ワイド','馬連','馬単') and a:
+                i = idx_of[h]; j = idx_of[a]
+                q = pair_prob(i, j, typ)
+            elif typ == '三連複' and a:
+                parts = [p.strip() for p in a.split('／') if p.strip()]
+                if len(parts) >= 2:
+                    i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                    q = trio_prob(i, j, k)
+            elif typ in ('三連単','三連単フォーメーション') and a:
+                parts = [p.strip() for p in a.split('／') if p.strip()]
+                if len(parts) >= 2:
+                    i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
+                    q = trifecta_prob(i, j, k)
+        except Exception:
             q = np.nan
-            try:
-                if typ == '単勝':
-                    q = float(p_win[idx_of[h]])
-                elif typ == '複勝':
-                    q = float(p_top3[idx_of[h]])
-                elif typ in ('ワイド','馬連','馬単') and a:
-                    i = idx_of[h]; j = idx_of[a]
-                    q = pair_prob(i, j, typ)
-                elif typ == '三連複' and a:
-                    parts = [p.strip() for p in a.split('／') if p.strip()]
-                    if len(parts) >= 2:
-                        i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
-                        q = trio_prob(i, j, k)
-                elif typ in ('三連単','三連単フォーメーション') and a:
-                    parts = [p.strip() for p in a.split('／') if p.strip()]
-                    if len(parts) >= 2:
-                        i = idx_of[h]; j = idx_of[parts[0]]; k = idx_of[parts[1]]
-                        q = trifecta_prob(i, j, k)
-            except Exception:
-                q = np.nan
-            q_list.append(q)
+        q_list.append(q)
 
-        _df['的中確率q'] = q_list
+    _df['的中確率q'] = q_list
+    if '想定オッズ(倍)' not in _df.columns:
+        _df['想定オッズ(倍)'] = np.nan
 
-        # 2) オッズ入力UI
-        if '想定オッズ(倍)' not in _df.columns:
-            _df['想定オッズ(倍)'] = np.nan
+    st.caption("※ 例）期待払戻 420円/100円 → 4.2 を入力。未入力は0扱い（賭けない）。")
+    _df = st.data_editor(
+        _df,
+        column_config={'想定オッズ(倍)': st.column_config.NumberColumn('想定オッズ(倍)', min_value=1.01, step=0.01)},
+        use_container_width=True,
+        num_rows='dynamic',
+        disabled=['券種','印','馬','相手','金額','的中確率q']
+    )
 
-        st.caption("※ 例）期待払戻 420円/100円 → 4.2 と入力。未入力は0扱いで賭けません。")
-        _df = st.data_editor(
-            _df,
-            column_config={
-                '想定オッズ(倍)': st.column_config.NumberColumn('想定オッズ(倍)', min_value=1.01, step=0.01),
-            },
-            use_container_width=True,
-            num_rows='dynamic',
-            disabled=['券種','印','馬','相手','金額','的中確率q']
-        )
+    o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
+    q = pd.to_numeric(_df['的中確率q'], errors='coerce')
 
-        # 3) f* を計算し、ハーフケリーで賭け額を算出
-        o = pd.to_numeric(_df['想定オッズ(倍)'], errors='coerce')
-        q = pd.to_numeric(_df['的中確率q'], errors='coerce')
+    f_star = (q * o - 1) / (o - 1)
+    f_star = f_star.where((o > 1.01) & q.notna(), np.nan).clip(lower=0).fillna(0.0)
 
-        f_star = (q * o - 1) / (o - 1)
-        f_star = f_star.where((o > 1.01) & q.notna(), np.nan)
-        f_star = f_star.clip(lower=0).fillna(0.0)
+    bankroll = float(total_budget)
+    stake_raw = bankroll * 0.5 * f_star  # ハーフケリー
+    total_stake = float(stake_raw.sum())
+    if total_stake > bankroll and total_stake > 0:
+        stake_raw *= bankroll / total_stake
 
-        bankroll = float(total_budget)
-        stake_raw = bankroll * 0.5 * f_star  # ハーフケリー
+    stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
+    rem_k = int(bankroll - stake_rounded.sum()); i = 0
+    while rem_k >= int(min_unit) and i < len(stake_rounded):
+        stake_rounded[i] += int(min_unit); rem_k -= int(min_unit); i += 1
 
-        total_stake = float(stake_raw.sum())
-        if total_stake > bankroll and total_stake > 0:
-            stake_raw *= bankroll / total_stake
-
-        stake_rounded = (np.floor(stake_raw / int(min_unit)) * int(min_unit)).astype(int)
-        rem_k = int(bankroll - stake_rounded.sum())
-        i = 0
-        while rem_k >= int(min_unit) and i < len(stake_rounded):
-            stake_rounded[i] += int(min_unit)
-            rem_k -= int(min_unit)
-            i += 1
-
-        _df['金額'] = stake_rounded.astype(int)
+    _df['金額'] = stake_rounded.astype(int)
 
 else:
     spent = int(_df['金額'].fillna(0).replace('',0).sum()) if len(_df)>0 else 0
