@@ -491,7 +491,7 @@ validate_inputs(df_score, horses)
 df_style = pd.DataFrame({'馬名': [], 'p_逃げ': [], 'p_先行': [], 'p_差し': [], 'p_追込': [], '推定脚質': []})
 
 need_cols = {'馬名','レース日','頭数','通過4角'}
-if need_cols.issubset(df_score.columns):if auto_style_on and need_cols.issubset(df_score.columns):
+if auto_style_on and need_cols.issubset(df_score.columns):
     tmp = (
         df_score[['馬名','レース日','頭数','通過4角','上3F順位']].copy()
         .dropna(subset=['馬名','レース日','頭数','通過4角'])
@@ -744,9 +744,11 @@ def calc_score(r):
                 base = wfa_base_for(sex, age_i, race_date)
             else:
                 base = 56.0
-            delta = kg - float(base)
-kg_pen = (-max(0.0,  delta) * float(weight_coeff)
-          + 0.5 * max(0.0, -delta) * float(weight_coeff))
+                        delta = kg - float(base)
+            kg_pen = (
+                -max(0.0,  delta) * float(weight_coeff)
+                + 0.5 * max(0.0, -delta) * float(weight_coeff)
+            )
 
     except Exception:
         pass
