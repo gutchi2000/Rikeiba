@@ -744,7 +744,7 @@ def calc_score(r):
                 base = wfa_base_for(sex, age_i, race_date)
             else:
                 base = 56.0
-                        delta = kg - float(base)
+            delta = kg - float(base)
             kg_pen = (
                 -max(0.0,  delta) * float(weight_coeff)
                 + 0.5 * max(0.0, -delta) * float(weight_coeff)
