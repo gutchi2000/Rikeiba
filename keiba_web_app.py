@@ -1205,9 +1205,9 @@ else:
         st.info("展開ロケーション：表示対象がありません（馬番が未入力かも）。")
 
 
-# ===== 重賞ハイライト（好走と出走歴の両方を表示） =====
-race_col = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
-ag_col   = next((c for c in ['上がり3Fタイム','上がり3F','上がり３Ｆ','上3Fタイム','上3F'] if c in df_score.columns), None)
+# ===== 重賞ハイライト（好走＋出走歴）【安全版】 =====
+race_col   = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
+ag_col     = next((c for c in ['上がり3Fタイム','上がり3F','上がり３Ｆ','上3Fタイム','上3F'] if c in df_score.columns), None)
 finish_col = '確定着順'
 
 def grade_from_row(row):
@@ -1226,15 +1226,50 @@ def _fmt_ag(v):
     try: return f"{float(s):.1f}"
     except: return s
 
+# 失われた「馬名」を確実に復元するユーティリティ
+def _ensure_horse_name(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or len(df) == 0:
+        return df
+    if '馬名' in df.columns:
+        return df
+    if getattr(df.index, 'name', None) == '馬名':
+        return df.reset_index()
+
+    out = df.copy()
+    # 1) 枠・番 で horses と突合
+    try:
+        keys = [k for k in ['枠','番'] if k in out.columns and k in horses.columns]
+        if keys:
+            tmp = out.merge(horses[keys+['馬名']].drop_duplicates(), on=keys, how='left')
+            if '馬名' in tmp.columns:
+                return tmp
+    except Exception:
+        pass
+    # 2) レース日・競走名 で df_score と突合（列があれば）
+    try:
+        keys2 = [k for k in ['レース日','競走名'] if k in out.columns and k in df_score.columns]
+        if keys2:
+            tmp = out.merge(df_score[keys2+['馬名']].drop_duplicates(), on=keys2, how='left')
+            if '馬名' in tmp.columns:
+                return tmp
+    except Exception:
+        pass
+    # 3) 最後の手段：空列を足す（表示はできる／グループはNaN除外）
+    out['馬名'] = ''
+    return out
+
+# 元データ→前処理
 dfg_all = df_score.copy()
-dfg_all['GradeN']   = dfg_all.apply(grade_from_row, axis=1)
-dfg_all['着順num']  = pd.to_numeric(dfg_all[finish_col], errors='coerce')
-dfg_all['_date']    = pd.to_datetime(dfg_all['レース日'], errors='coerce')
-dfg_all['_date_str']= dfg_all['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
+dfg_all['GradeN']    = dfg_all.apply(grade_from_row, axis=1)
+dfg_all['着順num']   = pd.to_numeric(dfg_all[finish_col], errors='coerce')
+dfg_all['_date']     = pd.to_datetime(dfg_all['レース日'], errors='coerce')
+dfg_all['_date_str'] = dfg_all['_date'].dt.strftime('%Y.%m.%d').fillna('日付不明')
 if race_col: dfg_all[race_col] = dfg_all[race_col].map(_clean_one_line)
 if ag_col:   dfg_all[ag_col]   = dfg_all[ag_col].map(_fmt_ag)
 dfg_all = dfg_all[dfg_all['GradeN'].isin(['G1','G2','G3'])].copy()
+dfg_all = _ensure_horse_name(dfg_all)
 
+# 表化
 def make_table_all(d: pd.DataFrame) -> pd.DataFrame:
     races = d[race_col].fillna('（不明）') if race_col else pd.Series(['（不明）']*len(d), index=d.index)
     ags   = d[ag_col] if ag_col else pd.Series(['']*len(d), index=d.index)
@@ -1247,27 +1282,43 @@ def make_table_all(d: pd.DataFrame) -> pd.DataFrame:
     })
     return out
 
-tables_all = {name: make_table_all(d) for name, d in dfg_all.sort_values(['馬名','_date'], ascending=[True, False]).groupby('馬名')}
+def _build_tables(d: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    if d is None or len(d) == 0 or '馬名' not in d.columns:
+        return {}
+    # NaNの馬名はグループから除外(dropna=True)
+    tbl = {}
+    for name, g in d.sort_values(['馬名','_date'], ascending=[True, False]).groupby('馬名', dropna=True):
+        if str(name).strip() == '':
+            continue
+        tbl[name] = make_table_all(g)
+    return tbl
 
+tables_all = _build_tables(dfg_all)
+
+# 好走のみ（G1:1-5/G2:1-4/G3:1-3）
 thr_map = {'G1':5, 'G2':4, 'G3':3}
-dfg_good = dfg_all[dfg_all.apply(lambda r: r['着順num'] <= thr_map.get(r['GradeN'], 0), axis=1)]
-def make_table_good(d: pd.DataFrame) -> pd.DataFrame:
-    return make_table_all(d)
-tables_good = {name: make_table_good(d) for name, d in dfg_good.groupby('馬名')}
+dfg_good = dfg_all[dfg_all.apply(lambda r: r['着順num'] <= thr_map.get(r['GradeN'], 0), axis=1)].copy()
+dfg_good = _ensure_horse_name(dfg_good)
+tables_good = _build_tables(dfg_good)
 
+# 表示（上位馬を優先）
 st.subheader("■ 重賞ハイライト（好走＋出走歴）")
-for name in topN['馬名'].tolist():
-    st.markdown(f"**{name}**")
-    t_good = tables_good.get(name)
-    t_all  = tables_all.get(name)
-    if t_good is not None and not t_good.empty:
-        st.write("好走（規定着内）")
-        st.table(t_good)
-    elif t_all is not None and not t_all.empty:
-        st.write("好走は該当なし（出走歴あり・直近）")
-        st.table(t_all.head(5))
-    else:
-        st.write("重賞出走なし")
+if not tables_all and not tables_good:
+    st.info("重賞の出走履歴を検出できませんでした。列マッピング（馬名/競走名/レース日）をご確認ください。")
+else:
+    for name in topN['馬名'].tolist():
+        st.markdown(f"**{name}**")
+        t_good = tables_good.get(name)
+        t_all  = tables_all.get(name)
+        if t_good is not None and not t_good.empty:
+            st.write("好走（規定着内）")
+            st.table(t_good)
+        elif t_all is not None and not t_all.empty:
+            st.write("好走は該当なし（出走歴あり・直近）")
+            st.table(t_all.head(5))
+        else:
+            st.write("重賞出走なし")
+# ===== ここまで =====
 
 # ===== horses 情報付与（短評） =====
 印map = dict(zip(topN['馬名'], topN['印']))
