@@ -837,18 +837,21 @@ with tab_pace:
     st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
 
     # --- 堅牢版：手入力と自動推定をマージ（手入力優先） ---
-    df_map = horses.copy()
-    if '脚質' not in df_map.columns:
-        df_map['脚質'] = ''
-    # 自動推定（combined_style）を補完に使う
-    auto_st = df_map['馬名'].map(combined_style)
-    df_map['脚質'] = np.where(
-        df_map['脚質'].astype(str).str.strip().ne(''),
-        df_map['脚質'],
-        auto_st
-    ).fillna('')
-    # 不正値は空に落とす
-    df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), '')
+   # --- 堅牢版：手入力と自動推定をマージ（手入力優先） ---
+df_map = horses.copy()
+if '脚質' not in df_map.columns:
+    df_map['脚質'] = ''
+
+# 自動推定（combined_style）を補完に使う
+auto_st = df_map['馬名'].map(combined_style)
+
+# 手入力が空のところだけ自動推定で埋める（np.whereは使わない）
+cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
+df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
+
+# 欠損→''、未知値は空に落とす
+df_map['脚質'] = df_map['脚質'].fillna('')
+df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
 
     # --- サマリー表（番が無くても必ず表示） ---
     style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
