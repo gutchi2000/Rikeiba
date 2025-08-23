@@ -1,5 +1,5 @@
 # keiba_web_app_fix.py
-# サイドバー互換（tabs→expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備の即動版
+# サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備の即動版
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -76,8 +76,7 @@ def normalize_grade_text(x: str | None) -> str | None:
     if x is None or (isinstance(x, float) and np.isnan(x)): 
         return None
     s = str(x).translate(_fwid)
-    s = (s.replace('Ｇ','G')
-         .replace('（','(').replace('）',')')
+    s = (s.replace('Ｇ','G').replace('（','(').replace('）',')')
          .replace('Ⅰ','I').replace('Ⅱ','II').replace('Ⅲ','III'))
     s = re.sub(r'G\s*III', 'G3', s, flags=re.I)
     s = re.sub(r'G\s*II',  'G2', s, flags=re.I)
@@ -444,13 +443,11 @@ if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
     except Exception:
         best_bw_map = {}
 
-# 重複ガード
-for df in [horses, df_score]:
-    try:
-        if '馬名' in df.columns:
-            df.drop_duplicates('馬名', keep='first', inplace=True)
-    except Exception:
-        pass
+# 重複ガード（← df_score は過去走が複数必要なので **馬名で落とさない**）
+try:
+    horses.drop_duplicates('馬名', keep='first', inplace=True)
+except Exception:
+    pass
 try:
     df_score = df_score.drop_duplicates(subset=['馬名','レース日','競走名'], keep='first')
 except Exception:
@@ -742,12 +739,11 @@ if ALT_AVAILABLE and len(df_agg)>0:
         iqr = max(0.1, q75 - q25)
         y_lo = max(0.0, q10 - 0.3*iqr)
         y_hi = q90 + 0.3*iqr
-        # 最低レンジ幅を確保
-        if (y_hi - y_lo) < 4.0:
+        if (y_hi - y_lo) < 4.0:  # 最低レンジ幅
             mid = (y_hi + y_lo)/2
             y_lo, y_hi = max(0.0, mid-2.5), mid+2.5
     else:
-        y_lo, y_hi = 0.0, max(2.0, float(w_all.max())+1.0) if len(w_all)>0 else (0.0, 5.0)
+        y_lo, y_hi = (0.0, 5.0)
 
     x_mid = 50.0
     y_mid = float(df_agg['WStd'].mean())
@@ -773,7 +769,7 @@ else:
     st.table(df_agg[['馬名','FinalZ','WStd']].sort_values('FinalZ', ascending=False).head(20))
 
 # ===== horses2（短評） =====
-印map = dict(zip(topN['馬名'], topN.get('印', pd.Series(dtype=str))))
+印map = dict(zip(topN.get('馬名', pd.Series(dtype=str)), topN.get('印', pd.Series(dtype=str))))
 merge_cols = [c for c in ['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts'] if c in df_agg.columns]
 horses2 = horses.merge(df_agg[merge_cols], on='馬名', how='left') if merge_cols else horses.copy()
 for col, default in [('印',''), ('脚質',''), ('短評',''), ('WAvgZ', np.nan), ('WStd', np.nan), ('FinalZ', np.nan), ('PacePts', np.nan)]:
