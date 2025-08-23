@@ -1,5 +1,5 @@
-# keiba_web_app_minified_clean.py
-# 余分な依存と未使用機能を外したコピペ即動版（ローカルDB・血統HTML・ML系を削除）
+# keiba_web_app_minified_clean_fixed.py
+# 余分な依存を外したコピペ即動版（ローカルDB・血統HTML・ML系なし）
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -55,46 +55,7 @@ with st.sidebar.expander("🧭 クイックスタート", expanded=True):
 st.sidebar.markdown("### 表示モード")
 ADVANCED = st.sidebar.toggle("上級者モードを表示", value=False, key="ui_adv_toggle")
 
-# ---- プリセット（collect_params/apply_params を利用） ----
-def _apply_preset(name: str):
-    try:
-        cfg = collect_params()
-    except Exception:
-        return False, "パラメタ収集に失敗"
-    # 推奨プリセット：“触ると体感が変わる”代表値を調整
-    if name == "バランス":
-        cfg.update(dict(
-            mc_beta=1.5, mc_tau=0.6, half_life_m=6.0, stab_weight=0.7, pace_gain=1.0,
-            weight_coeff=1.0, besttime_w=1.0, pace_mode="自動（MC）", NRECENT=5))
-    elif name == "堅実（安定重視）":
-        cfg.update(dict(
-            mc_beta=1.2, mc_tau=0.4, half_life_m=9.0, stab_weight=1.2, pace_gain=0.8,
-            weight_coeff=0.8, besttime_w=0.8, pace_mode="固定（手動）"))
-        st.session_state["pace_fixed"] = "ミドルペース"
-    elif name == "一発狙い（波乱）":
-        cfg.update(dict(
-            mc_beta=2.2, mc_tau=1.0, half_life_m=3.0, stab_weight=0.4, pace_gain=1.4,
-            weight_coeff=0.6, besttime_w=1.3, pace_mode="自動（MC）", NRECENT=3))
-    else:
-        return False, "unknown preset"
-    apply_params(cfg)
-    return True, f"プリセット『{name}』を適用しました"
-
-st.markdown("### 🎛️ クイックプリセット")
-c1, c2, c3, c4 = st.columns([1,1,1,2])
-if c1.button("バランス"):
-    ok, msg = _apply_preset("バランス"); st.toast(msg)
-if c2.button("堅実"):
-    ok, msg = _apply_preset("堅実（安定重視）"); st.toast(msg)
-if c3.button("一発狙い"):
-    ok, msg = _apply_preset("一発狙い（波乱）"); st.toast(msg)
-with c4:
-    _rst = st.button("推奨に戻す（バランス）")
-    if _rst:
-        ok, msg = _apply_preset("バランス"); st.toast(msg)
-
-
-STYLES = ['逃げ','先行','差し','追込']  # 脚質の定義を一箇所に集約
+STYLES = ['逃げ','先行','差し','追込']  # 脚質定義
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
 
 # ======================== ユーティリティ ========================
@@ -319,7 +280,7 @@ with tab_detail:
     with st.sidebar.expander("その他（開発者向け）", expanded=False):
         orig_weight  = st.slider("OrigZ の重み (未使用)", 0.0, 1.0, 0.5, 0.05)
 
-# ---- 収集/適用（既存と同じ関数名・返り値） ----
+# ---- 収集/適用（既存互換） ----
 def collect_params():
     return {
         "lambda_part": lambda_part, "orig_weight": orig_weight,
@@ -371,7 +332,6 @@ if cfg_file is not None:
         st.sidebar.success("設定を読み込みました（必要なら再実行）。")
     except Exception as e:
         st.sidebar.error(f"設定ファイルの読み込みエラー: {e}")
-# ======================== /サイドバー 2.0 ========================
 
 # ======================== ファイルアップロード ========================
 st.title("競馬予想アプリ（軽量版・互換性強化）")
@@ -568,19 +528,17 @@ if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
     except Exception:
         best_bw_map = {}
 
-# 重複ガード
-for df in [horses, df_score]:
-    try:
-        if '馬名' in df.columns:
-            df.drop_duplicates('馬名', keep='first', inplace=True)
-    except Exception:
-        pass
+# ===== マージ =====
+# ⚠ 重複ガード：出走表(horses)のみ重複除去。過去走(df_score)は絶対に潰さない！
+try:
+    horses.drop_duplicates('馬名', keep='first', inplace=True)
+except Exception:
+    pass
 try:
     df_score = df_score.drop_duplicates(subset=['馬名','レース日','競走名'], keep='first')
 except Exception:
     pass
 
-# ===== マージ =====
 for dup in ['枠','番','性別','年齢','斤量','馬体重','脚質']:
     df_score.drop(columns=[dup], errors='ignore', inplace=True)
 df_score = (
@@ -734,32 +692,57 @@ df_score['_days_ago'] = (now - df_score['レース日']).dt.days
 df_score['_w'] = 0.5 ** (df_score['_days_ago'] / (half_life_m * 30.4375)) if half_life_m > 0 else 1.0
 
 def w_mean(x, w):
-    w = np.array(w); x = np.array(x); s = w.sum()
-    return float((x*w).sum()/s) if s>0 else np.nan
+    x = np.asarray(x, dtype=float); w = np.asarray(w, dtype=float)
+    m = np.isfinite(x) & np.isfinite(w)
+    if not m.any(): return np.nan
+    sw = w[m].sum()
+    return float(np.dot(x[m], w[m]) / sw) if sw > 0 else np.nan
 
-def w_std(x, w):
-    w = np.array(w); x = np.array(x); s = w.sum()
-    if s <= 0: return np.nan
-    m = (x*w).sum()/s
-    var = (w*((x-m)**2)).sum()/s
-    return float(np.sqrt(var))
+def w_std_and_neff(x, w, ddof=1):
+    """
+    加重“標本”標準偏差と有効走数 n_eff を返す。
+    n_eff = (sum w)^2 / sum(w^2)
+    ddof=1 -> 標本補正。n_eff<=ddof のときは母分散にフォールバック。
+    """
+    x = np.asarray(x, dtype=float); w = np.asarray(w, dtype=float)
+    m = np.isfinite(x) & np.isfinite(w)
+    x = x[m]; w = w[m]
+    if x.size == 0: return np.nan, 0.0
+    sw  = w.sum(); sw2 = np.dot(w, w)
+    if sw <= 0 or sw2 <= 0: return np.nan, 0.0
+    mu  = np.dot(w, x) / sw
+    s2  = np.dot(w, (x - mu) ** 2) / sw  # 母分散
+    n_eff = (sw * sw) / sw2
+    if ddof > 0 and n_eff > ddof:
+        s2 = s2 * (n_eff / (n_eff - ddof))
+    return float(np.sqrt(max(s2, 0.0))), float(n_eff)
 
 agg = []
 for name, g in df_score.groupby('馬名'):
-    avg  = g['score_norm'].mean()
-    std  = g['score_norm'].std(ddof=0)
-    wavg = w_mean(g['score_norm'], g['_w'])
-    wstd = w_std(g['score_norm'], g['_w'])
-    agg.append({'馬名':name,'AvgZ':avg,'Stdev':std,'WAvgZ':wavg,'WStd':wstd})
+    x = g['score_norm'].to_numpy(float)
+    w = g['_w'].to_numpy(float)
+    if np.isfinite(w).sum() and w.sum() > 0:
+        w = w / w.sum()
+    else:
+        w = np.ones_like(w, dtype=float) / max(len(w), 1)
+
+    avg  = np.nanmean(x)
+    std  = np.nanstd(x, ddof=0)
+    wavg = w_mean(x, w)
+    wstd, neff = w_std_and_neff(x, w, ddof=1)
+    if not np.isfinite(wstd) or neff < 2:
+        wstd = np.nan  # 小標本は後で中央値補完
+    agg.append({'馬名':name,'AvgZ':avg,'Stdev':std,'WAvgZ':wavg,'WStd':wstd,'NEff':neff})
 
 df_agg = pd.DataFrame(agg)
-for c in ['Stdev','WStd']:
-    if c in df_agg.columns:
-        df_agg[c] = df_agg[c].fillna(df_agg[c].median())
+median_wstd = df_agg.loc[df_agg['NEff'] >= 2, 'WStd'].median()
+if not np.isfinite(median_wstd):
+    median_wstd = 10.0
+df_agg['WStd'] = df_agg['WStd'].fillna(median_wstd).clip(lower=1e-3)
 
 # ===== ペース想定（EPI MC or 固定）＋ 最終スコア =====
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
-df_agg['StabZ']    = z_score(-df_agg['WStd'].fillna(df_agg['WStd'].median()))
+df_agg['StabZ']    = z_score(-df_agg['WStd'])
 
 # 馬名整形
 def _trim_name(x):
@@ -864,14 +847,94 @@ if (df_agg['FinalRaw'].max() - df_agg['FinalRaw'].min()) < 1e-9:
     st.warning("FinalRaw がほぼ同値。小さな補正でFinalZを計算します。")
     df_agg['FinalZ'] = 50 + (df_agg['WAvgZ'] - df_agg['WAvgZ'].mean()) * 0.1
 else:
-    df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
+    df_agg['FinalZ'] = z_score(df_agg['FinalRaw'])
+
+# ===== 上位馬抽出（タブより前に計算） =====
+CUTOFF = 50.0
+cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
+topN = cand.head(6)
+marks = ['◎','〇','▲','☆','△','△']
+topN['印'] = marks[:len(topN)]
+
+# ===== 勝率モンテカルロ =====
+S = df_agg['FinalRaw'].to_numpy(dtype=float)
+S = (S - np.nanmean(S)) / (np.nanstd(S) + 1e-9)
+W = df_agg['WStd'].to_numpy(dtype=float)
+W = (W - W.min()) / (W.max() - W.min() + 1e-9)
+n = len(S)
+rng = np.random.default_rng(int(mc_seed))
+gumbel = rng.gumbel(loc=0.0, scale=1.0, size=(mc_iters, n))
+noise  = (mc_tau * W)[None, :] * rng.standard_normal((mc_iters, n))
+U = mc_beta * S[None, :] + noise + gumbel
+rank_idx = np.argsort(-U, axis=1)
+win_counts  = np.bincount(rank_idx[:, 0], minlength=n).astype(float)
+top3_counts = np.zeros(n, dtype=float)
+for k in range(3):
+    top3_counts += np.bincount(rank_idx[:, k], minlength=n).astype(float)
+p_win  = win_counts  / mc_iters
+p_top3 = top3_counts / mc_iters
+df_agg['勝率%_MC']   = (p_win  * 100).round(2)
+df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
+
+prob_view = (
+    df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
+    .sort_values('勝率%_MC', ascending=False)
+    .reset_index(drop=True)
+)
+
+# ===== 展開用マップ =====
+def _normalize_ban(x):
+    return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
+
+df_map = horses.copy()
+df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
+df_map['番'] = _normalize_ban(df_map['番'])
+df_map = df_map.dropna(subset=['番']).astype({'番': int})
+df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=STYLES, ordered=True)
+
+# ===== horses 情報付与（短評） =====
+印map = dict(zip(topN['馬名'], topN['印']))
+horses2 = horses.merge(df_agg[['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts']], on='馬名', how='left')
+horses2['印'] = horses2['馬名'].map(印map).fillna('')
+
+def ai_comment(row):
+    base = ""
+    if row['印'] == '◎':
+        base += "本命評価。" + ("高い安定感で信頼度抜群。" if pd.notna(row['WStd']) and row['WStd'] <= 8 else "能力上位もムラあり。")
+    elif row['印'] == '〇':
+        base += "対抗評価。" + ("近走安定しており軸候補。" if pd.notna(row['WStd']) and row['WStd'] <= 10 else "展開ひとつで逆転も。")
+    elif row['印'] in ['▲','☆']:
+        base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if pd.notna(row['WStd']) and row['WStd'] > 15 else "安定型で堅実。")
+    elif row['印'] == '△':
+        base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if pd.notna(row['WStd']) and row['WStd'] < 12 else "展開次第で浮上も。")
+    else:
+        if pd.notna(row['WAvgZ']) and pd.notna(row['WStd']):
+            base += ("実力十分。ヒモ穴候補。" if (row['WAvgZ'] >= 55 and row['WStd'] < 13)
+                     else ("実績からは厳しい。" if row['WAvgZ'] < 45 else "決定打に欠ける。"))
+    if pd.notna(row['WStd']) and row['WStd'] >= 18:
+        base += "波乱含み。"
+    elif pd.notna(row['WStd']) and row['WStd'] <= 8:
+        base += "非常に安定。"
+    style = str(row.get('脚質','')).strip()
+    base += {
+        "逃げ":"ハナを奪えれば粘り込み十分。",
+        "先行":"先行力を活かして上位争い。",
+        "差し":"展開が向けば末脚強烈。",
+        "追込":"直線勝負の一撃に期待。"
+    }.get(style, "")
+    return base
+
+horses2['短評'] = horses2.apply(ai_comment, axis=1)
 
 # ===== 可視化（Altairがあれば散布図） =====
-avg_st = float(df_agg['WStd'].mean())
-x_mid, y_mid = 50.0, avg_st
-x_min, x_max = float(df_agg['FinalZ'].min()), float(df_agg['FinalZ'].max())
-y_min, y_max = float(df_agg['WStd'].min()),  float(df_agg['WStd'].max())
 if ALT_AVAILABLE:
+    y_min = 0.0
+    y_cap = float(np.nanpercentile(df_agg['WStd'], 95)) if df_agg['WStd'].notna().any() else 1.0
+    y_max = max(y_cap, 1.0)
+    x_mid = 50.0
+    y_mid = float(np.nanmedian(df_agg['WStd']))
+    x_min, x_max = float(df_agg['FinalZ'].min()), float(df_agg['FinalZ'].max())
+
     quad_rect = pd.DataFrame([
         {'x1': x_min, 'x2': x_mid, 'y1': y_mid, 'y2': y_max},
         {'x1': x_mid, 'x2': x_max, 'y1': y_mid, 'y2': y_max},
@@ -881,7 +944,7 @@ if ALT_AVAILABLE:
     rect = alt.Chart(quad_rect).mark_rect(opacity=0.07).encode(x='x1:Q', x2='x2:Q', y='y1:Q', y2='y2:Q')
     points = alt.Chart(df_agg).mark_circle(size=100).encode(
         x=alt.X('FinalZ:Q', title='最終偏差値'),
-        y=alt.Y('WStd:Q',  title='加重標準偏差（小さいほど安定）'),
+        y=alt.Y('WStd:Q',  title='加重標準偏差（小さいほど安定）', scale=alt.Scale(domain=(y_min, y_max))),
         tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts','FinalZ']
     )
     labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='#ffffff').encode(
@@ -908,212 +971,36 @@ tab_dash, tab_prob, tab_pace, tab_bets, tab_all = st.tabs(
 with tab_dash:
     st.subheader("サマリー")
     c1, c2, c3, c4 = st.columns(4)
-    try:
-        c1.metric("想定ペース", locals().get("pace_type","—"))
-        c2.metric("出走頭数", len(horses))
-        if len(topN) > 0:
-            c3.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
-            win_pct = float(prob_view.loc[prob_view['馬名']==topN.iloc[0]['馬名'],'勝率%_MC'].iloc[0])
-            c4.metric("◎ 推定勝率", f"{win_pct:.1f}%")
-    except Exception:
-        pass
+    c1.metric("想定ペース", locals().get("pace_type","—"))
+    c2.metric("出走頭数", len(horses))
+    if len(topN) > 0:
+        c3.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
+        win_pct = float(prob_view.loc[prob_view['馬名']==topN.iloc[0]['馬名'],'勝率%_MC'].iloc[0])
+        c4.metric("◎ 推定勝率", f"{win_pct:.1f}%")
 
     st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
-    try:
-        _top_view = topN[['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC']].copy()
-        st.dataframe(_top_view, use_container_width=True, height=220)
-        st.download_button("⬇ 上位馬CSV",
-            data=_top_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="topN.csv", mime="text/csv")
-    except Exception:
-        st.info("上位馬の表示に必要なデータが不足しています。")
+    _top_view = topN[['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC']].copy()
+    st.dataframe(_top_view, use_container_width=True, height=220)
+    st.download_button("⬇ 上位馬CSV",
+        data=_top_view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="topN.csv", mime="text/csv")
 
 with tab_prob:
     st.subheader("推定勝率・複勝率（モンテカルロ）")
-    try:
-        _pv = prob_view.copy()
-        # 見た目：%列を小数→%文字付きに
-        for c in ['勝率%_MC','複勝率%_MC']:
-            if c in _pv:
-                _pv[c] = _pv[c].map(lambda x: f"{x:.2f}%")
-        st.dataframe(_pv, use_container_width=True, height=380)
-        st.download_button("⬇ 勝率テーブルCSV",
-            data=prob_view.to_csv(index=False).encode("utf-8-sig"),
-            file_name="probability_table.csv", mime="text/csv")
-    except Exception:
-        st.info("勝率テーブルを表示できませんでした。")
+    _pv = prob_view.copy()
+    for c in ['勝率%_MC','複勝率%_MC']:
+        if c in _pv:
+            _pv[c] = _pv[c].map(lambda x: f"{x:.2f}%")
+    st.dataframe(_pv, use_container_width=True, height=380)
+    st.download_button("⬇ 勝率テーブルCSV",
+        data=prob_view.to_csv(index=False).encode("utf-8-sig"),
+        file_name="probability_table.csv", mime="text/csv")
 
 with tab_pace:
     st.subheader("展開・脚質サマリー")
-    try:
-        st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if st.session_state.get('pace_mode')=='固定（手動）' else '自動MC'}）")
-        _sc = df_map['脚質'].value_counts().reindex(['逃げ','先行','差し','追込']).fillna(0).astype(int)
-        st.table(pd.DataFrame(_sc, columns=['頭数']).T)
-    except Exception:
-        st.info("展開サマリーの計算データが見つかりません。")
-
-with tab_bets:
-    st.subheader("最終買い目一覧")
-    try:
-        show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in _df_disp.columns]
-        st.dataframe(_df_disp[show_cols], use_container_width=True, height=320)
-        st.download_button("⬇ 買い目CSV",
-            data=_df_disp[show_cols].to_csv(index=False).encode("utf-8-sig"),
-            file_name="bets.csv", mime="text/csv")
-    except Exception:
-        st.info("現在、買い目はありません。")
-
-with tab_all:
-    st.subheader("全頭AI診断コメント")
-    try:
-        # 🔍 簡易フィルタ
-        q = st.text_input("馬名フィルタ（部分一致）", "")
-        _all = horses2[['馬名','印','脚質','短評','WAvgZ','WStd']].copy()
-        if q.strip():
-            _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
-        st.dataframe(_all, use_container_width=True, height=420)
-        st.download_button("⬇ 全頭コメントCSV",
-            data=_all.to_csv(index=False).encode("utf-8-sig"),
-            file_name="all_comments.csv", mime="text/csv")
-    except Exception:
-        st.info("コメント表示に必要なデータが見つかりませんでした。")
-
-# ===== 上位馬抽出 =====
-CUTOFF = 50.0
-cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
-topN = cand.head(6)
-marks = ['◎','〇','▲','☆','△','△']
-topN['印'] = marks[:len(topN)]
-
-st.subheader("上位馬（FinalZ≧50／最大6頭）")
-if len(topN) == 0:
-    st.warning(f"FinalZが{CUTOFF}以上の馬がいません。")
-else:
-    def reason(row):
-        base = f"時系列加重平均{row['WAvgZ']:.1f}、安定度{row['WStd']:.1f}、ペース点{row['PacePts']:.2f}。"
-        if row['FinalZ'] >= 65: base += "非常に高評価。"
-        elif row['FinalZ'] >= 55: base += "高水準。"
-        if row['WStd'] < df_agg['WStd'].quantile(0.3): base += "安定感抜群。"
-        elif row['WStd'] < df_agg['WStd'].median(): base += "比較的安定。"
-        style = str(row.get('脚質','')).strip()
-        base += {"逃げ":"楽逃げなら粘り込み有力。","先行":"先行力で押し切り濃厚。","差し":"展開が向けば末脚強烈。","追込":"直線勝負の一撃に注意。"}.get(style,"")
-        return base
-    topN['根拠'] = topN.apply(reason, axis=1)
-    st.table(topN[['馬名','印','根拠']])
-
-# ===== 勝率モンテカルロ =====
-S = df_agg['FinalRaw'].to_numpy(dtype=float)
-S = (S - np.nanmean(S)) / (np.nanstd(S) + 1e-9)
-W = df_agg['WStd'].fillna(df_agg['WStd'].median()).to_numpy(dtype=float)
-W = (W - W.min()) / (W.max() - W.min() + 1e-9)
-n = len(S)
-rng = np.random.default_rng(int(mc_seed))
-gumbel = rng.gumbel(loc=0.0, scale=1.0, size=(mc_iters, n))
-noise  = (mc_tau * W)[None, :] * rng.standard_normal((mc_iters, n))
-U = mc_beta * S[None, :] + noise + gumbel
-rank_idx = np.argsort(-U, axis=1)
-win_counts  = np.bincount(rank_idx[:, 0], minlength=n).astype(float)
-top3_counts = np.zeros(n, dtype=float)
-for k in range(3):
-    top3_counts += np.bincount(rank_idx[:, k], minlength=n).astype(float)
-p_win  = win_counts  / mc_iters
-p_top3 = top3_counts / mc_iters
-df_agg['勝率%_MC']   = (p_win  * 100).round(2)
-df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
-
-st.subheader("■ 推定勝率・複勝率（モンテカルロ）")
-prob_view = (
-    df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
-    .sort_values('勝率%_MC', ascending=False)
-    .reset_index(drop=True)
-)
-st.table(prob_view)
-
-with st.expander("この表の見方（クリックで開く）", expanded=False):
-    st.markdown("""
-**列の意味**
-- **FinalZ**：RecencyZ + stab_weight×StabZ + pace_gain×PacePts を偏差値化。
-- **WAvgZ**：時系列加重平均スコア。
-- **WStd**：加重標準偏差（小さいほど安定）。
-- **PacePts**：ペース適性点の期待値。
-- **勝率%_MC／複勝率%_MC**：モンテカルロでの推定。
-""")
-
-# ===== 展開図 =====
-def _normalize_ban(x):
-    return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
-
-df_map = horses.copy()
-df_map['脚質'] = df_map['馬名'].map(combined_style).fillna(df_map.get('脚質', ''))
-df_map['番'] = _normalize_ban(df_map['番'])
-df_map = df_map.dropna(subset=['番']).astype({'番': int})
-df_map['脚質'] = pd.Categorical(df_map['脚質'], categories=STYLES, ordered=True)
-
-row_ok = (
-    horses['馬名'].astype(str).str.replace('\u3000',' ').str.strip().ne('') &
-    horses['番'].astype(str).str.translate(_fwid).str.strip().ne('')
-)
-style_ok = horses['脚質'].astype(str).isin(STYLES)
-all_manual = style_ok[row_ok].all() and row_ok.any()
-
-if all_manual:
-    st.subheader("現状サマリー（表）")
-    df_map_show = horses.loc[row_ok, ['番','馬名','脚質']].copy()
-    df_map_show['番'] = _normalize_ban(df_map_show['番'])
-    df_map_show = df_map_show.dropna(subset=['番']).astype({'番': int})
-    df_map_show['脚質'] = pd.Categorical(df_map_show['脚質'], categories=STYLES, ordered=True)
-
-    style_counts = df_map_show['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
-    total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
-    style_pct = (style_counts / total_heads * 100).round(1)
-
-    nige = int(style_counts['逃げ']); sengo = int(style_counts['先行']); Hm = max(1, total_heads)
-    epi_m = (epi_alpha * nige + epi_beta * sengo) / Hm
-    if   epi_m >= thr_hi:   pace_type_view = "ハイペース"
-    elif epi_m >= thr_mid:  pace_type_view = "ミドルペース"
-    elif epi_m >= thr_slow: pace_type_view = "ややスローペース"
-    else:                   pace_type_view = "スローペース"
-
-    st.caption(f"ペース: {pace_type_view}（手入力100%反映）")
-    pace_summary = pd.DataFrame([{
-        '想定ペース': pace_type_view,
-        '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
-        '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
-        '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
-        '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
-    }])
-    st.table(pace_summary)
-
-    fig, ax = plt.subplots(figsize=(10,3))
-    colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
-    for _, row in df_map_show.sort_values('番').iterrows():
-        stl = str(row['脚質'])
-        if stl in colors:
-            x = int(row['番']); y = STYLES.index(stl)
-            ax.scatter(x, y, color=colors[stl], s=200)
-            lab = str(row['馬名'])
-            ax.text(x, y, lab, ha='center', va='center', color='white', fontsize=9, weight='bold',
-                    bbox=dict(facecolor=colors[stl], alpha=0.7, boxstyle='round'),
-                    fontproperties=jp_font)
-    ax.set_yticks([0,1,2,3]); ax.set_yticklabels(STYLES, fontproperties=jp_font)
-    xs = sorted(df_map_show['番'].unique()); ax.set_xticks(xs); ax.set_xticklabels([f"{i}番" for i in xs], fontproperties=jp_font)
-    ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
-    ax.set_title(f"展開ロケーション（{pace_type_view}想定・手入力）", fontproperties=jp_font)
-    st.pyplot(fig)
-else:
-    st.subheader("現状サマリー（表）")
-    st.caption(f"ペース: {pace_type}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
-    style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
-    total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
-    style_pct = (style_counts / total_heads * 100).round(1)
-    pace_summary = pd.DataFrame([{
-        '想定ペース': pace_type,
-        '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
-        '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
-        '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
-        '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
-    }])
-    st.table(pace_summary)
+    st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if st.session_state.get('pace_mode')=='固定（手動）' else '自動MC'}）")
+    _sc = df_map['脚質'].value_counts().reindex(['逃げ','先行','差し','追込']).fillna(0).astype(int)
+    st.table(pd.DataFrame(_sc, columns=['頭数']).T)
 
     df_map_show = df_map.sort_values(['番'])
     if len(df_map_show) > 0:
@@ -1134,6 +1021,169 @@ else:
         st.pyplot(fig)
     else:
         st.info("展開ロケーション：表示対象がありません（馬番が未入力かも）。")
+
+# ======================== 買い目生成＆資金配分 ========================
+h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
+h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
+
+symbols = topN['印'].tolist()
+names   = topN['馬名'].tolist()
+others_names   = names[1:] if len(names) > 1 else []
+others_symbols = symbols[1:] if len(symbols) > 1 else []
+
+three = ['馬連','ワイド','馬単']
+def round_to_unit(x, unit): return int(np.floor(x / unit) * unit)
+
+main_share = 0.5
+pur1 = round_to_unit(total_budget * main_share * (1/4), int(min_unit))  # 単勝
+pur2 = round_to_unit(total_budget * main_share * (3/4), int(min_unit))  # 複勝
+rem  = total_budget - (pur1 + pur2)
+
+win_each   = round_to_unit(pur1 / 2, int(min_unit))
+place_each = round_to_unit(pur2 / 2, int(min_unit))
+
+with tab_bets:
+    st.subheader("■ 資金配分 (厳密合計)")
+    st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円  [単位:{min_unit}円]")
+
+bets = []
+if h1 is not None:
+    bets += [{'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
+             {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each}]
+if h2 is not None:
+    bets += [{'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
+             {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each}]
+
+finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict()
+pair_candidates, tri_candidates, tri1_candidates = [], [], []
+if h1 is not None and len(others_names) > 0:
+    for nm, mk in zip(others_names, others_symbols):
+        score = finalZ_map.get(nm, 0)
+        pair_candidates.append(('ワイド', f'◎–{mk}', h1, nm, score))
+        pair_candidates.append(('馬連', f'◎–{mk}', h1, nm, score))
+        pair_candidates.append(('馬単', f'◎→{mk}', h1, nm, score))
+    for a, b in combinations(others_names, 2):
+        score = finalZ_map.get(a,0) + finalZ_map.get(b,0)
+        tri_candidates.append(('三連複','◎-〇▲☆△△', h1, f"{a}／{b}", score))
+    second_opts = others_names[:2]
+    for s in second_opts:
+        for t in others_names:
+            if t == s: continue
+            score = finalZ_map.get(s,0) + 0.7*finalZ_map.get(t,0)
+            tri1_candidates.append(('三連単フォーメーション','◎-〇▲-〇▲☆△△', h1, f"{s}／{t}", score))
+
+if scenario == '通常':
+    with tab_bets:
+        with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
+            choice = st.radio("購入券種", options=three, index=1)
+            st.write(f"▶ {choice} に残り {rem:,}円 を充当")
+    cand = [c for c in pair_candidates if c[0]==choice]
+    cand = sorted(cand, key=lambda x: x[-1], reverse=True)[:int(max_lines)]
+    K = len(cand)
+    if K > 0 and rem >= int(min_unit):
+        base = round_to_unit(rem / K, int(min_unit))
+        amounts = [base]*K
+        leftover = rem - base*K
+        i = 0
+        while leftover >= int(min_unit) and i < K:
+            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
+        for (typ, mks, base_h, pair_h, _), amt in zip(cand, amounts):
+            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
+    else:
+        with tab_bets: st.info("連系はスキップ（相手不足 or 予算不足）")
+
+elif scenario == 'ちょい余裕':
+    with tab_bets: st.write("▶ 残り予算を ワイド ＋ 三連複 で配分")
+    cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
+    cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
+    cut_w = min(len(cand_wide), int(max_lines)//2 if int(max_lines)>1 else 1)
+    cut_t = min(len(cand_tri),  int(max_lines) - cut_w)
+    cand_wide, cand_tri = cand_wide[:cut_w], cand_tri[:cut_t]
+    K = len(cand_wide) + len(cand_tri)
+    if K>0 and rem >= int(min_unit):
+        base = round_to_unit(rem / K, int(min_unit))
+        amounts = [base]*K
+        leftover = rem - base*K
+        i = 0
+        while leftover >= int(min_unit) and i < K:
+            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
+        all_cand = cand_wide + cand_tri
+        for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
+            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
+    else:
+        with tab_bets: st.info("連系はスキップ（相手不足 or 予算不足）")
+
+elif scenario == '余裕':
+    with tab_bets: st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で配分")
+    cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
+    cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
+    cand_tri1 = sorted(tri1_candidates, key=lambda x: x[-1], reverse=True)
+    r_w, r_t, r_t1 = 2, 2, 1
+    denom = r_w + r_t + r_t1
+    q_w = max(1, (int(max_lines) * r_w)//denom)
+    q_t = max(1, (int(max_lines) * r_t)//denom)
+    q_t1= max(1, int(max_lines) - q_w - q_t)
+    cand_wide, cand_tri, cand_tri1 = cand_wide[:q_w], cand_tri[:q_t], cand_tri1[:q_t1]
+    K = len(cand_wide) + len(cand_tri) + len(cand_tri1)
+    if K>0 and rem >= int(min_unit):
+        base = round_to_unit(rem / K, int(min_unit))
+        amounts = [base]*K
+        leftover = rem - base*K
+        i = 0
+        while leftover >= int(min_unit) and i < K:
+            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
+        all_cand = cand_wide + cand_tri + cand_tri1
+        for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
+            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
+    else:
+        with tab_bets: st.info("連系はスキップ（相手不足 or 予算不足）")
+
+_df = pd.DataFrame(bets)
+
+# 合計調整（ハーフケリーは簡略化のため削除）
+spent = int(_df['金額'].fillna(0).replace('',0).sum()) if len(_df)>0 else 0
+diff = total_budget - spent
+if diff != 0 and len(_df) > 0:
+    for idx in _df.index:
+        cur = int(_df.at[idx,'金額'])
+        new = cur + diff
+        if new >= 0 and new % int(min_unit) == 0:
+            _df.at[idx,'金額'] = new
+            break
+
+# 表示用フォーマット
+_df_disp = _df.copy()
+if '金額' in _df_disp.columns and len(_df_disp) > 0:
+    def fmt_money(x):
+        try:
+            xv = float(x)
+            if np.isnan(xv) or int(xv) <= 0: return ""
+            return f"{int(xv):,}円"
+        except Exception:
+            return ""
+    _df_disp['金額'] = _df_disp['金額'].map(fmt_money)
+
+unique_types = [str(x) for x in _df_disp.get('券種', pd.Series(dtype=str)).dropna().unique().tolist() if str(x).strip() != ""] if len(_df_disp)>0 else []
+tabs = st.tabs(['サマリー'] + unique_types)
+
+with tabs[0]:
+    st.subheader("■ 最終買い目一覧（全券種まとめ）")
+    if len(_df_disp) == 0:
+        st.info("現在、買い目はありません。")
+    else:
+        show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in _df_disp.columns]
+        st.table(_df_disp[show_cols])
+
+for i, typ in enumerate(unique_types, start=1):
+    if i >= len(tabs): continue
+    with tabs[i]:
+        df_this = _df_disp[_df_disp.get('券種','') == typ] if '券種' in _df_disp.columns else pd.DataFrame()
+        st.subheader(f"{typ} 買い目一覧")
+        if len(df_this) > 0:
+            show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in df_this.columns]
+            st.table(df_this[show_cols])
+        else:
+            st.info(f"{typ} の買い目はありません。")
 
 # ===== 重賞ハイライト（好走＋出走歴） =====
 race_col   = next((c for c in ['レース名','競走名','レース','名称'] if c in df_score.columns), None)
@@ -1195,208 +1245,11 @@ else:
         else:
             st.write("重賞出走なし")
 
-# ===== horses 情報付与（短評） =====
-印map = dict(zip(topN['馬名'], topN['印']))
-horses2 = horses.merge(df_agg[['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts']], on='馬名', how='left')
-horses2['印'] = horses2['馬名'].map(印map).fillna('')
-
-def ai_comment(row):
-    base = ""
-    if row['印'] == '◎':
-        base += "本命評価。" + ("高い安定感で信頼度抜群。" if row['WStd'] <= 8 else "能力上位もムラあり。")
-    elif row['印'] == '〇':
-        base += "対抗評価。" + ("近走安定しており軸候補。" if row['WStd'] <= 10 else "展開ひとつで逆転も。")
-    elif row['印'] in ['▲','☆']:
-        base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if row['WStd'] > 15 else "安定型で堅実。")
-    elif row['印'] == '△':
-        base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if row['WStd'] < 12 else "展開次第で浮上も。")
-    else:
-        if pd.notna(row['WAvgZ']) and pd.notna(row['WStd']):
-            base += ("実力十分。ヒモ穴候補。" if (row['WAvgZ'] >= 55 and row['WStd'] < 13)
-                     else ("実績からは厳しい。" if row['WAvgZ'] < 45 else "決定打に欠ける。"))
-    if pd.notna(row['WStd']) and row['WStd'] >= 18:
-        base += "波乱含み。"
-    elif pd.notna(row['WStd']) and row['WStd'] <= 8:
-        base += "非常に安定。"
-    style = str(row.get('脚質','')).strip()
-    base += {
-        "逃げ":"ハナを奪えれば粘り込み十分。",
-        "先行":"先行力を活かして上位争い。",
-        "差し":"展開が向けば末脚強烈。",
-        "追込":"直線勝負の一撃に期待。"
-    }.get(style, "")
-    return base
-
-horses2['短評'] = horses2.apply(ai_comment, axis=1)
-
 st.subheader("■ 全頭AI診断コメント")
-# 欠損ガード
 try:
     if '馬名' in horses2.columns: horses2['馬名'] = horses2['馬名'].astype(str).str.strip()
 except Exception: pass
 for col in ['印','脚質','短評','WAvgZ','WStd']:
     if col not in horses2.columns:
         horses2[col] = '' if col in ['印','脚質','短評'] else np.nan
-
 st.dataframe(horses2[['馬名','印','脚質','短評','WAvgZ','WStd']])
-
-# ======================== 買い目生成＆資金配分 ========================
-h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
-h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
-
-symbols = topN['印'].tolist()
-names   = topN['馬名'].tolist()
-others_names   = names[1:] if len(names) > 1 else []
-others_symbols = symbols[1:] if len(symbols) > 1 else []
-
-three = ['馬連','ワイド','馬単']
-def round_to_unit(x, unit): return int(np.floor(x / unit) * unit)
-
-main_share = 0.5
-pur1 = round_to_unit(total_budget * main_share * (1/4), int(min_unit))  # 単勝
-pur2 = round_to_unit(total_budget * main_share * (3/4), int(min_unit))  # 複勝
-rem  = total_budget - (pur1 + pur2)
-
-win_each   = round_to_unit(pur1 / 2, int(min_unit))
-place_each = round_to_unit(pur2 / 2, int(min_unit))
-
-st.subheader("■ 資金配分 (厳密合計)")
-st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円  [単位:{min_unit}円]")
-
-bets = []
-if h1 is not None:
-    bets += [{'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
-             {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each}]
-if h2 is not None:
-    bets += [{'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
-             {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each}]
-
-finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict()
-pair_candidates, tri_candidates, tri1_candidates = [], [], []
-if h1 is not None and len(others_names) > 0:
-    for nm, mk in zip(others_names, others_symbols):
-        score = finalZ_map.get(nm, 0)
-        pair_candidates.append(('ワイド', f'◎–{mk}', h1, nm, score))
-        pair_candidates.append(('馬連', f'◎–{mk}', h1, nm, score))
-        pair_candidates.append(('馬単', f'◎→{mk}', h1, nm, score))
-    for a, b in combinations(others_names, 2):
-        score = finalZ_map.get(a,0) + finalZ_map.get(b,0)
-        tri_candidates.append(('三連複','◎-〇▲☆△△', h1, f"{a}／{b}", score))
-    second_opts = others_names[:2]
-    for s in second_opts:
-        for t in others_names:
-            if t == s: continue
-            score = finalZ_map.get(s,0) + 0.7*finalZ_map.get(t,0)
-            tri1_candidates.append(('三連単フォーメーション','◎-〇▲-〇▲☆△△', h1, f"{s}／{t}", score))
-
-if scenario == '通常':
-    with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
-        choice = st.radio("購入券種", options=three, index=1)
-        st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-    cand = [c for c in pair_candidates if c[0]==choice]
-    cand = sorted(cand, key=lambda x: x[-1], reverse=True)[:int(max_lines)]
-    K = len(cand)
-    if K > 0 and rem >= int(min_unit):
-        base = round_to_unit(rem / K, int(min_unit))
-        amounts = [base]*K
-        leftover = rem - base*K
-        i = 0
-        while leftover >= int(min_unit) and i < K:
-            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-        for (typ, mks, base_h, pair_h, _), amt in zip(cand, amounts):
-            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-    else:
-        st.info("連系はスキップ（相手不足 or 予算不足）")
-
-elif scenario == 'ちょい余裕':
-    st.write("▶ 残り予算を ワイド ＋ 三連複 で配分")
-    cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
-    cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
-    cut_w = min(len(cand_wide), int(max_lines)//2 if int(max_lines)>1 else 1)
-    cut_t = min(len(cand_tri),  int(max_lines) - cut_w)
-    cand_wide, cand_tri = cand_wide[:cut_w], cand_tri[:cut_t]
-    K = len(cand_wide) + len(cand_tri)
-    if K>0 and rem >= int(min_unit):
-        base = round_to_unit(rem / K, int(min_unit))
-        amounts = [base]*K
-        leftover = rem - base*K
-        i = 0
-        while leftover >= int(min_unit) and i < K:
-            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-        all_cand = cand_wide + cand_tri
-        for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
-            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-    else:
-        st.info("連系はスキップ（相手不足 or 予算不足）")
-
-elif scenario == '余裕':
-    st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で配分")
-    cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
-    cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
-    cand_tri1 = sorted(tri1_candidates, key=lambda x: x[-1], reverse=True)
-    r_w, r_t, r_t1 = 2, 2, 1
-    denom = r_w + r_t + r_t1
-    q_w = max(1, (int(max_lines) * r_w)//denom)
-    q_t = max(1, (int(max_lines) * r_t)//denom)
-    q_t1= max(1, int(max_lines) - q_w - q_t)
-    cand_wide, cand_tri, cand_tri1 = cand_wide[:q_w], cand_tri[:q_t], cand_tri1[:q_t1]
-    K = len(cand_wide) + len(cand_tri) + len(cand_tri1)
-    if K>0 and rem >= int(min_unit):
-        base = round_to_unit(rem / K, int(min_unit))
-        amounts = [base]*K
-        leftover = rem - base*K
-        i = 0
-        while leftover >= int(min_unit) and i < K:
-            amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-        all_cand = cand_wide + cand_tri + cand_tri1
-        for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
-            bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-    else:
-        st.info("連系はスキップ（相手不足 or 予算不足）")
-
-_df = pd.DataFrame(bets)
-
-# 合計調整（ハーフケリーは簡略化のため削除）
-spent = int(_df['金額'].fillna(0).replace('',0).sum()) if len(_df)>0 else 0
-diff = total_budget - spent
-if diff != 0 and len(_df) > 0:
-    for idx in _df.index:
-        cur = int(_df.at[idx,'金額'])
-        new = cur + diff
-        if new >= 0 and new % int(min_unit) == 0:
-            _df.at[idx,'金額'] = new
-            break
-
-# 表示用フォーマット
-_df_disp = _df.copy()
-if '金額' in _df_disp.columns and len(_df_disp) > 0:
-    def fmt_money(x):
-        try:
-            xv = float(x)
-            if np.isnan(xv) or int(xv) <= 0: return ""
-            return f"{int(xv):,}円"
-        except Exception:
-            return ""
-    _df_disp['金額'] = _df_disp['金額'].map(fmt_money)
-
-unique_types = [str(x) for x in _df_disp['券種'].dropna().unique().tolist() if str(x).strip() != ""] if len(_df_disp)>0 and '券種' in _df_disp.columns else []
-tabs = st.tabs(['サマリー'] + unique_types)
-
-with tabs[0]:
-    st.subheader("■ 最終買い目一覧（全券種まとめ）")
-    if len(_df_disp) == 0:
-        st.info("現在、買い目はありません。")
-    else:
-        show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in _df_disp.columns]
-        st.table(_df_disp[show_cols])
-
-for i, typ in enumerate(unique_types, start=1):
-    if i >= len(tabs): continue
-    with tabs[i]:
-        df_this = _df_disp[_df_disp.get('券種','') == typ] if '券種' in _df_disp.columns else pd.DataFrame()
-        st.subheader(f"{typ} 買い目一覧")
-        if len(df_this) > 0:
-            show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in df_this.columns]
-            st.table(df_this[show_cols])
-        else:
-            st.info(f"{typ} の買い目はありません。")
