@@ -616,19 +616,47 @@ df_map['番']=_normalize_ban(df_map['番']); df_map=df_map.dropna(subset=['番']
 df_map['脚質']=pd.Categorical(df_map['脚質'], categories=STYLES, ordered=True)
 
 # ===== horses2（短評） =====
-印map=dict(zip(topN['馬名'], topN['印']))
-horses2=horses.merge(df_agg[['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts']], on='馬名', how='left')
-horses2['印']=horses2['馬名'].map(印map).fillna('')
+印map = dict(zip(topN['馬名'], topN['印']))
+
+# df_agg が空でも落ちないように、ある列だけ取る
+merge_cols = [c for c in ['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts'] if c in df_agg.columns]
+horses2 = horses.merge(df_agg[merge_cols], on='馬名', how='left') if merge_cols else horses.copy()
+
+# 欠損ガード：必要列を必ず作る（KeyError対策）
+for col, default in [('印',''), ('脚質',''), ('短評',''), ('WAvgZ', np.nan), ('WStd', np.nan), ('FinalZ', np.nan), ('PacePts', np.nan)]:
+    if col not in horses2.columns:
+        horses2[col] = default
+
+# 印の付与
+horses2['印'] = horses2['馬名'].map(印map).fillna('')
+
 def ai_comment(row):
-    base=""
-    if row['印']=='◎': base+="本命評価。"+("高い安定感で信頼度抜群。" if row['WStd']<=8 else "能力上位もムラあり。")
-    elif row['印']=='〇': base+="対抗評価。"+("近走安定しており軸候補。" if row['WStd']<=10 else "展開ひとつで逆転も。")
-    elif row['印'] in ['▲','☆']: base+="上位グループの一角。"+("ムラがあり一発タイプ。" if row['WStd']>15 else "安定型で堅実。")
-    elif row['印']=='△': base+="押さえ候補。"+("堅実だが勝ち切るまでは？" if row['WStd']<12 else "展開次第で浮上も。")
-    style=str(row.get('脚質','')).strip()
-    base+= {"逃げ":"ハナを奪えれば粘り込み十分。","先行":"先行力を活かして上位争い。","差し":"展開が向けば末脚強烈。","追込":"直線勝負の一撃に期待。"}.get(style,"")
+    base = ""
+    if row['印'] == '◎':
+        base += "本命評価。" + ("高い安定感で信頼度抜群。" if pd.notna(row['WStd']) and row['WStd'] <= 8 else "能力上位もムラあり。")
+    elif row['印'] == '〇':
+        base += "対抗評価。" + ("近走安定しており軸候補。" if pd.notna(row['WStd']) and row['WStd'] <= 10 else "展開ひとつで逆転も。")
+    elif row['印'] in ['▲','☆']:
+        base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if pd.notna(row['WStd']) and row['WStd'] > 15 else "安定型で堅実。")
+    elif row['印'] == '△':
+        base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if pd.notna(row['WStd']) and row['WStd'] < 12 else "展開次第で浮上も。")
+    style = str(row.get('脚質','')).strip()
+    base += {
+        "逃げ":"ハナを奪えれば粘り込み十分。",
+        "先行":"先行力を活かして上位争い。",
+        "差し":"展開が向けば末脚強烈。",
+        "追込":"直線勝負の一撃に期待。"
+    }.get(style, "")
     return base
-horses2['短評']=horses2.apply(ai_comment,axis=1)
+
+# 短評（安全に生成）
+try:
+    horses2['短評'] = horses2.apply(ai_comment, axis=1)
+except Exception:
+    # 何かあっても落とさない
+    if '短評' not in horses2:
+        horses2['短評'] = ""
+
 
 # ===== 資金配分・買い目 =====
 st.subheader("■ 資金配分 (厳密合計)")
@@ -761,8 +789,19 @@ with tab_bets:
 
 with tab_all:
     st.subheader("全頭AI診断コメント")
-    q=st.text_input("馬名フィルタ（部分一致）","")
-    _all=horses2[['馬名','印','脚質','短評','WAvgZ','WStd']].copy()
-    if q.strip(): _all=_all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
-    st.dataframe(_all, use_container_width=True, height=420)
-    st.download_button("⬇ 全頭コメントCSV", data=_all.to_csv(index=False).encode("utf-8-sig"), file_name="all_comments.csv", mime="text/csv")
+    q = st.text_input("馬名フィルタ（部分一致）", "")
+
+    # ← 安全な列選択（存在する列だけ）
+    show_cols = [c for c in ['馬名','印','脚質','短評','WAvgZ','WStd'] if c in horses2.columns]
+    _all = horses2[show_cols].copy()
+
+    if q.strip():
+        _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
+
+    if _all.empty:
+        st.info("コメント表示対象がありません。上部の入力と計算結果をご確認ください。")
+    else:
+        st.dataframe(_all, use_container_width=True, height=420)
+        st.download_button("⬇ 全頭コメントCSV",
+            data=_all.to_csv(index=False).encode("utf-8-sig"),
+            file_name="all_comments.csv", mime="text/csv")
