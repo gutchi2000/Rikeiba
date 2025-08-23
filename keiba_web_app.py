@@ -30,6 +30,70 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'Meiryo', 'MS Gothic']
 st.set_page_config(page_title="競馬予想アプリ（軽量版）", layout="wide")
 
+# === UIブースター A：テーマ / クイックスタート / プリセット ===
+def _inject_base_css():
+    st.markdown("""
+    <style>
+    #MainMenu, header, footer {visibility:hidden;}
+    section[data-testid="stSidebar"] {width: 340px !important;}
+    div.block-container {padding-top: 0.8rem; padding-bottom: 1.5rem; max-width: 1400px;}
+    button[role="tab"] {border-radius: 10px !important; padding: 0.35rem 0.8rem;}
+    .smallcaps{font-variant:all-small-caps; opacity:.9}
+    .badge{display:inline-block; padding:.2rem .5rem; border-radius:999px; background:#223; color:#cfe; font-size:.8rem; margin-right:.25rem}
+    </style>
+    """, unsafe_allow_html=True)
+
+_inject_base_css()
+
+with st.sidebar.expander("🧭 クイックスタート", expanded=True):
+    st.markdown("""
+1) **Excel**（sheet0=過去走 / sheet1=出走表）をアップロード  
+2) 必要なら **列マッピング** を確認（「列マッピングUIを表示」をON）  
+3) 左のスライダーを軽く調整 → 下部に**勝率**・**上位馬**・**買い目**が出ます  
+    """)
+
+st.sidebar.markdown("### 表示モード")
+ADVANCED = st.sidebar.toggle("上級者モードを表示", value=False, key="ui_adv_toggle")
+
+# ---- プリセット（collect_params/apply_params を利用） ----
+def _apply_preset(name: str):
+    try:
+        cfg = collect_params()
+    except Exception:
+        return False, "パラメタ収集に失敗"
+    # 推奨プリセット：“触ると体感が変わる”代表値を調整
+    if name == "バランス":
+        cfg.update(dict(
+            mc_beta=1.5, mc_tau=0.6, half_life_m=6.0, stab_weight=0.7, pace_gain=1.0,
+            weight_coeff=1.0, besttime_w=1.0, pace_mode="自動（MC）", NRECENT=5))
+    elif name == "堅実（安定重視）":
+        cfg.update(dict(
+            mc_beta=1.2, mc_tau=0.4, half_life_m=9.0, stab_weight=1.2, pace_gain=0.8,
+            weight_coeff=0.8, besttime_w=0.8, pace_mode="固定（手動）"))
+        st.session_state["pace_fixed"] = "ミドルペース"
+    elif name == "一発狙い（波乱）":
+        cfg.update(dict(
+            mc_beta=2.2, mc_tau=1.0, half_life_m=3.0, stab_weight=0.4, pace_gain=1.4,
+            weight_coeff=0.6, besttime_w=1.3, pace_mode="自動（MC）", NRECENT=3))
+    else:
+        return False, "unknown preset"
+    apply_params(cfg)
+    return True, f"プリセット『{name}』を適用しました"
+
+st.markdown("### 🎛️ クイックプリセット")
+c1, c2, c3, c4 = st.columns([1,1,1,2])
+if c1.button("バランス"):
+    ok, msg = _apply_preset("バランス"); st.toast(msg)
+if c2.button("堅実"):
+    ok, msg = _apply_preset("堅実（安定重視）"); st.toast(msg)
+if c3.button("一発狙い"):
+    ok, msg = _apply_preset("一発狙い（波乱）"); st.toast(msg)
+with c4:
+    _rst = st.button("推奨に戻す（バランス）")
+    if _rst:
+        ok, msg = _apply_preset("バランス"); st.toast(msg)
+
+
 STYLES = ['逃げ','先行','差し','追込']  # 脚質の定義を一箇所に集約
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
 
@@ -826,6 +890,84 @@ if ALT_AVAILABLE:
     st.altair_chart(chart, use_container_width=True)
 else:
     st.table(df_agg[['馬名','FinalZ','WStd']].sort_values('FinalZ', ascending=False).head(20))
+
+# === UIブースター B：結果タブ & DL & 検索 ===
+tab_dash, tab_prob, tab_pace, tab_bets, tab_all = st.tabs(
+    ["🏠 ダッシュボード", "📈 勝率", "🧭 展開", "🎫 買い目", "📝 全頭コメント"]
+)
+
+with tab_dash:
+    st.subheader("サマリー")
+    c1, c2, c3, c4 = st.columns(4)
+    try:
+        c1.metric("想定ペース", locals().get("pace_type","—"))
+        c2.metric("出走頭数", len(horses))
+        if len(topN) > 0:
+            c3.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
+            win_pct = float(prob_view.loc[prob_view['馬名']==topN.iloc[0]['馬名'],'勝率%_MC'].iloc[0])
+            c4.metric("◎ 推定勝率", f"{win_pct:.1f}%")
+    except Exception:
+        pass
+
+    st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
+    try:
+        _top_view = topN[['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC']].copy()
+        st.dataframe(_top_view, use_container_width=True, height=220)
+        st.download_button("⬇ 上位馬CSV",
+            data=_top_view.to_csv(index=False).encode("utf-8-sig"),
+            file_name="topN.csv", mime="text/csv")
+    except Exception:
+        st.info("上位馬の表示に必要なデータが不足しています。")
+
+with tab_prob:
+    st.subheader("推定勝率・複勝率（モンテカルロ）")
+    try:
+        _pv = prob_view.copy()
+        # 見た目：%列を小数→%文字付きに
+        for c in ['勝率%_MC','複勝率%_MC']:
+            if c in _pv:
+                _pv[c] = _pv[c].map(lambda x: f"{x:.2f}%")
+        st.dataframe(_pv, use_container_width=True, height=380)
+        st.download_button("⬇ 勝率テーブルCSV",
+            data=prob_view.to_csv(index=False).encode("utf-8-sig"),
+            file_name="probability_table.csv", mime="text/csv")
+    except Exception:
+        st.info("勝率テーブルを表示できませんでした。")
+
+with tab_pace:
+    st.subheader("展開・脚質サマリー")
+    try:
+        st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if st.session_state.get('pace_mode')=='固定（手動）' else '自動MC'}）")
+        _sc = df_map['脚質'].value_counts().reindex(['逃げ','先行','差し','追込']).fillna(0).astype(int)
+        st.table(pd.DataFrame(_sc, columns=['頭数']).T)
+    except Exception:
+        st.info("展開サマリーの計算データが見つかりません。")
+
+with tab_bets:
+    st.subheader("最終買い目一覧")
+    try:
+        show_cols = [c for c in ['券種','印','馬','相手','金額'] if c in _df_disp.columns]
+        st.dataframe(_df_disp[show_cols], use_container_width=True, height=320)
+        st.download_button("⬇ 買い目CSV",
+            data=_df_disp[show_cols].to_csv(index=False).encode("utf-8-sig"),
+            file_name="bets.csv", mime="text/csv")
+    except Exception:
+        st.info("現在、買い目はありません。")
+
+with tab_all:
+    st.subheader("全頭AI診断コメント")
+    try:
+        # 🔍 簡易フィルタ
+        q = st.text_input("馬名フィルタ（部分一致）", "")
+        _all = horses2[['馬名','印','脚質','短評','WAvgZ','WStd']].copy()
+        if q.strip():
+            _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
+        st.dataframe(_all, use_container_width=True, height=420)
+        st.download_button("⬇ 全頭コメントCSV",
+            data=_all.to_csv(index=False).encode("utf-8-sig"),
+            file_name="all_comments.csv", mime="text/csv")
+    except Exception:
+        st.info("コメント表示に必要なデータが見つかりませんでした。")
 
 # ===== 上位馬抽出 =====
 CUTOFF = 50.0
