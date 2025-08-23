@@ -849,12 +849,41 @@ if (df_agg['FinalRaw'].max() - df_agg['FinalRaw'].min()) < 1e-9:
 else:
     df_agg['FinalZ'] = z_score(df_agg['FinalRaw'])
 
-# ===== 上位馬抽出（タブより前に計算） =====
+# ===== 勝率モンテカルロ =====
+S = df_agg['FinalRaw'].to_numpy(dtype=float)
+S = (S - np.nanmean(S)) / (np.nanstd(S) + 1e-9)
+W = df_agg['WStd'].to_numpy(dtype=float)
+W = (W - W.min()) / (W.max() - W.min() + 1e-9)
+n = len(S)
+rng = np.random.default_rng(int(mc_seed))
+gumbel = rng.gumbel(loc=0.0, scale=1.0, size=(mc_iters, n))
+noise  = (mc_tau * W)[None, :] * rng.standard_normal((mc_iters, n))
+U = mc_beta * S[None, :] + noise + gumbel
+rank_idx = np.argsort(-U, axis=1)
+win_counts  = np.bincount(rank_idx[:, 0], minlength=n).astype(float)
+top3_counts = np.zeros(n, dtype=float)
+for k in range(3):
+    top3_counts += np.bincount(rank_idx[:, k], minlength=n).astype(float)
+p_win  = win_counts  / mc_iters
+p_top3 = top3_counts / mc_iters
+df_agg['勝率%_MC']   = (p_win  * 100).round(2)
+df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
+
+prob_view = (
+    df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
+    .sort_values('勝率%_MC', ascending=False)
+    .reset_index(drop=True)
+)
+
+# ===== 上位馬抽出（MC後に再計算） =====
 CUTOFF = 50.0
 cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
-topN = cand.head(6)
+topN = cand.head(6).copy()
 marks = ['◎','〇','▲','☆','△','△']
 topN['印'] = marks[:len(topN)]
+# 勝率列を確実に持たせる
+topN = topN.merge(df_agg[['馬名','勝率%_MC']], on='馬名', how='left')
+
 
 # ===== 勝率モンテカルロ =====
 S = df_agg['FinalRaw'].to_numpy(dtype=float)
