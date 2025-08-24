@@ -837,21 +837,20 @@ with tab_pace:
     st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
 
     # --- 堅牢版：手入力と自動推定をマージ（手入力優先） ---
-   # --- 堅牢版：手入力と自動推定をマージ（手入力優先） ---
-df_map = horses.copy()
-if '脚質' not in df_map.columns:
-    df_map['脚質'] = ''
+    df_map = horses.copy()
+    if '脚質' not in df_map.columns:
+        df_map['脚質'] = ''
 
-# 自動推定（combined_style）を補完に使う
-auto_st = df_map['馬名'].map(combined_style)
+    # 自動推定（combined_style）を補完に使う
+    auto_st = df_map['馬名'].map(combined_style)
 
-# 手入力が空のところだけ自動推定で埋める（np.whereは使わない）
-cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
-df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
+    # 手入力が空のところだけ自動推定で埋める（np.whereは使わない）
+    cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
+    df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
 
-# 欠損→''、未知値は空に落とす
-df_map['脚質'] = df_map['脚質'].fillna('')
-df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
+    # 欠損→''、未知値は空に落とす
+    df_map['脚質'] = df_map['脚質'].fillna('')
+    df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
 
     # --- サマリー表（番が無くても必ず表示） ---
     style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
@@ -879,15 +878,17 @@ df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='
             loc_df['_ban'] = loc_df['_ban'].astype(int)
             loc_df = loc_df.sort_values('_ban')
 
-            import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(10, 3))
             colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
             for _, row in loc_df.iterrows():
                 x = int(row['_ban']); y = STYLES.index(row['脚質'])
                 ax.scatter(x, y, color=colors[row['脚質']], s=200)
-                ax.text(x, y, str(row['馬名']), ha='center', va='center', color='white', fontsize=9, weight='bold',
-                        bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
-                        fontproperties=jp_font)
+                ax.text(
+                    x, y, str(row['馬名']),
+                    ha='center', va='center', color='white', fontsize=9, weight='bold',
+                    bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
+                    fontproperties=jp_font
+                )
             ax.set_yticks([0,1,2,3]); ax.set_yticklabels(STYLES, fontproperties=jp_font)
             xs = sorted(loc_df['_ban'].unique())
             ax.set_xticks(xs); ax.set_xticklabels([f"{i}番" for i in xs], fontproperties=jp_font)
@@ -898,7 +899,6 @@ df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='
             st.info("馬番または脚質が未入力のため、配置図は省略しました。上の表は有効です。")
     else:
         st.info("出走表に『番』列が見つからないため、配置図は省略しました。列マッピングをご確認ください。")
-
 
 with tab_bets:
     h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
