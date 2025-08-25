@@ -1053,17 +1053,48 @@ with tab_all:
         st.dataframe(_all, use_container_width=True, height=420)
 
 with tab_pedi:
-    st.subheader("血統HTMLビューア")
-    st.caption("NetKeiba等の血統ページHTMLを貼り付け/アップロードで表示（ローカル）。")
-    m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
-    if m == "テキスト貼り付け":
-        html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
-        if html_txt.strip() and COMPONENTS:
-            components.html(html_txt, height=600, scrolling=True)
-    else:
-        up = st.file_uploader("血統HTMLファイル", type=['html','htm'])
-        if up and COMPONENTS:
-            html = up.read().decode('utf-8', errors='ignore')
-            components.html(html, height=600, scrolling=True)
-        elif up and not COMPONENTS:
-            st.error("components が無効のためHTML表示不可です。")
+   # （with tab_pedi: の中、アップロード側だけ差し替え）
+
+st.subheader("血統HTMLビューア")
+st.caption("NetKeiba等の血統ページHTMLを貼り付け/アップロードで表示（ローカル）。")
+m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
+
+def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
+    # <meta charset=...> を先に覗く
+    head = raw[:4096].decode("ascii", "ignore")
+    m = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head, flags=re.I)
+    declared = (m.group(1).lower() if m else None)
+
+    # 試す順番
+    cands = []
+    if preferred: cands.append(preferred.lower())
+    if declared:  cands.append(declared)
+    cands += ["utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp", "iso2022_jp"]
+
+    seen = set()
+    for enc in [c for c in cands if c and not (c in seen or seen.add(c))]:
+        try:
+            txt = raw.decode(enc)
+            # �（置換文字）が大量なら不採用にして次へ
+            if txt.count("�") > 10 and enc in ("utf-8", "utf-8-sig"):
+                continue
+            return txt
+        except Exception:
+            continue
+    # 最後の保険
+    return raw.decode("utf-8", errors="replace")
+
+if m == "テキスト貼り付け":
+    html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
+    if html_txt.strip() and COMPONENTS:
+        components.html(html_txt, height=600, scrolling=True)
+else:
+    up = st.file_uploader("血統HTMLファイル", type=['html','htm'])
+    if up and COMPONENTS:
+        raw = up.read()
+        # 必要ならユーザーに明示選択のUIを付けてもOK（自動で十分なら不要）
+        html = _decode_html_bytes(raw)  # ←ここが肝
+        components.html(html, height=600, scrolling=True)
+    elif up and not COMPONENTS:
+        st.error("components が無効のためHTML表示不可です。")
+
