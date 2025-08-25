@@ -1053,48 +1053,57 @@ with tab_all:
         st.dataframe(_all, use_container_width=True, height=420)
 
 with tab_pedi:
-   # （with tab_pedi: の中、アップロード側だけ差し替え）
+    st.subheader("血統HTMLビューア")
+    st.caption("NetKeiba等の血統ページHTMLを貼り付け/アップロードで表示（ローカル）。")
+    m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
 
-st.subheader("血統HTMLビューア")
-st.caption("NetKeiba等の血統ページHTMLを貼り付け/アップロードで表示（ローカル）。")
-m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
+    # --- 文字コード検出 & デコード ------------------------------
+    def _detect_charset_from_head(raw: bytes) -> str | None:
+        # BOM 優先
+        if raw.startswith(b"\xef\xbb\xbf"): return "utf-8-sig"
+        if raw.startswith(b"\xff\xfe"):     return "utf-16-le"
+        if raw.startswith(b"\xfe\xff"):     return "utf-16-be"
+        # <meta ... charset=...> / http-equiv=... から拾う
+        head_txt = raw[:4096].decode("ascii", "ignore")
+        m1 = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head_txt, flags=re.I)
+        return m1.group(1).lower() if m1 else None
 
-def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
-    # <meta charset=...> を先に覗く
-    head = raw[:4096].decode("ascii", "ignore")
-    m = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head, flags=re.I)
-    declared = (m.group(1).lower() if m else None)
-
-    # 試す順番
-    cands = []
-    if preferred: cands.append(preferred.lower())
-    if declared:  cands.append(declared)
-    cands += ["utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp", "iso2022_jp"]
-
-    seen = set()
-    for enc in [c for c in cands if c and not (c in seen or seen.add(c))]:
-        try:
-            txt = raw.decode(enc)
-            # �（置換文字）が大量なら不採用にして次へ
-            if txt.count("�") > 10 and enc in ("utf-8", "utf-8-sig"):
+    def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
+        declared = _detect_charset_from_head(raw)
+        # 試す順序（重複排除）
+        cands = [c for c in [preferred, declared,
+                             "cp932", "shift_jis",  # SJIS系（NetKeiba系で多い）
+                             "utf-8", "utf-8-sig",
+                             "euc_jp", "iso2022_jp",
+                             "utf-16", "utf-16-le", "utf-16-be"] if c]
+        seen = set()
+        for enc in [c for c in cands if not (c in seen or seen.add(c))]:
+            try:
+                txt = raw.decode(enc)
+                # � が大量のときは不採用にして次へ（UTF-8誤判定を避ける）
+                if enc.startswith("utf-8") and txt.count("�") > 10:
+                    continue
+                return txt
+            except Exception:
                 continue
-            return txt
-        except Exception:
-            continue
-    # 最後の保険
-    return raw.decode("utf-8", errors="replace")
+        # 最後の保険
+        return raw.decode("utf-8", errors="replace")
 
-if m == "テキスト貼り付け":
-    html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
-    if html_txt.strip() and COMPONENTS:
-        components.html(html_txt, height=600, scrolling=True)
-else:
-    up = st.file_uploader("血統HTMLファイル", type=['html','htm'])
-    if up and COMPONENTS:
-        raw = up.read()
-        # 必要ならユーザーに明示選択のUIを付けてもOK（自動で十分なら不要）
-        html = _decode_html_bytes(raw)  # ←ここが肝
-        components.html(html, height=600, scrolling=True)
-    elif up and not COMPONENTS:
-        st.error("components が無効のためHTML表示不可です。")
+    # --- 入力UI -------------------------------------------------
+    if m == "テキスト貼り付け":
+        html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
+        if html_txt.strip():
+            if COMPONENTS:
+                components.html(html_txt, height=700, scrolling=True)
+            else:
+                st.code(html_txt, language="html")
+    else:
+        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"])
+        if up:
+            raw  = up.read()
+            html = _decode_html_bytes(raw)
+            if COMPONENTS:
+                components.html(html, height=700, scrolling=True)
+            else:
+                st.code(html[:8000], language="html")
 
