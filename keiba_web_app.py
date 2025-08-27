@@ -784,11 +784,42 @@ else:
 df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_venue_map)
 
 g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
-def _wavg_row(s): return (s['score_norm']*s['_w']).sum()/s['_w'].sum() if s['_w'].sum()>0 else np.nan
-right = g_turn[g_turn['回り']=='右'].groupby('馬名').apply(_wavg_row).rename('RightZ') if not g_turn.empty else pd.Series(dtype=float)
-left  = g_turn[g_turn['回り']=='左'].groupby('馬名').apply(_wavg_row).rename('LeftZ') if not g_turn.empty else pd.Series(dtype=float)
-cnts  = (g_turn.pivot_table(index='馬名', columns='回り', values='score_norm', aggfunc='count')
-         .rename(columns={'右':'nR','左':'nL'}) if not g_turn.empty else pd.DataFrame())
+
+def _wavg_row(s: pd.DataFrame) -> float:
+    # 時間重み付き平均（数値化＆ゼロ除算ガード）
+    sw = float(pd.to_numeric(s['_w'], errors='coerce').sum())
+    if sw <= 0:
+        return float('nan')
+    val = (
+        pd.to_numeric(s['score_norm'], errors='coerce') *
+        pd.to_numeric(s['_w'], errors='coerce')
+    ).sum() / sw
+    return float(val)
+
+if g_turn.empty:
+    # 空でも後段が壊れないように、列名付きの空DataFrameを用意
+    right = pd.DataFrame(columns=['RightZ']).set_index(pd.Index([], name='馬名'))
+    left  = pd.DataFrame(columns=['LeftZ']).set_index(pd.Index([], name='馬名'))
+    cnts  = pd.DataFrame()
+else:
+    # 常に 1 列 DataFrame として返す（Series.rename問題を回避）
+    right = (
+        g_turn[g_turn['回り'].astype(str) == '右']
+        .groupby('馬名', sort=False)
+        .apply(_wavg_row)
+        .to_frame(name='RightZ')
+    )
+    left = (
+        g_turn[g_turn['回り'].astype(str) == '左']
+        .groupby('馬名', sort=False)
+        .apply(_wavg_row)
+        .to_frame(name='LeftZ')
+    )
+    cnts = (
+        g_turn.pivot_table(index='馬名', columns='回り', values='score_norm', aggfunc='count')
+             .rename(columns={'右':'nR','左':'nL'})
+    )
+
 
 turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
 for c in ['RightZ','LeftZ','nR','nL']:
