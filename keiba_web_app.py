@@ -786,39 +786,37 @@ df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_ven
 g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
 
 def _wavg_row(s: pd.DataFrame) -> float:
-    # 時間重み付き平均（数値化＆ゼロ除算ガード）
     sw = float(pd.to_numeric(s['_w'], errors='coerce').sum())
     if sw <= 0:
         return float('nan')
-    val = (
+    num = (
         pd.to_numeric(s['score_norm'], errors='coerce') *
         pd.to_numeric(s['_w'], errors='coerce')
-    ).sum() / sw
-    return float(val)
+    ).sum()
+    return float(num / sw)
 
-if g_turn.empty:
-    # 空でも後段が壊れないように、列名付きの空DataFrameを用意
-    right = pd.DataFrame(columns=['RightZ']).set_index(pd.Index([], name='馬名'))
-    left  = pd.DataFrame(columns=['LeftZ']).set_index(pd.Index([], name='馬名'))
-    cnts  = pd.DataFrame()
-else:
-    # 常に 1 列 DataFrame として返す（Series.rename問題を回避）
-    right = (
-        g_turn[g_turn['回り'].astype(str) == '右']
-        .groupby('馬名', sort=False)
-        .apply(_wavg_row)
-        .to_frame(name='RightZ')
-    )
-    left = (
-        g_turn[g_turn['回り'].astype(str) == '左']
-        .groupby('馬名', sort=False)
-        .apply(_wavg_row)
-        .to_frame(name='LeftZ')
-    )
-    cnts = (
-        g_turn.pivot_table(index='馬名', columns='回り', values='score_norm', aggfunc='count')
-             .rename(columns={'右':'nR','左':'nL'})
-    )
+def _make_weighted(df_sub: pd.DataFrame, col_name: str) -> pd.DataFrame:
+    """groupby.apply の戻りが Series でも DataFrame でも安全に 1列DataFrame に整形"""
+    if df_sub.empty:
+        return pd.DataFrame(columns=[col_name])
+    res = df_sub.groupby('馬名', sort=False).apply(_wavg_row)
+    if isinstance(res, pd.Series):
+        return res.rename(col_name).to_frame()
+    elif isinstance(res, pd.DataFrame):
+        if res.shape[1] == 0:
+            return pd.DataFrame(columns=[col_name])
+        return res.iloc[:, 0].rename(col_name).to_frame()
+    else:
+        # 念のため（スカラー等）
+        return pd.DataFrame({col_name: pd.Series(res, index=pd.Index([], name='馬名'))})
+
+right = _make_weighted(g_turn[g_turn['回り'].astype(str) == '右'], 'RightZ')
+left  = _make_weighted(g_turn[g_turn['回り'].astype(str) == '左'], 'LeftZ')
+
+cnts = (
+    g_turn.pivot_table(index='馬名', columns='回り', values='score_norm', aggfunc='count')
+         .rename(columns={'右':'nR','左':'nL'})
+) if not g_turn.empty else pd.DataFrame()
 
 
 turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
