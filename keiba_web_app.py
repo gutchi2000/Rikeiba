@@ -1106,13 +1106,11 @@ with tab_pedi:
         m1 = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head_txt, flags=re.I)
         return m1.group(1).lower() if m1 else None
 
+       # --- 文字コード検出 & デコード（既存） ---
     def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
         declared = _detect_charset_from_head(raw)
-        cands = [c for c in [preferred, declared,
-                             "cp932", "shift_jis",
-                             "utf-8", "utf-8-sig",
-                             "euc_jp", "iso2022_jp",
-                             "utf-16", "utf-16-le", "utf-16-be"] if c]
+        cands = [c for c in [preferred, declared, "cp932","shift_jis","utf-8","utf-8-sig",
+                             "euc_jp","iso2022_jp","utf-16","utf-16-le","utf-16-be"] if c]
         seen = set()
         for enc in [c for c in cands if not (c in seen or seen.add(c))]:
             try:
@@ -1124,15 +1122,42 @@ with tab_pedi:
                 continue
         return raw.decode("utf-8", errors="replace")
 
+    # ★ 追加：URL取得ユーティリティ
+    def _fetch_url_to_html(url: str) -> str:
+        try:
+            import requests
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome Safari"
+            }
+            r = requests.get(url, headers=headers, timeout=12)
+            r.raise_for_status()
+            return _decode_html_bytes(r.content)
+        except Exception as e:
+            st.error(f"URLの取得に失敗しました: {e}")
+            return ""
+
     html_text = ""
     if m == "テキスト貼り付け":
-        html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
-        html_text = html_txt
+        html_txt = st.text_area("HTMLを貼り付け（またはURL）", height=220,
+                                placeholder="<html>...</html> または https://race.netkeiba.com/…")
+        src = html_txt.strip()
+        if re.match(r"^https?://", src):
+            # ★ bias 等を貼った場合は血統タブURLに自動補正
+            m_id = re.search(r"race_id=(\d{12})", src)
+            if m_id and "pedigree" not in src:
+                src = f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
+                st.caption(f"血統タブURLに補正しました → {src}")
+            html_text = _fetch_url_to_html(src)
+        else:
+            # そのままHTML本文として扱う
+            html_text = src
     else:
-        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"], key="pedi_html_up")
+        up = st.file_uploader("血統HTMLファイル", type=["html","htm"], key="pedi_html_up")
         if up:
             raw  = up.read()
             html_text = _decode_html_bytes(raw)
+
 
     # 表示（components が使える場合）
     if html_text.strip() and COMPONENTS:
