@@ -92,6 +92,12 @@ def normalize_grade_text(x: str | None) -> str | None:
 def safe_take(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[[c for c in cols if c in df.columns]].copy()
 
+def _trim_name(x):
+    try:
+        return str(x).replace('\u3000',' ').strip()
+    except Exception:
+        return str(x)
+
 # 安定した重み付き標準偏差（不偏補正つき）
 def w_std_unbiased(x, w, ddof=1):
     x = np.asarray(x, dtype=float)
@@ -198,16 +204,45 @@ with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
     max_lines    = st.slider("最大点数(連系)", 1, 60, 20, 1)
     scenario     = st.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
     st.markdown("---")
+
+    # ---- JSON保存を安全化（非シリアライズ品を文字列化） ----
+    def _jsonable(x):
+        import numpy as _np
+        if isinstance(x, (str, int, float, bool)) or x is None:
+            return x
+        if isinstance(x, (_np.integer,)):
+            return int(x)
+        if isinstance(x, (_np.floating,)):
+            return float(x)
+        if isinstance(x, (_np.bool_,)):
+            return bool(x)
+        if isinstance(x, (list, tuple, set)):
+            return [_jsonable(i) for i in x]
+        if isinstance(x, dict):
+            return {str(k): _jsonable(v) for k, v in x.items()}
+        return str(x)
+
     col_a, col_b = st.columns(2)
     if col_a.button("設定を保存"):
-        cfg = json.dumps({k:v for k,v in st.session_state.items() if not str(k).startswith('_')},
-                         ensure_ascii=False, indent=2)
-        st.download_button("JSONをDL", data=cfg, file_name="keiba_config.json", mime="application/json")
+        try:
+            cfg_dict = {}
+            for k, v in st.session_state.items():
+                if str(k).startswith('_'): 
+                    continue  # 内部キー除外
+                if k in ('excel_up','cfg_up','pedi_html_up'):
+                    continue  # アップローダの生オブジェクト除外
+                cfg_dict[k] = _jsonable(v)
+            cfg = json.dumps(cfg_dict, ensure_ascii=False, indent=2)
+            st.download_button("JSONをDL", data=cfg, file_name="keiba_config.json", mime="application/json")
+        except Exception as e:
+            st.error(f"設定保存に失敗しました: {e}")
+
     cfg_file = col_b.file_uploader("設定読み込み", type=["json"], key="cfg_up")
     if cfg_file is not None:
         try:
             cfg = json.loads(cfg_file.read().decode("utf-8"))
-            for k,v in cfg.items(): st.session_state[k]=v
+            for k,v in cfg.items(): 
+                st.session_state[k]=v
             st.success("設定を読み込みました（必要なら再実行）。")
         except Exception as e:
             st.error(f"設定ファイルの読み込みエラー: {e}")
@@ -510,6 +545,15 @@ def wfa_base_for(sex: str, age: int | None, dt: pd.Timestamp) -> float:
         male, filly = wfa_3p_m, wfa_3p_f
     return male if sex in ("牡", "セ") else filly
 
+# ===== 血統ボーナス：セッションから読む =====
+pedi_bonus_pts: float = float(st.session_state.get('pedi:points', 0.0))
+_pedi_map_session = st.session_state.get('pedi:map', {})  # {馬名: True}
+pedi_bonus_map = { _trim_name(k): bool(v) for k, v in dict(_pedi_map_session).items() }
+
+def _pedi_bonus_for(name: str) -> float:
+    nm = _trim_name(name)
+    return float(pedi_bonus_pts) if pedi_bonus_map.get(nm, False) else 0.0
+
 def calc_score(r):
     g = class_points(r)
     raw = g * (r['頭数'] + 1 - r['確定着順']) + lambda_part * g
@@ -570,7 +614,10 @@ def calc_score(r):
     except Exception:
         pass
 
-    total_bonus = grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus + kg_pen
+    # ✅ 血統ボーナス（キーワード一致で付与）
+    pedi_bonus = _pedi_bonus_for(r['馬名'])
+
+    total_bonus = grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus + kg_pen + pedi_bonus
     return raw * sw * gw * stw * fw * aw + total_bonus
 
 # 1走→正規化
@@ -606,18 +653,14 @@ for name, g in df_score.groupby('馬名'):
 
 df_agg = pd.DataFrame(agg)
 
-# —— WStd の穴埋め: 1走馬は全体の代表値で代入し、ゼロ縛りを回避
+# —— WStd の穴埋め
 wstd_nontrivial = df_agg.loc[df_agg['Nrun']>=2, 'WStd']
 default_std = float(wstd_nontrivial.median()) if (wstd_nontrivial.notna().any()) else 6.0
 df_agg['WStd'] = df_agg['WStd'].fillna(default_std)
-# ゼロばかり問題に下限を設定（視覚的に潰れないように）
 min_floor = max(1.0, default_std*0.6)
 df_agg.loc[df_agg['WStd'] < min_floor, 'WStd'] = min_floor
 
 # ===== 脚質統合（手入力優先→自動） =====
-def _trim_name(x):
-    try: return str(x).replace('\u3000',' ').strip()
-    except: return x
 for df in [horses, df_agg]:
     if '馬名' in df.columns: df['馬名'] = df['馬名'].map(_trim_name)
 
@@ -739,7 +782,7 @@ if ALT_AVAILABLE and len(df_agg)>0:
         iqr = max(0.1, q75 - q25)
         y_lo = max(0.0, q10 - 0.3*iqr)
         y_hi = q90 + 0.3*iqr
-        if (y_hi - y_lo) < 4.0:  # 最低レンジ幅
+        if (y_hi - y_lo) < 4.0:
             mid = (y_hi + y_lo)/2
             y_lo, y_hi = max(0.0, mid-2.5), mid+2.5
     else:
@@ -844,7 +887,7 @@ with tab_pace:
     # 自動推定（combined_style）を補完に使う
     auto_st = df_map['馬名'].map(combined_style)
 
-    # 手入力が空のところだけ自動推定で埋める（np.whereは使わない）
+    # 手入力が空のところだけ自動推定で埋める
     cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
     df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
 
@@ -866,7 +909,7 @@ with tab_pace:
     }])
     st.table(pace_summary)
 
-    # --- 配置図（馬番があれば描画。無ければ案内だけ） ---
+    # --- 配置図（馬番があれば描画） ---
     def _normalize_ban(x):
         return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
 
@@ -1052,27 +1095,26 @@ with tab_all:
     else:
         st.dataframe(_all, use_container_width=True, height=420)
 
+# ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
 with tab_pedi:
-    st.subheader("血統HTMLビューア")
-    st.caption("NetKeiba等の血統ページHTMLを貼り付け/アップロードで表示（ローカル）。")
+    st.subheader("血統HTMLビューア + ボーナス付与")
+    st.caption("NetKeiba等の血統ページHTMLを表示し、キーワードに一致した馬へボーナスを付与します。")
+
     m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
 
     # --- 文字コード検出 & デコード ------------------------------
     def _detect_charset_from_head(raw: bytes) -> str | None:
-        # BOM 優先
         if raw.startswith(b"\xef\xbb\xbf"): return "utf-8-sig"
         if raw.startswith(b"\xff\xfe"):     return "utf-16-le"
         if raw.startswith(b"\xfe\xff"):     return "utf-16-be"
-        # <meta ... charset=...> / http-equiv=... から拾う
         head_txt = raw[:4096].decode("ascii", "ignore")
         m1 = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head_txt, flags=re.I)
         return m1.group(1).lower() if m1 else None
 
     def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
         declared = _detect_charset_from_head(raw)
-        # 試す順序（重複排除）
         cands = [c for c in [preferred, declared,
-                             "cp932", "shift_jis",  # SJIS系（NetKeiba系で多い）
+                             "cp932", "shift_jis",
                              "utf-8", "utf-8-sig",
                              "euc_jp", "iso2022_jp",
                              "utf-16", "utf-16-le", "utf-16-be"] if c]
@@ -1080,30 +1122,107 @@ with tab_pedi:
         for enc in [c for c in cands if not (c in seen or seen.add(c))]:
             try:
                 txt = raw.decode(enc)
-                # � が大量のときは不採用にして次へ（UTF-8誤判定を避ける）
                 if enc.startswith("utf-8") and txt.count("�") > 10:
                     continue
                 return txt
             except Exception:
                 continue
-        # 最後の保険
         return raw.decode("utf-8", errors="replace")
 
-    # --- 入力UI -------------------------------------------------
+    html_text = ""
     if m == "テキスト貼り付け":
         html_txt = st.text_area("HTMLを貼り付け", height=220, placeholder="<html>...</html>")
-        if html_txt.strip():
-            if COMPONENTS:
-                components.html(html_txt, height=700, scrolling=True)
-            else:
-                st.code(html_txt, language="html")
+        html_text = html_txt
     else:
-        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"])
+        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"], key="pedi_html_up")
         if up:
             raw  = up.read()
-            html = _decode_html_bytes(raw)
-            if COMPONENTS:
-                components.html(html, height=700, scrolling=True)
-            else:
-                st.code(html[:8000], language="html")
+            html_text = _decode_html_bytes(raw)
 
+    # 表示（components が使える場合）
+    if html_text.strip() and COMPONENTS:
+        components.html(html_text, height=700, scrolling=True)
+    elif html_text.strip() and not COMPONENTS:
+        st.code(html_text[:8000], language="html")
+
+    # ----- キーワード → 馬へのボーナス付与設定 -----
+    st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
+
+    default_pts = int(st.session_state.get('pedi:points', 3))
+    points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
+
+    # HTML 内のテーブルから「馬名」列を探す
+    df_pedi = None
+    if html_text.strip():
+        try:
+            tables = pd.read_html(html_text)
+        except Exception:
+            tables = []
+        for t in tables:
+            cols = [str(c).strip() for c in t.columns]
+            if any("馬名" in str(c) for c in cols):
+                t.columns = cols
+                df_pedi = t
+                break
+
+    if df_pedi is not None:
+        name_col = next(c for c in df_pedi.columns if "馬名" in c)
+        # 候補列：既知の列があれば優先、なければ「馬名以外のすべて」
+        known = ["父タイプ名","父名","母父タイプ名","母父名"]
+        candidate_cols = [c for c in known if c in df_pedi.columns]
+        if not candidate_cols:
+            candidate_cols = [c for c in df_pedi.columns if c != name_col]
+
+        st.caption("※ 下のキーワードが、選択した列のどれかに一致した『馬名』へ加点します。複数行OK。")
+        keys_text = st.text_area("血統キーワード（1行1ワード）", value=st.session_state.get('pedi:keys', ""), height=120)
+        match_cols = st.multiselect("照合対象の列", candidate_cols,
+                                    default=[c for c in known if c in candidate_cols] or candidate_cols)
+        method = st.radio("照合方法", ["部分一致", "完全一致"], index=0, horizontal=True)
+
+        # 正規化（全角→半角、空白除去）
+        def _norm(s: str) -> str:
+            s = str(s)
+            s = s.translate(_fwid).replace('\u3000', ' ').strip()
+            return re.sub(r'\s+', '', s)
+
+        keys = [k for k in (keys_text.splitlines() if keys_text else []) if k.strip()]
+        keys_norm = [_norm(k) for k in keys]
+
+        matched_names = []
+        if keys and match_cols:
+            for _, row in df_pedi.iterrows():
+                try:
+                    nm = _trim_name(row[name_col])
+                except Exception:
+                    continue
+                row_texts_norm = [_norm(row.get(c, "")) for c in match_cols]
+                hit = False
+                for k in keys_norm:
+                    if method == "完全一致":
+                        if any(r == k for r in row_texts_norm):
+                            hit = True; break
+                    else:
+                        if any(k in r for r in row_texts_norm):
+                            hit = True; break
+                if hit:
+                    matched_names.append(nm)
+
+        # セッションへ保存（→ calc_score が読む）
+        matched_map = { _trim_name(n): True for n in matched_names }
+        st.session_state['pedi:map'] = matched_map
+        st.session_state['pedi:points'] = int(points)
+        st.session_state['pedi:keys'] = keys_text
+
+        # プレビュー
+        colL, colR = st.columns([2,3])
+        with colL:
+            st.write("一致した馬（加点対象）")
+            if matched_names:
+                st.table(pd.DataFrame({'馬名': matched_names}))
+            else:
+                st.info("現在、一致はありません。キーワード/照合列/照合方法を調整してください。")
+        with colR:
+            st.info(f"設定：ボーナス {points} 点 / 照合列 {', '.join(match_cols) if match_cols else '（未選択）'} / {method}")
+
+    else:
+        st.info("馬名列を含むテーブルが見つからないか、HTMLが未入力です。先にHTMLを貼り付けるかアップロードしてください。")
