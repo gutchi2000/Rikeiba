@@ -1187,30 +1187,49 @@ with tab_pedi:
         return fixed
 
     # ===== 入力（HTML/URL/ファイル） =====
-    html_text = ""
-    src_url = None
-    if m == "テキスト貼り付け（HTML/URL）":
-        src = st.text_area("HTML本文 もしくは URL を貼り付け", height=220,
-                           placeholder="<html>...</html> または https://race.netkeiba.com/…").strip()
-        if src:
-            if re.match(r"^https?://", src):
-                src_url = src
-                html_text, used_url, err = _fetch_url_html(src)
-                if err:
-                    st.warning(f"URLからの取得に失敗：{err}")
-                    st.caption(f"試行URL：{used_url}")
-            else:
-                html_text = src
-    else:
-        up = st.file_uploader("血統HTMLファイル（保存済みの .html / .htm）", type=["html","htm"], key="pedi_html_up")
-        if up:
-            html_text = _decode_html_bytes(up.read())
+   # ====== ここから新しい入力ブロック（URL対応） ======
+def _fetch_url_then_decode(url: str) -> str:
+    """URLが貼られた場合にHTTPで取得 → 文字コード自動判定でデコード"""
+    try:
+        import requests
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=12)
+        r.raise_for_status()
+        return _decode_html_bytes(r.content)
+    except Exception as e:
+        st.warning(
+            "URLからの取得に失敗しました。ブラウザで『ページを保存（.html）』して"
+            "『HTMLファイルをアップロード』に切り替えてください。"
+            f"（詳細: {type(e).__name__}）"
+        )
+        return ""
 
-    # ===== 表示（あれば埋め込み） =====
-    if html_text.strip() and COMPONENTS:
-        components.html(html_text, height=700, scrolling=True)
-    elif html_text.strip() and not COMPONENTS:
-        st.code(html_text[:4000], language="html")
+html_text = ""
+if m == "テキスト貼り付け":
+    html_txt = st.text_area(
+        "HTML（ソース全文 or URL）を貼り付け",
+        height=220,
+        placeholder="<html>...</html> または https://race.netkeiba.com/.../bias.html"
+    )
+    val = (html_txt or "").strip()
+    if re.match(r"^https?://", val):
+        with st.spinner("URLから取得中…"):
+            html_text = _fetch_url_then_decode(val)
+    else:
+        html_text = val
+else:
+    up = st.file_uploader("血統HTMLファイル", type=["html", "htm"], key="pedi_html_up")
+    if up:
+        raw  = up.read()
+        html_text = _decode_html_bytes(raw)
+
+# 表示（components が使える場合は埋め込み）
+if html_text.strip() and COMPONENTS:
+    components.html(html_text, height=700, scrolling=True)
+elif html_text.strip() and not COMPONENTS:
+    st.code(html_text[:8000], language="html")
+# ====== ここまで新しい入力ブロック ======
+
 
     # ===== テーブル抽出（1) HTML から / 2) URL から直接） =====
     dfs = _extract_pedi_tables_from_html(html_text) if html_text.strip() else []
