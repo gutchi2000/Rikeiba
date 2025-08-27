@@ -227,10 +227,10 @@ with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
         try:
             cfg_dict = {}
             for k, v in st.session_state.items():
-                if str(k).startswith('_'): 
-                    continue  # 内部キー除外
+                if str(k).startswith('_'):
+                    continue
                 if k in ('excel_up','cfg_up','pedi_html_up'):
-                    continue  # アップローダの生オブジェクト除外
+                    continue
                 cfg_dict[k] = _jsonable(v)
             cfg = json.dumps(cfg_dict, ensure_ascii=False, indent=2)
             st.download_button("JSONをDL", data=cfg, file_name="keiba_config.json", mime="application/json")
@@ -241,7 +241,7 @@ with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
     if cfg_file is not None:
         try:
             cfg = json.loads(cfg_file.read().decode("utf-8"))
-            for k,v in cfg.items(): 
+            for k,v in cfg.items():
                 st.session_state[k]=v
             st.success("設定を読み込みました（必要なら再実行）。")
         except Exception as e:
@@ -478,7 +478,7 @@ if {'馬名','馬体重','確定着順'}.issubset(df_score.columns):
     except Exception:
         best_bw_map = {}
 
-# 重複ガード（← df_score は過去走が複数必要なので **馬名で落とさない**）
+# 重複ガード
 try:
     horses.drop_duplicates('馬名', keep='first', inplace=True)
 except Exception:
@@ -547,7 +547,7 @@ def wfa_base_for(sex: str, age: int | None, dt: pd.Timestamp) -> float:
 
 # ===== 血統ボーナス：セッションから読む =====
 pedi_bonus_pts: float = float(st.session_state.get('pedi:points', 0.0))
-_pedi_map_session = st.session_state.get('pedi:map', {})  # {馬名: True}
+_pedi_map_session = st.session_state.get('pedi:map', {})
 pedi_bonus_map = { _trim_name(k): bool(v) for k, v in dict(_pedi_map_session).items() }
 
 def _pedi_bonus_for(name: str) -> float:
@@ -614,7 +614,7 @@ def calc_score(r):
     except Exception:
         pass
 
-    # ✅ 血統ボーナス（キーワード一致で付与）
+    # ✅ 血統ボーナス
     pedi_bonus = _pedi_bonus_for(r['馬名'])
 
     total_bonus = grade_point + agari_bonus + body_bonus + rate_bonus + bt_bonus + kg_pen + pedi_bonus
@@ -884,18 +884,14 @@ with tab_pace:
     if '脚質' not in df_map.columns:
         df_map['脚質'] = ''
 
-    # 自動推定（combined_style）を補完に使う
     auto_st = df_map['馬名'].map(combined_style)
 
-    # 手入力が空のところだけ自動推定で埋める
     cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
     df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
 
-    # 欠損→''、未知値は空に落とす
     df_map['脚質'] = df_map['脚質'].fillna('')
     df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
 
-    # --- サマリー表（番が無くても必ず表示） ---
     style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
     total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
     style_pct = (style_counts / total_heads * 100).round(1)
@@ -909,7 +905,6 @@ with tab_pace:
     }])
     st.table(pace_summary)
 
-    # --- 配置図（馬番があれば描画） ---
     def _normalize_ban(x):
         return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
 
@@ -1145,41 +1140,79 @@ with tab_pedi:
     elif html_text.strip() and not COMPONENTS:
         st.code(html_text[:8000], language="html")
 
-    # ----- キーワード → 馬へのボーナス付与設定 -----
+    # ========= 表抽出（ヘッダ昇格フォールバックつき） =========
+    def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [
+                "".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
+                for tup in df.columns
+            ]
+        else:
+            df.columns = [str(c).strip() for c in df.columns]
+        return df
+
+    def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
+        cols = [str(c) for c in df.columns]
+        if any(re.search("馬名", c) for c in cols):
+            return df
+        for i in range(min(6, len(df))):
+            row = df.iloc[i].astype(str)
+            if row.str.contains("馬名").any():
+                new_cols = row.str.replace(r"\s+", "", regex=True).tolist()
+                df = df.iloc[i+1:].copy()
+                df.columns = new_cols
+                break
+        return df
+
+    def _read_pedigree_tables(html_text: str):
+        tables = []
+        try:
+            tables = pd.read_html(html_text, flavor="lxml")
+        except Exception:
+            try:
+                tables = pd.read_html(html_text, flavor="bs4")
+            except Exception:
+                tables = []
+        fixed = []
+        for t in tables:
+            t = _flatten_columns(t)
+            t = _promote_header_row_if_needed(t)
+            t.columns = [str(c).strip() for c in t.columns]
+            if any(re.search(r"(馬名|^馬$)", c) for c in t.columns):
+                fixed.append(t.reset_index(drop=True))
+        return fixed
+
+    # ========= キーワード → 馬へのボーナス付与設定 =========
     st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
 
     default_pts = int(st.session_state.get('pedi:points', 3))
     points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
 
-    # HTML 内のテーブルから「馬名」列を探す
-    df_pedi = None
-    if html_text.strip():
-        try:
-            tables = pd.read_html(html_text)
-        except Exception:
-            tables = []
-        for t in tables:
-            cols = [str(c).strip() for c in t.columns]
-            if any("馬名" in str(c) for c in cols):
-                t.columns = cols
-                df_pedi = t
-                break
+    dfs = _read_pedigree_tables(html_text) if html_text.strip() else []
 
-    if df_pedi is not None:
-        name_col = next(c for c in df_pedi.columns if "馬名" in c)
-        # 候補列：既知の列があれば優先、なければ「馬名以外のすべて」
-        known = ["父タイプ名","父名","母父タイプ名","母父名"]
-        candidate_cols = [c for c in known if c in df_pedi.columns]
-        if not candidate_cols:
-            candidate_cols = [c for c in df_pedi.columns if c != name_col]
+    if dfs:
+        idx = st.selectbox(
+            "対象テーブルを選択",
+            options=list(range(len(dfs))),
+            format_func=lambda i: f"Table {i+1}（列: {', '.join(dfs[i].columns[:6])} …）"
+        )
+        dfp = dfs[idx]
+
+        # 馬名列と候補列
+        name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", c)]
+        name_col = st.selectbox("馬名列", options=dfp.columns.tolist(),
+                                index=dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0)
+
+        known = ["父タイプ名","父名","母父タイプ名","母父名","父系","母父系","父","母父"]
+        candidate_cols = [c for c in known if c in dfp.columns] or [c for c in dfp.columns if c != name_col]
 
         st.caption("※ 下のキーワードが、選択した列のどれかに一致した『馬名』へ加点します。複数行OK。")
-        keys_text = st.text_area("血統キーワード（1行1ワード）", value=st.session_state.get('pedi:keys', ""), height=120)
+        keys_text = st.text_area("血統キーワード（1行1ワード）",
+                                 value=st.session_state.get('pedi:keys', ""), height=120)
         match_cols = st.multiselect("照合対象の列", candidate_cols,
                                     default=[c for c in known if c in candidate_cols] or candidate_cols)
         method = st.radio("照合方法", ["部分一致", "完全一致"], index=0, horizontal=True)
 
-        # 正規化（全角→半角、空白除去）
         def _norm(s: str) -> str:
             s = str(s)
             s = s.translate(_fwid).replace('\u3000', ' ').strip()
@@ -1190,7 +1223,7 @@ with tab_pedi:
 
         matched_names = []
         if keys and match_cols:
-            for _, row in df_pedi.iterrows():
+            for _, row in dfp.iterrows():
                 try:
                     nm = _trim_name(row[name_col])
                 except Exception:
@@ -1207,13 +1240,11 @@ with tab_pedi:
                 if hit:
                     matched_names.append(nm)
 
-        # セッションへ保存（→ calc_score が読む）
         matched_map = { _trim_name(n): True for n in matched_names }
         st.session_state['pedi:map'] = matched_map
         st.session_state['pedi:points'] = int(points)
         st.session_state['pedi:keys'] = keys_text
 
-        # プレビュー
         colL, colR = st.columns([2,3])
         with colL:
             st.write("一致した馬（加点対象）")
