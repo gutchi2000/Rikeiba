@@ -1140,45 +1140,54 @@ with tab_pedi:
     elif html_text.strip() and not COMPONENTS:
         st.code(html_text[:8000], language="html")
 
-    # ========= 表抽出（ヘッダ昇格フォールバックつき） =========
+    # ========= 列名正規化ユーティリティ =========
+    def _col_norm(s: str) -> str:
+        s = str(s).replace('\u3000', ' ').replace('\xa0', ' ').strip()
+        s = s.translate(_fwid)                 # 全角→半角（数字/％）
+        return re.sub(r'\s+', '', s)           # すべての空白を除去
+
+    # ========= 表抽出（強化版：MultiIndex→平坦化／ヘッダ昇格／html5lib） =========
     def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [
-                "".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
-                for tup in df.columns
-            ]
+            cols = []
+            for i, tup in enumerate(df.columns):
+                parts = [str(c) for c in tup if "Unnamed" not in str(c)]
+                lab = _col_norm("".join(parts)) or f"col{i}"
+                cols.append(lab)
+            df.columns = cols
         else:
-            df.columns = [str(c).strip() for c in df.columns]
+            df.columns = [_col_norm(c) for c in df.columns]
         return df
 
     def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
-        cols = [str(c) for c in df.columns]
-        if any(re.search("馬名", c) for c in cols):
+        # 既に「馬名」を含むならOK（正規化後で判定）
+        if any("馬名" in _col_norm(c) or re.fullmatch(r"馬", _col_norm(c)) for c in df.columns):
             return df
-        for i in range(min(6, len(df))):
-            row = df.iloc[i].astype(str)
-            if row.str.contains("馬名").any():
-                new_cols = row.str.replace(r"\s+", "", regex=True).tolist()
+        # 先頭〜8行をヘッダ候補としてスキャン
+        up_to = min(8, len(df))
+        for i in range(up_to):
+            row = df.iloc[i].astype(str).map(_col_norm)
+            if row.str.contains("馬名").any() or row.str.fullmatch("馬").any():
                 df = df.iloc[i+1:].copy()
-                df.columns = new_cols
-                break
+                df.columns = row.tolist()
+                return df
         return df
 
     def _read_pedigree_tables(html_text: str):
         tables = []
-        try:
-            tables = pd.read_html(html_text, flavor="lxml")
-        except Exception:
+        for flv in ['lxml', 'bs4', 'html5lib']:  # ← ここで最大限粘る
             try:
-                tables = pd.read_html(html_text, flavor="bs4")
+                tables = pd.read_html(html_text, flavor=flv)
+                if tables:
+                    break
             except Exception:
-                tables = []
+                continue
         fixed = []
         for t in tables:
             t = _flatten_columns(t)
             t = _promote_header_row_if_needed(t)
-            t.columns = [str(c).strip() for c in t.columns]
-            if any(re.search(r"(馬名|^馬$)", c) for c in t.columns):
+            # 馬名列を含むものだけ採用
+            if any(("馬名" in _col_norm(c)) or re.fullmatch(r"馬", _col_norm(c)) for c in t.columns):
                 fixed.append(t.reset_index(drop=True))
         return fixed
 
@@ -1189,6 +1198,7 @@ with tab_pedi:
     points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
 
     dfs = _read_pedigree_tables(html_text) if html_text.strip() else []
+    st.caption(f"検出テーブル: {len(dfs)}件" + (f" / 例: {', '.join(dfs[0].columns[:8])}" if dfs else ""))
 
     if dfs:
         idx = st.selectbox(
@@ -1199,9 +1209,10 @@ with tab_pedi:
         dfp = dfs[idx]
 
         # 馬名列と候補列
-        name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", c)]
-        name_col = st.selectbox("馬名列", options=dfp.columns.tolist(),
-                                index=dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0)
+        name_candidates = [c for c in dfp.columns if ("馬名" in _col_norm(c)) or re.fullmatch(r"馬", _col_norm(c))]
+        # セーフティ：候補が無い場合でも選べるように0番目に退避
+        default_name_idx = dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0
+        name_col = st.selectbox("馬名列", options=dfp.columns.tolist(), index=default_name_idx)
 
         known = ["父タイプ名","父名","母父タイプ名","母父名","父系","母父系","父","母父"]
         candidate_cols = [c for c in known if c in dfp.columns] or [c for c in dfp.columns if c != name_col]
@@ -1215,7 +1226,7 @@ with tab_pedi:
 
         def _norm(s: str) -> str:
             s = str(s)
-            s = s.translate(_fwid).replace('\u3000', ' ').strip()
+            s = s.translate(_fwid).replace('\u3000', ' ').replace('\xa0', ' ').strip()
             return re.sub(r'\s+', '', s)
 
         keys = [k for k in (keys_text.splitlines() if keys_text else []) if k.strip()]
@@ -1257,3 +1268,4 @@ with tab_pedi:
 
     else:
         st.info("馬名列を含むテーブルが見つからないか、HTMLが未入力です。先にHTMLを貼り付けるかアップロードしてください。")
+
