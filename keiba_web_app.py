@@ -303,12 +303,11 @@ with st.sidebar.expander("🛠 詳細（補正/脚質/ペース）", expanded=Fa
 
 # === NEW: 回り（右/左）設定セクション（自動判定＋手動上書き） ===
 with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
-    turn_gain    = st.slider("回り適性 係数（FinalRawへ加点）", 0.0, 3.0, 1.0, 0.1)
-    turn_gap_thr = st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
+    TARGET_TURN = st.radio("本レースの回り", ["右","左"], index=0, horizontal=True)
+    turn_gain   = st.slider("回り適性 係数（FinalRawへ加点）", 0.0, 3.0, 1.0, 0.1)
+    turn_gap_thr= st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
-    turn_table_file = st.file_uploader("右/左テーブル（CSV/Excel）", type=["csv","xlsx"], key="turn_table_up")
-    turn_mode = st.radio("本レースの回り", ["自動判定","右を指定","左を指定"], index=0, horizontal=True)
-    st.caption("列例：『場名,回り』 or 『競走名,回り,正規表現(True/False)』／回りは『右』『左』")
+    st.caption("※ ファイルアップロード不要。場名（例: 新潟=左/東京=左/中山=右 など）の既定表と、競走名に含まれる場名キーワードから自動推定します。")
 
 with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
     mc_iters   = st.slider("勝率MC 反復回数", 1000, 100000, 20000, 1000)
@@ -760,18 +759,9 @@ df_score['_days_ago'] = (now - df_score['レース日']).dt.days
 df_score['_w'] = 0.5 ** (df_score['_days_ago'] / (half_life_m * 30.4375)) if half_life_m > 0 else 1.0
 
 # ===== 右/左テーブルの読込（サイドバーで選んだファイル）＋ 今走の回り 自動判定 =====
+# 外部ファイルは使わない：既定の場名→回りと競走名からの推定のみで付与
 turn_df = None
-turn_detected, turn_reason = None, "—"
-if turn_table_file is not None:
-    try:
-        if turn_table_file.name.lower().endswith(".csv"):
-            turn_df = pd.read_csv(turn_table_file)
-        else:
-            turn_df = pd.read_excel(turn_table_file)
-        turn_df = _normalize_turn_table(turn_df)
-    except Exception as e:
-        st.warning(f"右/左テーブルの読込みに失敗: {e}")
-        turn_df = None
+df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_venue_map)
 
 # 今走の回り（自動 or 手動）
 if 'turn_mode' in locals() and turn_mode == "自動判定":
