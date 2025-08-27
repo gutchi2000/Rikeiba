@@ -1,5 +1,5 @@
 # keiba_web_app_fix.py
-# サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備 + 右/左回り実装版
+# サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備 + 右/左回り 自動判定&加点版
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -199,6 +199,49 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
             df.loc[mask, '回り'] = trn
     return df
 
+def _auto_current_turn(sheet1_df: pd.DataFrame,
+                       turn_df: pd.DataFrame | None,
+                       use_default: bool=True) -> tuple[str | None, str]:
+    """sheet1の『場所/場名/競馬場/開催/コース』or『レース名/競走名/名称』から今走の回りを推定。"""
+    place_col = next((c for c in sheet1_df.columns if re.search(r"(場所|場名|競馬場|開催|コース)", str(c))), None)
+    race_col  = next((c for c in sheet1_df.columns if re.search(r"(レース名|競走名|名称)", str(c))), None)
+    place = str(sheet1_df[place_col].dropna().iloc[0]).strip() if place_col else None
+    racename = str(sheet1_df[race_col].dropna().iloc[0]).strip() if race_col else None
+
+    # 1) マスタの『競走名』で上書き（最優先）
+    if turn_df is not None and '競走名' in turn_df.columns and racename:
+        for _, row in turn_df.dropna(subset=['競走名']).iterrows():
+            pat = str(row['競走名']).strip()
+            if not pat: 
+                continue
+            is_re = bool(row.get('正規表現', False))
+            hit = (re.search(pat, racename) is not None) if is_re else (pat in racename)
+            if hit:
+                trn = str(row['回り']).strip()[:1]
+                if trn in ('右','左'):
+                    return trn, f"turn_table: 競走名マッチ[{pat}]"
+    # 2) マスタの『場名』
+    if turn_df is not None and '場名' in turn_df.columns and place:
+        hit = turn_df.loc[turn_df['場名'].astype(str).str.strip()==place, '回り']
+        if not hit.empty:
+            trn = str(hit.iloc[0]).strip()[:1]
+            if trn in ('右','左'):
+                return trn, f"turn_table: 場名[{place}]"
+    # 3) 既定（JRA標準の場名→回り）
+    if use_default and place in DEFAULT_VENUE_TURN:
+        return DEFAULT_VENUE_TURN[place], f"JRA既定: 場所[{place}]"
+    # 4) レース名から場名を推測
+    if racename:
+        v = _infer_venue_from_racename(racename)
+        if v:
+            if turn_df is not None and '場名' in turn_df.columns and (turn_df['場名'].astype(str).str.strip()==v).any():
+                trn = str(turn_df.loc[turn_df['場名'].astype(str).str.strip()==v, '回り'].iloc[0]).strip()[:1]
+                if trn in ('右','左'):
+                    return trn, f"レース名→場名[{v}]→turn_table"
+            if use_default and v in DEFAULT_VENUE_TURN:
+                return DEFAULT_VENUE_TURN[v], f"レース名→場名[{v}]→JRA既定"
+    return None, "判定不可"
+
 # ======================== サイドバー（タブなし・互換第一） ========================
 st.sidebar.title("⚙️ パラメタ設定")
 
@@ -258,13 +301,13 @@ with st.sidebar.expander("🛠 詳細（補正/脚質/ペース）", expanded=Fa
         thr_mid   = st.slider("閾値: ミドル ≥",    0.10, 0.99, 0.30, 0.01)
         thr_slow  = st.slider("閾値: ややスロー ≥",0.00, 0.98, 0.18, 0.01)
 
-# === NEW: 回り（右/左）設定セクション ===
+# === NEW: 回り（右/左）設定セクション（自動判定＋手動上書き） ===
 with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
-    TARGET_TURN = st.radio("本レースの回り", ["右","左"], index=0, horizontal=True)
-    turn_gain   = st.slider("回り適性 係数（FinalRawへ加点）", 0.0, 3.0, 1.0, 0.1)
-    turn_gap_thr= st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
+    turn_gain    = st.slider("回り適性 係数（FinalRawへ加点）", 0.0, 3.0, 1.0, 0.1)
+    turn_gap_thr = st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
     turn_table_file = st.file_uploader("右/左テーブル（CSV/Excel）", type=["csv","xlsx"], key="turn_table_up")
+    turn_mode = st.radio("本レースの回り", ["自動判定","右を指定","左を指定"], index=0, horizontal=True)
     st.caption("列例：『場名,回り』 or 『競走名,回り,正規表現(True/False)』／回りは『右』『左』")
 
 with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
@@ -392,6 +435,8 @@ PAT_S0 = {
     '距離'         : [r'距離'],
     '馬場'         : [r'馬場|馬場状態'],
     '天候'         : [r'天候'],
+    # 任意：場名があれば優先利用（なくてもOK）
+    '場名'         : [r'場名|場所|競馬場|開催|コース'],
 }
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
 MAP_S0 = _interactive_map(sheet0, PAT_S0, REQ_S0, "sheet0（過去走）", "s0", show_ui=False)
@@ -437,6 +482,8 @@ PAT_S1 = {
     '連対率' : [r'連対率|連対'],
     '複勝率' : [r'複勝率|複勝'],
     'ベストタイム': [r'ベスト.*タイム|Best.*Time|ﾍﾞｽﾄ.*ﾀｲﾑ|タイム.*(最速|ベスト)'],
+    # ※ 自動判定で使用する可能性あり（任意）
+    # '場名'や'レース名'がsheet1にある場合は自動で拾う（UIマッピング不要）
 }
 REQ_S1 = ['馬名','枠','番','性別','年齢']
 MAP_S1 = _interactive_map(sheet1, PAT_S1, REQ_S1, "sheet1（出走表）", "s1", show_ui=False)
@@ -712,8 +759,9 @@ now = pd.Timestamp.today()
 df_score['_days_ago'] = (now - df_score['レース日']).dt.days
 df_score['_w'] = 0.5 ** (df_score['_days_ago'] / (half_life_m * 30.4375)) if half_life_m > 0 else 1.0
 
-# ===== NEW: 右/左回り 適性の集計（df_scoreに回り列を付与→加重平均） =====
+# ===== 右/左テーブルの読込（サイドバーで選んだファイル）＋ 今走の回り 自動判定 =====
 turn_df = None
+turn_detected, turn_reason = None, "—"
 if turn_table_file is not None:
     try:
         if turn_table_file.name.lower().endswith(".csv"):
@@ -725,6 +773,14 @@ if turn_table_file is not None:
         st.warning(f"右/左テーブルの読込みに失敗: {e}")
         turn_df = None
 
+# 今走の回り（自動 or 手動）
+if 'turn_mode' in locals() and turn_mode == "自動判定":
+    turn_detected, turn_reason = _auto_current_turn(sheet1, turn_df, use_default_venue_map)
+    TARGET_TURN = turn_detected or "右"
+else:
+    TARGET_TURN = "右" if turn_mode == "右を指定" else "左"  # 手動
+
+# ===== NEW: 右/左回り 適性の集計（df_scoreに回り列を付与→加重平均） =====
 df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_venue_map)
 
 g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
@@ -1002,19 +1058,22 @@ tab_dash, tab_prob, tab_pace, tab_bets, tab_all, tab_pedi = st.tabs(
 
 with tab_dash:
     st.subheader("サマリー")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("想定ペース", locals().get("pace_type","—"))
     c2.metric("出走頭数", len(horses))
+    c3.metric("本レース回り", f"{TARGET_TURN}")
     if len(topN) > 0:
-        c3.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
+        c4.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
         try:
             win_pct = float(df_agg.loc[df_agg['馬名']==topN.iloc[0]['馬名'],'勝率%_MC'].iloc[0])
-            c4.metric("◎ 推定勝率", f"{win_pct:.1f}%")
+            c5.metric("◎ 推定勝率", f"{win_pct:.1f}%")
         except Exception:
-            c4.metric("◎ 推定勝率", "—")
+            c5.metric("◎ 推定勝率", "—")
+    if 'turn_mode' in locals() and turn_mode == "自動判定":
+        st.caption(f"回りの自動判定：{TARGET_TURN}（{turn_reason}）")
     st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
-    _top = topN.merge(df_agg[['馬名','勝率%_MC']], on='馬名', how='left') if '勝率%_MC' not in topN else topN
-    show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','TurnPref'] if c in _top.columns]
+    _top = topN.merge(df_agg[['馬名','勝率%_MC','TurnPref']], on='馬名', how='left') if '勝率%_MC' not in topN or 'TurnPref' not in topN else topN
+    show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC'] if c in _top.columns]
     st.dataframe(_top[show_cols], use_container_width=True, height=220)
 
 with tab_prob:
@@ -1286,9 +1345,6 @@ with tab_pedi:
 
     # --- NetKeiba URL → 血統テーブルURL補正 ----------------------
     def _to_pedigree_url(u: str) -> str:
-        """
-        bias.html や shutuba.html が貼られても pedigree.html に付け替える。
-        """
         m_id = re.search(r"race_id=(\d{12})", u)
         if m_id and "pedigree" not in u:
             return f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
@@ -1296,9 +1352,6 @@ with tab_pedi:
 
     # --- URL取得（失敗しても安全に戻す） ------------------------
     def _fetch_url_html(u: str) -> tuple[str, str | None]:
-        """
-        returns: (html_text, error_msg)
-        """
         try:
             import requests
             used = _to_pedigree_url(u)
