@@ -172,16 +172,18 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
                            use_default: bool=True) -> pd.DataFrame:
     """df_score に列『回り』を付与して返す。turn_df は『場名/競走名→回り』の追加定義。"""
     df = df_score.copy()
+
     # 1) 場名の推定（sheet0に場名がなければ競走名から推定）
-if '場名' in df.columns:
-    # 「新潟 芝1800」「東京競馬場」などでも '新潟' / '東京' を抽出
-    df['_場名推定'] = df['場名'].astype(str).apply(_infer_venue_from_racename)
-else:
-    df['_場名推定'] = df['競走名'].astype(str).apply(_infer_venue_from_racename)
+    if '場名' in df.columns:
+        # 「新潟 芝1800」「東京競馬場」などでも '新潟' / '東京' を抽出
+        df['_場名推定'] = df['場名'].astype(str).apply(_infer_venue_from_racename)
+    else:
+        df['_場名推定'] = df['競走名'].astype(str).apply(_infer_venue_from_racename)
 
     # 2) 場名→回り
     venue_map = {}
-    if use_default: venue_map.update(DEFAULT_VENUE_TURN)
+    if use_default:
+        venue_map.update(DEFAULT_VENUE_TURN)
     if turn_df is not None and '場名' in turn_df.columns:
         for v, t in turn_df[['場名','回り']].dropna().values:
             if str(v).strip():
@@ -195,10 +197,14 @@ else:
             pat = str(row['競走名']).strip()
             trn = row['回り']
             is_re = bool(row.get('正規表現', False))
-            mask = df['競走名'].astype(str).str.contains(pat, regex=is_re, na=False) if is_re \
-                   else df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False)
+            mask = (
+                df['競走名'].astype(str).str.contains(pat, regex=is_re, na=False)
+                if is_re else
+                df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False)
+            )
             df.loc[mask, '回り'] = trn
     return df
+
 
 # ======================== サイドバー（タブなし・互換第一） ========================
 st.sidebar.title("⚙️ パラメタ設定")
@@ -755,12 +761,16 @@ cnts = (
          .rename(columns={'右':'nR','左':'nL'})
 ) if not g_turn.empty else pd.DataFrame()
 
-turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
-for c in ['RightZ','LeftZ','nR','nL']:
-    if len(turn_pref) > 0:
-    turn_pref['馬名'] = turn_pref['馬名'].map(_trim_name)  # ★追加
+turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() \
+    if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
 
-    if c not in turn_pref.columns: turn_pref[c] = np.nan
+# ★ここを for の外に出す
+if len(turn_pref) > 0:
+    turn_pref['馬名'] = turn_pref['馬名'].map(_trim_name)
+
+for c in ['RightZ','LeftZ','nR','nL']:
+    if c not in turn_pref.columns:
+        turn_pref[c] = np.nan
 
 def _pref_label(row):
     R, L = row['RightZ'], row['LeftZ']
