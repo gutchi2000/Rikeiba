@@ -1,5 +1,5 @@
 # keiba_web_app_fix.py
-# サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備の即動版
+# サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備 + 右/左回り実装版
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -134,6 +134,71 @@ def validate_inputs(df_score: pd.DataFrame, horses: pd.DataFrame):
             problems.append("sheet0 通過4角が頭数レンジ外")
     if problems: st.warning("⚠ 入力チェック：\n- " + "\n- ".join(problems))
 
+# ===== 右/左回りユーティリティ =====
+DEFAULT_VENUE_TURN = {
+    '札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左',
+    '中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'
+}
+
+def _normalize_turn_table(df: pd.DataFrame) -> pd.DataFrame:
+    cols = { '場名':None, '競走名':None, '回り':None, '正規表現':None }
+    for c in df.columns:
+        s = str(c).strip()
+        if s in ['場名','競馬場','コース','開催','開催場']: cols['場名']=c
+        if s in ['競走名','レース名','名称']:              cols['競走名']=c
+        if s in ['回り','右左','向き']:                    cols['回り']=c
+        if s.lower() in ['regex','正規表現','正規表現?']:   cols['正規表現']=c
+    out = pd.DataFrame()
+    if cols['場名'] is not None:    out['場名'] = df[cols['場名']].astype(str).str.strip()
+    if cols['競走名'] is not None:  out['競走名'] = df[cols['競走名']].astype(str).str.strip()
+    if cols['回り'] is not None:
+        out['回り'] = (df[cols['回り']].astype(str)
+                       .str.replace('回り','').str.replace('周り','').str.strip().str[:1])
+    else:
+        out['回り'] = None
+    out['正規表現'] = (df[cols['正規表現']] if cols['正規表現'] is not None else False).astype(bool)
+    out = out[(out['回り'].isin(['右','左']))]
+    return out
+
+def _infer_venue_from_racename(name: str) -> str | None:
+    s = str(name)
+    for v in DEFAULT_VENUE_TURN.keys():
+        if v in s:
+            return v
+    return None
+
+def _attach_turn_to_scores(df_score: pd.DataFrame,
+                           turn_df: pd.DataFrame | None,
+                           use_default: bool=True) -> pd.DataFrame:
+    """df_score に列『回り』を付与して返す。turn_df は『場名/競走名→回り』の追加定義。"""
+    df = df_score.copy()
+    # 1) 場名の推定（sheet0に場名がなければ競走名から推定）
+    if '場名' in df.columns:
+        df['_場名推定'] = df['場名'].astype(str)
+    else:
+        df['_場名推定'] = df['競走名'].map(_infer_venue_from_racename)
+
+    # 2) 場名→回り
+    venue_map = {}
+    if use_default: venue_map.update(DEFAULT_VENUE_TURN)
+    if turn_df is not None and '場名' in turn_df.columns:
+        for v, t in turn_df[['場名','回り']].dropna().values:
+            if str(v).strip():
+                venue_map[str(v).strip()] = t
+    df['回り'] = df['_場名推定'].map(venue_map)
+
+    # 3) 競走名→回り（上書き可）
+    if turn_df is not None and '競走名' in turn_df.columns:
+        patt = turn_df.dropna(subset=['競走名'])
+        for _, row in patt.iterrows():
+            pat = str(row['競走名']).strip()
+            trn = row['回り']
+            is_re = bool(row.get('正規表現', False))
+            mask = df['競走名'].astype(str).str.contains(pat, regex=is_re, na=False) if is_re \
+                   else df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False)
+            df.loc[mask, '回り'] = trn
+    return df
+
 # ======================== サイドバー（タブなし・互換第一） ========================
 st.sidebar.title("⚙️ パラメタ設定")
 
@@ -192,6 +257,15 @@ with st.sidebar.expander("🛠 詳細（補正/脚質/ペース）", expanded=Fa
         thr_hi    = st.slider("閾値: ハイペース ≥", 0.30, 1.00, 0.52, 0.01)
         thr_mid   = st.slider("閾値: ミドル ≥",    0.10, 0.99, 0.30, 0.01)
         thr_slow  = st.slider("閾値: ややスロー ≥",0.00, 0.98, 0.18, 0.01)
+
+# === NEW: 回り（右/左）設定セクション ===
+with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
+    TARGET_TURN = st.radio("本レースの回り", ["右","左"], index=0, horizontal=True)
+    turn_gain   = st.slider("回り適性 係数（FinalRawへ加点）", 0.0, 3.0, 1.0, 0.1)
+    turn_gap_thr= st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
+    use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
+    turn_table_file = st.file_uploader("右/左テーブル（CSV/Excel）", type=["csv","xlsx"], key="turn_table_up")
+    st.caption("列例：『場名,回り』 or 『競走名,回り,正規表現(True/False)』／回りは『右』『左』")
 
 with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
     mc_iters   = st.slider("勝率MC 反復回数", 1000, 100000, 20000, 1000)
@@ -638,6 +712,67 @@ now = pd.Timestamp.today()
 df_score['_days_ago'] = (now - df_score['レース日']).dt.days
 df_score['_w'] = 0.5 ** (df_score['_days_ago'] / (half_life_m * 30.4375)) if half_life_m > 0 else 1.0
 
+# ===== NEW: 右/左回り 適性の集計（df_scoreに回り列を付与→加重平均） =====
+turn_df = None
+if turn_table_file is not None:
+    try:
+        if turn_table_file.name.lower().endswith(".csv"):
+            turn_df = pd.read_csv(turn_table_file)
+        else:
+            turn_df = pd.read_excel(turn_table_file)
+        turn_df = _normalize_turn_table(turn_df)
+    except Exception as e:
+        st.warning(f"右/左テーブルの読込みに失敗: {e}")
+        turn_df = None
+
+df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_venue_map)
+
+g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
+def _wavg_row(s): return (s['score_norm']*s['_w']).sum()/s['_w'].sum() if s['_w'].sum()>0 else np.nan
+right = g_turn[g_turn['回り']=='右'].groupby('馬名').apply(_wavg_row).rename('RightZ') if not g_turn.empty else pd.Series(dtype=float)
+left  = g_turn[g_turn['回り']=='左'].groupby('馬名').apply(_wavg_row).rename('LeftZ') if not g_turn.empty else pd.Series(dtype=float)
+cnts  = (g_turn.pivot_table(index='馬名', columns='回り', values='score_norm', aggfunc='count')
+         .rename(columns={'右':'nR','左':'nL'}) if not g_turn.empty else pd.DataFrame())
+
+turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
+for c in ['RightZ','LeftZ','nR','nL']:
+    if c not in turn_pref.columns: turn_pref[c] = np.nan
+
+def _pref_label(row):
+    R, L = row['RightZ'], row['LeftZ']
+    nR, nL = row['nR'], row['nL']
+    if pd.notna(R) and pd.notna(L):
+        if (R - L) >= turn_gap_thr: return '右'
+        if (L - R) >= turn_gap_thr: return '左'
+        return '中立'
+    if pd.notna(R) and (nR >= 1): return '右?'
+    if pd.notna(L) and (nL >= 1): return '左?'
+    return '不明'
+
+turn_pref['TurnPref'] = turn_pref.apply(_pref_label, axis=1) if len(turn_pref)>0 else []
+turn_pref['TurnGap']  = (turn_pref['RightZ'].fillna(0) - turn_pref['LeftZ'].fillna(0)) if len(turn_pref)>0 else []
+
+def _pref_pts(row):
+    lab = str(row['TurnPref'])
+    if TARGET_TURN == '右':
+        if lab == '右':  return 1.0
+        if lab == '左':  return -1.0
+        if lab == '右?': return 0.5
+        if lab == '左?': return -0.5
+        return 0.0
+    else:
+        if lab == '左':  return 1.0
+        if lab == '右':  return -1.0
+        if lab == '左?': return 0.5
+        if lab == '右?': return -0.5
+        return 0.0
+
+if len(turn_pref)>0:
+    turn_pref['TurnPrefPts'] = turn_pref.apply(_pref_pts, axis=1)
+else:
+    turn_pref['TurnPrefPts'] = []
+
+# ===== 馬ごとの集計 =====
 def w_mean(x, w):
     x = np.asarray(x, dtype=float); w = np.asarray(w, dtype=float)
     s = w.sum()
@@ -740,10 +875,28 @@ if pace_mode == "固定（手動）":
     v_pts = np.array([mark_to_pts[ mark_rule[pace_type][st] ] for st in STYLES], dtype=float)
     df_agg['PacePts'] = (P @ v_pts)
 
+# ===== NEW: 回り適性を df_agg へマージ =====
+if len(turn_pref)>0:
+    df_agg = df_agg.merge(
+        turn_pref[['馬名','RightZ','LeftZ','nR','nL','TurnGap','TurnPref','TurnPrefPts']],
+        on='馬名', how='left'
+    )
+else:
+    for c in ['RightZ','LeftZ','nR','nL','TurnGap','TurnPref','TurnPrefPts']:
+        df_agg[c] = np.nan
+    df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
+
+df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
+
 # ===== 最終スコア & 勝率MC =====
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'])
-df_agg['FinalRaw'] = df_agg['RecencyZ'] + stab_weight * df_agg['StabZ'] + pace_gain * df_agg['PacePts']
+df_agg['FinalRaw'] = (
+    df_agg['RecencyZ']
+    + stab_weight * df_agg['StabZ']
+    + pace_gain * df_agg['PacePts']
+    + turn_gain * df_agg['TurnPrefPts']   # ← 回り適性を反映
+)
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
 
 # 勝率MC
@@ -799,7 +952,7 @@ if ALT_AVAILABLE and len(df_agg)>0:
     points = alt.Chart(df_agg).mark_circle(size=100).encode(
         x=alt.X('FinalZ:Q', title='最終偏差値'),
         y=alt.Y('WStd:Q',  title='加重標準偏差（小さいほど安定）', scale=alt.Scale(domain=(float(y_lo), float(y_hi)))),
-        tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts','FinalZ','勝率%_MC']
+        tooltip=['馬名','WAvgZ','WStd','RecencyZ','StabZ','PacePts','TurnPref','FinalZ','勝率%_MC']
     )
     labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='#ffffff').encode(
         x='FinalZ:Q', y='WStd:Q', text='馬名:N'
@@ -861,13 +1014,13 @@ with tab_dash:
             c4.metric("◎ 推定勝率", "—")
     st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
     _top = topN.merge(df_agg[['馬名','勝率%_MC']], on='馬名', how='left') if '勝率%_MC' not in topN else topN
-    show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC'] if c in _top.columns]
+    show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','TurnPref'] if c in _top.columns]
     st.dataframe(_top[show_cols], use_container_width=True, height=220)
 
 with tab_prob:
     st.subheader("推定勝率・複勝率（モンテカルロ）")
     prob_view = (
-        df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','勝率%_MC','複勝率%_MC']]
+        df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC','複勝率%_MC']]
         .sort_values('勝率%_MC', ascending=False).reset_index(drop=True)
     )
     _pv = prob_view.copy()
@@ -937,6 +1090,15 @@ with tab_pace:
             st.info("馬番または脚質が未入力のため、配置図は省略しました。上の表は有効です。")
     else:
         st.info("出走表に『番』列が見つからないため、配置図は省略しました。列マッピングをご確認ください。")
+
+    # --- NEW: 回り適性サマリー ---
+    st.markdown("#### 回り適性サマリー（時間加重の過去走スコアで推定）")
+    if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
+        tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
+        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
+        st.dataframe(tv, use_container_width=True, height=260)
+    else:
+        st.info("回り適性を算出できるデータが不足しています。右/左テーブルや場名の設定をご確認ください。")
 
 with tab_bets:
     h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
@@ -1081,8 +1243,9 @@ with tab_bets:
 with tab_all:
     st.subheader("全頭AI診断コメント")
     q = st.text_input("馬名フィルタ（部分一致）", "")
-    show_cols = [c for c in ['馬名','印','脚質','短評','WAvgZ','WStd'] if c in horses2.columns]
-    _all = horses2[show_cols].copy()
+    show_cols = [c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref'] if c in horses2.columns or c in df_agg.columns]
+    _all = horses2.merge(df_agg[['馬名','TurnPref']], on='馬名', how='left') if 'TurnPref' in df_agg.columns else horses2.copy()
+    _all = _all[[c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref'] if c in _all.columns]]
     if q.strip():
         _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
     if _all.empty:
