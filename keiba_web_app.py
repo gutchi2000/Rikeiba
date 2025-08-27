@@ -1093,11 +1093,11 @@ with tab_all:
 # ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
 with tab_pedi:
     st.subheader("血統HTMLビューア + ボーナス付与")
-    st.caption("NetKeiba等の血統ページHTMLを表示し、キーワードに一致した馬へボーナスを付与します。")
+    st.caption("NetKeiba等の血統ページHTMLを表示/解析し、キーワード一致の馬へボーナスを付与します。URLでもOK。")
 
-    m = st.radio("入力方法", ["テキスト貼り付け", "HTMLファイルをアップロード"], horizontal=True)
+    m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
 
-    # --- 文字コード検出 & デコード ------------------------------
+    # --- 文字コード検出 & デコード（既存） ----------------------
     def _detect_charset_from_head(raw: bytes) -> str | None:
         if raw.startswith(b"\xef\xbb\xbf"): return "utf-8-sig"
         if raw.startswith(b"\xff\xfe"):     return "utf-16-le"
@@ -1106,7 +1106,6 @@ with tab_pedi:
         m1 = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head_txt, flags=re.I)
         return m1.group(1).lower() if m1 else None
 
-       # --- 文字コード検出 & デコード（既存） ---
     def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
         declared = _detect_charset_from_head(raw)
         cands = [c for c in [preferred, declared, "cp932","shift_jis","utf-8","utf-8-sig",
@@ -1122,122 +1121,132 @@ with tab_pedi:
                 continue
         return raw.decode("utf-8", errors="replace")
 
-    # ★ 追加：URL取得ユーティリティ
-    def _fetch_url_to_html(url: str) -> str:
+    # --- URL補正 & 取得ユーティリティ ----------------------------
+    def _to_pedigree_url(u: str) -> str:
+        m_id = re.search(r"race_id=(\d{12})", u)
+        if m_id and "pedigree" not in u:
+            return f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
+        return u
+
+    def _fetch_url_html(u: str) -> tuple[str, str, str | None]:
+        """returns: (html_text, used_url, error_msg)"""
+        used = _to_pedigree_url(u)
         try:
             import requests
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                              "(KHTML, like Gecko) Chrome Safari"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "Referer": "https://race.netkeiba.com/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             }
-            r = requests.get(url, headers=headers, timeout=12)
-            r.raise_for_status()
-            return _decode_html_bytes(r.content)
+            r = requests.get(used, headers=headers, timeout=15, allow_redirects=True)
+            if r.status_code == 200 and len(r.content) > 1000:
+                return _decode_html_bytes(r.content), used, None
+            return "", used, f"HTTP {r.status_code} / bytes={len(r.content)}"
         except Exception as e:
-            st.error(f"URLの取得に失敗しました: {e}")
-            return ""
+            return "", used, f"{type(e).__name__}: {e}"
 
-    html_text = ""
-    if m == "テキスト貼り付け":
-        html_txt = st.text_area("HTMLを貼り付け（またはURL）", height=220,
-                                placeholder="<html>...</html> または https://race.netkeiba.com/…")
-        src = html_txt.strip()
-        if re.match(r"^https?://", src):
-            # ★ bias 等を貼った場合は血統タブURLに自動補正
-            m_id = re.search(r"race_id=(\d{12})", src)
-            if m_id and "pedigree" not in src:
-                src = f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
-                st.caption(f"血統タブURLに補正しました → {src}")
-            html_text = _fetch_url_to_html(src)
-        else:
-            # そのままHTML本文として扱う
-            html_text = src
-    else:
-        up = st.file_uploader("血統HTMLファイル", type=["html","htm"], key="pedi_html_up")
-        if up:
-            raw  = up.read()
-            html_text = _decode_html_bytes(raw)
-
-
-    # 表示（components が使える場合）
-    if html_text.strip() and COMPONENTS:
-        components.html(html_text, height=700, scrolling=True)
-    elif html_text.strip() and not COMPONENTS:
-        st.code(html_text[:8000], language="html")
-
-    # ========= 列名正規化ユーティリティ =========
-    def _col_norm(s: str) -> str:
-        s = str(s).replace('\u3000', ' ').replace('\xa0', ' ').strip()
-        s = s.translate(_fwid)                 # 全角→半角（数字/％）
-        return re.sub(r'\s+', '', s)           # すべての空白を除去
-
-    # ========= 表抽出（強化版：MultiIndex→平坦化／ヘッダ昇格／html5lib） =========
+    # --- 表の前処理 ----------------------------------------------
     def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
-            cols = []
-            for i, tup in enumerate(df.columns):
-                parts = [str(c) for c in tup if "Unnamed" not in str(c)]
-                lab = _col_norm("".join(parts)) or f"col{i}"
-                cols.append(lab)
-            df.columns = cols
+            df.columns = [
+                "".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
+                for tup in df.columns
+            ]
         else:
-            df.columns = [_col_norm(c) for c in df.columns]
+            df.columns = [str(c).strip() for c in df.columns]
         return df
 
     def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
-        # 既に「馬名」を含むならOK（正規化後で判定）
-        if any("馬名" in _col_norm(c) or re.fullmatch(r"馬", _col_norm(c)) for c in df.columns):
+        cols = [str(c) for c in df.columns]
+        if any(re.search("馬名", c) for c in cols):
             return df
-        # 先頭〜8行をヘッダ候補としてスキャン
-        up_to = min(8, len(df))
-        for i in range(up_to):
-            row = df.iloc[i].astype(str).map(_col_norm)
-            if row.str.contains("馬名").any() or row.str.fullmatch("馬").any():
+        for i in range(min(6, len(df))):
+            row = df.iloc[i].astype(str)
+            if row.str.contains("馬名").any():
+                new_cols = row.str.replace(r"\s+", "", regex=True).tolist()
                 df = df.iloc[i+1:].copy()
-                df.columns = row.tolist()
-                return df
+                df.columns = new_cols
+                break
         return df
 
-    def _read_pedigree_tables(html_text: str):
-        tables = []
-        for flv in ['lxml', 'bs4', 'html5lib']:  # ← ここで最大限粘る
+    def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
+        try:
+            tables = pd.read_html(html_text, flavor="lxml")
+        except Exception:
             try:
-                tables = pd.read_html(html_text, flavor=flv)
-                if tables:
-                    break
+                tables = pd.read_html(html_text, flavor="bs4")
             except Exception:
-                continue
+                tables = []
         fixed = []
         for t in tables:
             t = _flatten_columns(t)
             t = _promote_header_row_if_needed(t)
-            # 馬名列を含むものだけ採用
-            if any(("馬名" in _col_norm(c)) or re.fullmatch(r"馬", _col_norm(c)) for c in t.columns):
+            if any(re.search(r"(馬名|^馬$)", c) for c in t.columns):
                 fixed.append(t.reset_index(drop=True))
         return fixed
 
-    # ========= キーワード → 馬へのボーナス付与設定 =========
-    st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
+    # ===== 入力（HTML/URL/ファイル） =====
+    html_text = ""
+    src_url = None
+    if m == "テキスト貼り付け（HTML/URL）":
+        src = st.text_area("HTML本文 もしくは URL を貼り付け", height=220,
+                           placeholder="<html>...</html> または https://race.netkeiba.com/…").strip()
+        if src:
+            if re.match(r"^https?://", src):
+                src_url = src
+                html_text, used_url, err = _fetch_url_html(src)
+                if err:
+                    st.warning(f"URLからの取得に失敗：{err}")
+                    st.caption(f"試行URL：{used_url}")
+            else:
+                html_text = src
+    else:
+        up = st.file_uploader("血統HTMLファイル（保存済みの .html / .htm）", type=["html","htm"], key="pedi_html_up")
+        if up:
+            html_text = _decode_html_bytes(up.read())
 
+    # ===== 表示（あれば埋め込み） =====
+    if html_text.strip() and COMPONENTS:
+        components.html(html_text, height=700, scrolling=True)
+    elif html_text.strip() and not COMPONENTS:
+        st.code(html_text[:4000], language="html")
+
+    # ===== テーブル抽出（1) HTML から / 2) URL から直接） =====
+    dfs = _extract_pedi_tables_from_html(html_text) if html_text.strip() else []
+    # URLがあり、HTML抽出で取れなかった場合は URL から直接テーブルだけ読む
+    if not dfs and src_url:
+        try:
+            used = _to_pedigree_url(src_url)
+            raw_tables = pd.read_html(used)  # 直接テーブル抽出
+            dfs = []
+            for t in raw_tables:
+                t = _flatten_columns(t)
+                t = _promote_header_row_if_needed(t)
+                if any(re.search(r"(馬名|^馬$)", c) for c in t.columns):
+                    dfs.append(t.reset_index(drop=True))
+            if dfs:
+                st.info("ページのHTML埋め込みはできませんでしたが、URLからテーブルの抽出には成功しました。")
+        except Exception as e:
+            st.error(f"URLからのテーブル抽出にも失敗しました: {e}")
+
+    # ====== ここから下は「キーワード一致→ボーナス付与」（既存ロジック） ======
+    st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
     default_pts = int(st.session_state.get('pedi:points', 3))
     points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
-
-    dfs = _read_pedigree_tables(html_text) if html_text.strip() else []
-    st.caption(f"検出テーブル: {len(dfs)}件" + (f" / 例: {', '.join(dfs[0].columns[:8])}" if dfs else ""))
 
     if dfs:
         idx = st.selectbox(
             "対象テーブルを選択",
             options=list(range(len(dfs))),
-            format_func=lambda i: f"Table {i+1}（列: {', '.join(dfs[i].columns[:6])} …）"
+            format_func=lambda i: f"Table {i+1}（列: {', '.join(map(str, dfs[i].columns[:6]))} …）"
         )
         dfp = dfs[idx]
 
         # 馬名列と候補列
-        name_candidates = [c for c in dfp.columns if ("馬名" in _col_norm(c)) or re.fullmatch(r"馬", _col_norm(c))]
-        # セーフティ：候補が無い場合でも選べるように0番目に退避
-        default_name_idx = dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0
-        name_col = st.selectbox("馬名列", options=dfp.columns.tolist(), index=default_name_idx)
+        name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", str(c))]
+        name_col = st.selectbox("馬名列", options=dfp.columns.tolist(),
+                                index=dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0)
 
         known = ["父タイプ名","父名","母父タイプ名","母父名","父系","母父系","父","母父"]
         candidate_cols = [c for c in known if c in dfp.columns] or [c for c in dfp.columns if c != name_col]
@@ -1251,7 +1260,7 @@ with tab_pedi:
 
         def _norm(s: str) -> str:
             s = str(s)
-            s = s.translate(_fwid).replace('\u3000', ' ').replace('\xa0', ' ').strip()
+            s = s.translate(_fwid).replace('\u3000', ' ').strip()
             return re.sub(r'\s+', '', s)
 
         keys = [k for k in (keys_text.splitlines() if keys_text else []) if k.strip()]
@@ -1260,24 +1269,14 @@ with tab_pedi:
         matched_names = []
         if keys and match_cols:
             for _, row in dfp.iterrows():
-                try:
-                    nm = _trim_name(row[name_col])
-                except Exception:
-                    continue
+                nm = _trim_name(row.get(name_col, ""))
                 row_texts_norm = [_norm(row.get(c, "")) for c in match_cols]
-                hit = False
-                for k in keys_norm:
-                    if method == "完全一致":
-                        if any(r == k for r in row_texts_norm):
-                            hit = True; break
-                    else:
-                        if any(k in r for r in row_texts_norm):
-                            hit = True; break
-                if hit:
+                hit = any((r == k) for k in keys_norm for r in row_texts_norm) if method == "完全一致" \
+                      else any((k in r) for k in keys_norm for r in row_texts_norm)
+                if hit and nm:
                     matched_names.append(nm)
 
-        matched_map = { _trim_name(n): True for n in matched_names }
-        st.session_state['pedi:map'] = matched_map
+        st.session_state['pedi:map'] = { _trim_name(n): True for n in matched_names }
         st.session_state['pedi:points'] = int(points)
         st.session_state['pedi:keys'] = keys_text
 
@@ -1289,8 +1288,7 @@ with tab_pedi:
             else:
                 st.info("現在、一致はありません。キーワード/照合列/照合方法を調整してください。")
         with colR:
-            st.info(f"設定：ボーナス {points} 点 / 照合列 {', '.join(match_cols) if match_cols else '（未選択）'} / {method}")
-
+            st.info(f"設定：ボーナス {points} 点 / 照合列 {', '.join(map(str, match_cols)) if match_cols else '（未選択）'} / {method}")
     else:
-        st.info("馬名列を含むテーブルが見つからないか、HTMLが未入力です。先にHTMLを貼り付けるかアップロードしてください。")
+        st.info("馬名列を含むテーブルが見つかりません。URLが取れない場合は、ページを『完全保存』してアップロードしてください。")
 
