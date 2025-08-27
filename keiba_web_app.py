@@ -173,10 +173,11 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
     """df_score に列『回り』を付与して返す。turn_df は『場名/競走名→回り』の追加定義。"""
     df = df_score.copy()
     # 1) 場名の推定（sheet0に場名がなければ競走名から推定）
-    if '場名' in df.columns:
-        df['_場名推定'] = df['場名'].astype(str)
-    else:
-        df['_場名推定'] = df['競走名'].map(_infer_venue_from_racename)
+if '場名' in df.columns:
+    # 「新潟 芝1800」「東京競馬場」などでも '新潟' / '東京' を抽出
+    df['_場名推定'] = df['場名'].astype(str).apply(_infer_venue_from_racename)
+else:
+    df['_場名推定'] = df['競走名'].astype(str).apply(_infer_venue_from_racename)
 
     # 2) 場名→回り
     venue_map = {}
@@ -719,6 +720,8 @@ df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_ven
 
 # ===== 右/左回り 適性の集計（時間加重平均） =====
 g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
+g_turn['馬名'] = g_turn['馬名'].map(_trim_name)  # ★追加：全角スペース等を除去
+
 
 def _wavg_row(s: pd.DataFrame) -> float:
     sw = float(pd.to_numeric(s['_w'], errors='coerce').sum())
@@ -754,6 +757,9 @@ cnts = (
 
 turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
 for c in ['RightZ','LeftZ','nR','nL']:
+    if len(turn_pref) > 0:
+    turn_pref['馬名'] = turn_pref['馬名'].map(_trim_name)  # ★追加
+
     if c not in turn_pref.columns: turn_pref[c] = np.nan
 
 def _pref_label(row):
