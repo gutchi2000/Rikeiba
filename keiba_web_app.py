@@ -282,6 +282,14 @@ with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
     st.caption("※ ファイルアップロード不要。場名（例: 新潟=左/東京=左/中山=右 など）の既定表と、競走名に含まれる場名キーワードから自動推定します。")
 
+# === 便利リセット ===
+with st.sidebar.expander("🧹 トラブル時のリセット", expanded=False):
+    if st.button("列マッピングをリセット"):
+        for key in list(st.session_state.keys()):
+            if key.startswith("s0:") or key.startswith("map:s0:") or key.startswith("s1:") or key.startswith("map:s1:"):
+                del st.session_state[key]
+        st.success("列マッピングをリセットしました。Excelを再読み込みしてください。")
+
 with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
     mc_iters   = st.slider("勝率MC 反復回数", 1000, 100000, 20000, 1000)
     mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
@@ -359,34 +367,49 @@ def _auto_guess(col_map, pats):
             if re.search(p, normed, flags=re.I):
                 return orig
     return None
+
+# ★★★ 堅牢版：セッションに残った古い列名を無効化し、存在チェックを挟む
 def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=False):
     cols = list(df.columns)
     cmap = {c: _norm_col(c) for c in cols}
-    auto = {k: st.session_state.get(f"{state_key}:{k}") or _auto_guess(cmap, pats)
+
+    # まずはセッション or 自動推定
+    auto = {k: (st.session_state.get(f"{state_key}:{k}") or _auto_guess(cmap, pats))
             for k, pats in patterns.items()}
 
+    # ★ 現在のシートに存在しない列名は無効化
+    for k, v in list(auto.items()):
+        if v not in cols:
+            auto[k] = None
+
+    # UIを出さずに完了できるか（必須すべてOKかつ存在済み）
     if not show_ui:
         missing = [k for k in required_keys if not auto.get(k)]
         if not missing:
             for k, v in auto.items():
-                if v: st.session_state[f"{state_key}:{k}"] = v
+                if v:
+                    st.session_state[f"{state_key}:{k}"] = v
             return auto
         else:
             st.warning(f"{title} の必須列が自動認識できませんでした: " + ", ".join(missing))
             show_ui = True
 
+    # 手動マッピングUI
     with st.expander(f"列マッピング：{title}", expanded=True):
         mapping = {}
         for key, pats in patterns.items():
             default = st.session_state.get(f"{state_key}:{key}") or auto.get(key)
-            mapping[key] = st.selectbox(
-                key, options=['<未選択>'] + cols,
-                index=(['<未選択>']+cols).index(default) if default in cols else 0,
-                key=f"map:{state_key}:{key}")
+            options = ['<未選択>'] + cols
+            idx = options.index(default) if (default in cols) else 0
+            mapping[key] = st.selectbox(key, options=options, index=idx, key=f"map:{state_key}:{key}")
             if mapping[key] != '<未選択>':
                 st.session_state[f"{state_key}:{key}"] = mapping[key]
+
+    # 必須が未選択なら止める
     missing = [k for k in required_keys if mapping.get(k) in (None, '<未選択>')]
-    if missing: st.stop()
+    if missing:
+        st.stop()
+
     return {k: (None if v=='<未選択>' else v) for k, v in mapping.items()}
 
 # ✅ Excel実態に合わせてパターン強化／修正
@@ -417,7 +440,8 @@ MAP_S0 = _interactive_map(sheet0, PAT_S0, REQ_S0, "sheet0（過去走）", "s0",
 
 df_score = pd.DataFrame()
 for k, col in MAP_S0.items():
-    if col is None: continue
+    if (col is None) or (col not in sheet0.columns):  # ★存在チェック
+        continue
     df_score[k] = sheet0[col]
 
 df_score['レース日'] = pd.to_datetime(df_score['レース日'], errors='coerce')
@@ -462,7 +486,8 @@ MAP_S1 = _interactive_map(sheet1, PAT_S1, REQ_S1, "sheet1（出走表）", "s1",
 
 attrs = pd.DataFrame()
 for k, col in MAP_S1.items():
-    if col is None: continue
+    if (col is None) or (col not in sheet1.columns):  # ★存在チェック
+        continue
     attrs[k] = sheet1[col]
 for c in ['枠','番','斤量','馬体重']:
     if c in attrs: attrs[c] = pd.to_numeric(attrs[c], errors='coerce')
