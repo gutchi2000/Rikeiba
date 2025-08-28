@@ -139,11 +139,7 @@ DEFAULT_VENUE_TURN = {
     '札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左',
     '中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'
 }
-# レース名の別名を場名に正規化（例：府中=東京、淀=京都 など）
-VENUE_SYNONYM_TO_VENUE = {
-    '府中':'東京',
-    '淀':'京都',
-}
+VENUE_SYNONYM_TO_VENUE = {'府中':'東京','淀':'京都'}
 
 def _normalize_turn_table(df: pd.DataFrame) -> pd.DataFrame:
     cols = { '場名':None, '競走名':None, '回り':None, '正規表現':None }
@@ -167,30 +163,20 @@ def _normalize_turn_table(df: pd.DataFrame) -> pd.DataFrame:
 
 def _infer_venue_from_racename(name: str) -> str | None:
     s = str(name)
-    # まずは正式場名
     for v in DEFAULT_VENUE_TURN.keys():
-        if v in s:
-            return v
-    # 別名→場名
+        if v in s: return v
     for syn, venue in VENUE_SYNONYM_TO_VENUE.items():
-        if syn in s:
-            return venue
+        if syn in s: return venue
     return None
 
 def _attach_turn_to_scores(df_score: pd.DataFrame,
                            turn_df: pd.DataFrame | None,
                            use_default: bool=True) -> pd.DataFrame:
-    """df_score に列『回り』を付与して返す。turn_df は『場名/競走名→回り』の追加定義。"""
     df = df_score.copy()
-
-    # 1) 場名の推定（sheet0に場名がなければ競走名から推定）
     if '場名' in df.columns:
-        # 「新潟 芝1800」「東京競馬場」などでも '新潟' / '東京' を抽出
         df['_場名推定'] = df['場名'].astype(str).apply(_infer_venue_from_racename)
     else:
         df['_場名推定'] = df['競走名'].astype(str).apply(_infer_venue_from_racename)
-
-    # 2) 場名→回り
     venue_map = {}
     if use_default:
         venue_map.update(DEFAULT_VENUE_TURN)
@@ -199,19 +185,15 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
             if str(v).strip():
                 venue_map[str(v).strip()] = t
     df['回り'] = df['_場名推定'].map(venue_map)
-
-    # 3) 競走名→回り（上書き可）
     if turn_df is not None and '競走名' in turn_df.columns:
         patt = turn_df.dropna(subset=['競走名'])
         for _, row in patt.iterrows():
             pat = str(row['競走名']).strip()
             trn = row['回り']
             is_re = bool(row.get('正規表現', False))
-            mask = (
-                df['競走名'].astype(str).str.contains(pat, regex=is_re, na=False)
-                if is_re else
-                df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False)
-            )
+            mask = (df['競走名'].astype(str).str.contains(pat, regex=is_re, na=False)
+                    if is_re else
+                    df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False))
             df.loc[mask, '回り'] = trn
     return df
 
@@ -281,6 +263,22 @@ with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
     turn_gap_thr= st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
     st.caption("※ ファイルアップロード不要。場名（例: 新潟=左/東京=左/中山=右 など）の既定表と、競走名に含まれる場名キーワードから自動推定します。")
+
+# === 表示設定：全頭表示（内部スクロールしない） ===
+with st.sidebar.expander("🖥 表示設定", expanded=True):
+    FULL_TABLE_VIEW = st.checkbox("表は全頭表示（内部スクロールを無くす）", value=True)
+    MAX_TABLE_HEIGHT = st.slider("全頭表示の最大高さ(px)", 800, 10000, 5000, 200)
+
+def auto_table_height(n_rows: int,
+                      row_px: int = 35, header_px: int = 38, pad_px: int = 28) -> int:
+    h = int(header_px + row_px * max(1, int(n_rows)) + pad_px)
+    return min(h, int(MAX_TABLE_HEIGHT))
+
+def H(df, default_px: int) -> int:
+    try:
+        return auto_table_height(len(df)) if FULL_TABLE_VIEW else int(default_px)
+    except Exception:
+        return int(default_px)
 
 # === 便利リセット ===
 with st.sidebar.expander("🧹 トラブル時のリセット", expanded=False):
@@ -373,16 +371,13 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
     cols = list(df.columns)
     cmap = {c: _norm_col(c) for c in cols}
 
-    # まずはセッション or 自動推定
     auto = {k: (st.session_state.get(f"{state_key}:{k}") or _auto_guess(cmap, pats))
             for k, pats in patterns.items()}
 
-    # ★ 現在のシートに存在しない列名は無効化
     for k, v in list(auto.items()):
         if v not in cols:
             auto[k] = None
 
-    # UIを出さずに完了できるか（必須すべてOKかつ存在済み）
     if not show_ui:
         missing = [k for k in required_keys if not auto.get(k)]
         if not missing:
@@ -394,7 +389,6 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
             st.warning(f"{title} の必須列が自動認識できませんでした: " + ", ".join(missing))
             show_ui = True
 
-    # 手動マッピングUI
     with st.expander(f"列マッピング：{title}", expanded=True):
         mapping = {}
         for key, pats in patterns.items():
@@ -405,7 +399,6 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
             if mapping[key] != '<未選択>':
                 st.session_state[f"{state_key}:{key}"] = mapping[key]
 
-    # 必須が未選択なら止める
     missing = [k for k in required_keys if mapping.get(k) in (None, '<未選択>')]
     if missing:
         st.stop()
@@ -431,8 +424,7 @@ PAT_S0 = {
     '年齢'         : [r'年齢|馬齢'],
     '走破タイム秒' : [r'走破タイム.*秒|走破タイム|タイム$'],
     '距離'         : [r'距離'],
-    '馬場'         : [r'馬場(?!.*指数)|馬場状態'],   # コンディション
-    # ❌ 誤マッチ防止のため「コース」は除外（→ コース区分に誤爆していた）
+    '馬場'         : [r'馬場(?!.*指数)|馬場状態'],
     '場名'         : [r'場名|場所|競馬場|開催(地|場|場所)'],
 }
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
@@ -440,7 +432,7 @@ MAP_S0 = _interactive_map(sheet0, PAT_S0, REQ_S0, "sheet0（過去走）", "s0",
 
 df_score = pd.DataFrame()
 for k, col in MAP_S0.items():
-    if (col is None) or (col not in sheet0.columns):  # ★存在チェック
+    if (col is None) or (col not in sheet0.columns):
         continue
     df_score[k] = sheet0[col]
 
@@ -486,7 +478,7 @@ MAP_S1 = _interactive_map(sheet1, PAT_S1, REQ_S1, "sheet1（出走表）", "s1",
 
 attrs = pd.DataFrame()
 for k, col in MAP_S1.items():
-    if (col is None) or (col not in sheet1.columns):  # ★存在チェック
+    if (col is None) or (col not in sheet1.columns):
         continue
     attrs[k] = sheet1[col]
 for c in ['枠','番','斤量','馬体重']:
@@ -507,7 +499,8 @@ edited = st.data_editor(
         '馬体重': st.column_config.NumberColumn('馬体重', min_value=300, max_value=600, step=1)
     },
     use_container_width=True,
-    num_rows='static'
+    num_rows='static',
+    height=H(attrs, 420)   # ★ 全頭表示なら高さを自動化
 )
 horses = edited.copy()
 validate_inputs(df_score, horses)
@@ -756,11 +749,11 @@ now = pd.Timestamp.today()
 df_score['_days_ago'] = (now - df_score['レース日']).dt.days
 df_score['_w'] = 0.5 ** (df_score['_days_ago'] / (half_life_m * 30.4375)) if half_life_m > 0 else 1.0
 
-# ===== 回り情報の付与（既定の場名→回り／競走名内の場名） =====
-turn_df = None  # 外部ファイルは使わない
+# ===== 回り情報の付与 =====
+turn_df = None
 df_score = _attach_turn_to_scores(df_score, turn_df, use_default=use_default_venue_map)
 
-# ===== 右/左回り 適性の集計（時間加重平均） =====
+# ===== 右/左回り 適性の集計 =====
 g_turn = df_score[['馬名','score_norm','_w','回り']].dropna(subset=['馬名','score_norm','_w'])
 g_turn['馬名'] = g_turn['馬名'].map(_trim_name)
 
@@ -768,10 +761,7 @@ def _wavg_row(s: pd.DataFrame) -> float:
     sw = float(pd.to_numeric(s['_w'], errors='coerce').sum())
     if sw <= 0:
         return float('nan')
-    num = (
-        pd.to_numeric(s['score_norm'], errors='coerce') *
-        pd.to_numeric(s['_w'], errors='coerce')
-    ).sum()
+    num = (pd.to_numeric(s['score_norm'], errors='coerce') * pd.to_numeric(s['_w'], errors='coerce')).sum()
     return float(num / sw)
 
 def _make_weighted(df_sub: pd.DataFrame, col_name: str) -> pd.DataFrame:
@@ -798,7 +788,6 @@ cnts = (
 turn_pref = pd.concat([right,left,cnts], axis=1).reset_index() \
     if len(right)+len(left)>0 else pd.DataFrame(columns=['馬名','RightZ','LeftZ','nR','nL'])
 
-# ★ for の外に出す（以前のIndentationError対策 済）
 if len(turn_pref) > 0:
     turn_pref['馬名'] = turn_pref['馬名'].map(_trim_name)
 
@@ -882,8 +871,8 @@ combined_style = combined_style.fillna('')
 df_agg['脚質'] = df_agg['馬名'].map(combined_style)
 
 # ===== P行列（脚質確率）→ ペースMC =====
-H = len(name_list)
-P = np.zeros((H, 4), dtype=float)
+Hn = len(name_list)
+P = np.zeros((Hn, 4), dtype=float)
 pmap = None
 if not df_style.empty and '馬名' in df_style.columns:
     df_prob = df_style.rename(columns={
@@ -921,13 +910,13 @@ mark_rule = {
 mark_to_pts = {'◎':2, '〇':1, '○':1, '△':0, '×':-1}
 
 rng_pace = np.random.default_rng(int(mc_seed) + 12345)
-sum_pts = np.zeros(H, dtype=float)
+sum_pts = np.zeros(Hn, dtype=float)
 pace_counter = {'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
 for _ in range(int(pace_mc_draws)):
-    sampled = [rng_pace.choice(4, p=P[i]) for i in range(H)]
+    sampled = [rng_pace.choice(4, p=P[i]) for i in range(Hn)]
     nige  = sum(1 for s in sampled if s==0)
     sengo = sum(1 for s in sampled if s==1)
-    epi = (epi_alpha*nige + epi_beta*sengo) / max(1, H)
+    epi = (epi_alpha*nige + epi_beta*sengo) / max(1, Hn)
     if   epi >= thr_hi:   pace_t = "ハイペース"
     elif epi >= thr_mid:  pace_t = "ミドルペース"
     elif epi >= thr_slow: pace_t = "ややスローペース"
@@ -1084,13 +1073,13 @@ with tab_dash:
     st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
     _top = topN.merge(df_agg[['馬名','勝率%_MC','TurnPref']], on='馬名', how='left') if ('勝率%_MC' not in topN or 'TurnPref' not in topN) else topN
     show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC'] if c in _top.columns]
-    st.dataframe(_top[show_cols], use_container_width=True, height=220)
+    st.dataframe(_top[show_cols], use_container_width=True, height=H(_top, 220))
 
     st.markdown("#### 回り適性（今回の回りを基準）")
     if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
         tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
         tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
-        st.dataframe(tv, use_container_width=True, height=260)
+        st.dataframe(tv, use_container_width=True, height=H(tv, 260))
     else:
         st.info("回り適性を算出できるデータが不足しています。")
 
@@ -1103,7 +1092,7 @@ with tab_prob:
     _pv = prob_view.copy()
     for c in ['勝率%_MC','複勝率%_MC']:
         if c in _pv: _pv[c] = _pv[c].map(lambda x: f"{x:.2f}%")
-    st.dataframe(_pv, use_container_width=True, height=380)
+    st.dataframe(_pv, use_container_width=True, height=H(prob_view, 380))
 
 with tab_pace:
     st.subheader("展開・脚質サマリー")
@@ -1172,7 +1161,7 @@ with tab_pace:
     if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
         tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
         tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
-        st.dataframe(tv, use_container_width=True, height=260)
+        st.dataframe(tv, use_container_width=True, height=H(tv, 260))
     else:
         st.info("回り適性を算出できるデータが不足しています。右/左テーブルや場名の設定をご確認ください。")
 
@@ -1327,7 +1316,7 @@ with tab_all:
     if _all.empty:
         st.info("コメント表示対象がありません。上部の入力と計算結果をご確認ください。")
     else:
-        st.dataframe(_all, use_container_width=True, height=420)
+        st.dataframe(_all, use_container_width=True, height=H(_all, 420))
 
 # ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
 with tab_pedi:
@@ -1388,10 +1377,7 @@ with tab_pedi:
     # --- 表の前処理 ----------------------------------------------
     def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [
-                "".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
-                for tup in df.columns
-            ]
+            df.columns = ["".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip() for tup in df.columns]
         else:
             df.columns = [str(c).strip() for c in df.columns]
         return df
