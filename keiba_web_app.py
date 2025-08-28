@@ -6,6 +6,7 @@ import numpy as np
 import re, io, json
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
+from matplotlib.patches import Wedge, Rectangle, Circle  # ← 追加
 from itertools import combinations
 
 # ===== Optional: Altair（散布図） =====
@@ -239,7 +240,7 @@ with st.sidebar.expander("🛠 詳細（補正/脚質/ペース）", expanded=Fa
         style_w  = {s: st.slider(f"{s}", 0.0, 2.0, 1.0) for s in STYLES}
         season_w = {s: st.slider(f"{s}", 0.0, 2.0, 1.0) for s in ['春','夏','秋','冬']}
         age_w    = {str(age): st.slider(f"{age}歳", 0.0, 2.0, 1.0, 0.05) for age in range(3, 11)}
-        frame_w  = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,9)}
+        frame_w  = {str(i): st.slider(f"{i}枠", 0.0, 2.0, 1.0) for i in range(1,8+1)}
 
     with st.expander("脚質自動推定 / ペース推定", expanded=False):
         auto_style_on   = st.checkbox("脚質の自動推定を使う（空欄を埋める）", True)
@@ -1051,6 +1052,114 @@ try:
 except Exception:
     if '短評' not in horses2: horses2['短評'] = ""
 
+# ===== 4角ポジション配置図：描画関数 =====
+def _corner__wrap_name(name: str, width: int = 4) -> str:
+    s = str(name).strip().replace("\u3000", " ")
+    s = s.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    return "\n".join([s[i:i+width] for i in range(0, len(s), width)]) if s else s
+
+def _corner__zone_from_style(sty: str) -> str:
+    sty = str(sty)
+    if '逃' in sty or '先' in sty: return '前'
+    if '差' in sty:               return '中'
+    if '追' in sty:               return '後'
+    return '中'
+
+def _corner__to_int(x):
+    try:
+        return int(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')))
+    except Exception:
+        return None
+
+def _corner__path_from_draw(draw: int | None, field_size: int) -> str:
+    if not field_size or field_size <= 0: field_size = 16
+    if draw is None:
+        return "中"
+    lo = max(1, int(np.ceil(field_size * 0.25)))
+    hi = int(np.floor(field_size * 0.75))
+    if draw <= lo:   return "内"
+    if draw >  hi:   return "外"
+    return "中"
+
+def _corner__cell_offsets(n: int) -> list[tuple[float, float]]:
+    if n <= 0: return []
+    out = [(0.0, 0.0)]
+    if n == 1: return out
+    step_r = 0.018
+    step_t = 0.10
+    i = 1
+    while len(out) < n:
+        ring = (i-1)//6 + 1
+        pos  = (i-1)%6
+        dr = ((-1)**ring) * step_r * ring
+        dtheta = (pos - 2.5) * step_t
+        out.append((dr, dtheta))
+        i += 1
+    return out[:n]
+
+def _corner__draw_track(ax):
+    ax.add_patch(Rectangle((0.05, 0.22), 0.55, 0.48, facecolor="#97b42b", edgecolor="none", alpha=0.92))
+    cx, cy = 0.60, 0.46
+    radii = [0.40, 0.34, 0.28, 0.22]
+    lane_colors = ["#6f8f0c", "#7aa012", "#86b71a"]
+    for i in range(3):
+        ax.add_patch(Wedge((cx, cy), r=radii[i], theta1=-90, theta2=0,
+                           width=radii[i]-radii[i+1], facecolor=lane_colors[i], edgecolor="none", alpha=0.98))
+    return (cx, cy, radii)
+
+def render_corner_positions_nowrace(horses_df: pd.DataFrame,
+                                    combined_style_series: pd.Series,
+                                    title: str = "4コーナー想定ポジション（今レース）",
+                                    circle_radius_ax: float | None = None,
+                                    name_wrap: int = 4) -> plt.Figure:
+    df = horses_df.copy()
+    if '馬名' not in df.columns:
+        raise ValueError("horses_df に『馬名』列が必要です")
+    sty = combined_style_series.reindex(df['馬名']).fillna('')
+    df['zone4'] = sty.map(_corner__zone_from_style).fillna('中')
+    FS = max(1, len(df))
+    if '番' in df.columns:
+        draw = df['番'].map(_corner__to_int)
+    elif '枠' in df.columns:
+        _wk = df['枠'].map(_corner__to_int)
+        draw = ((_wk - 1) * int(np.ceil(FS/8)) + 1).astype('Int64')
+    else:
+        draw = pd.Series(range(1, FS+1), index=df.index)
+    df['path4'] = [ _corner__path_from_draw(int(x) if x==x else None, FS) for x in draw ]
+
+    fig, ax = plt.subplots(figsize=(6.6, 5.2), dpi=140)
+    ax.set_axis_off()
+    cx, cy, radii = _corner__draw_track(ax)
+
+    ax.text(0.5, 0.93, title, ha="center", va="center", fontsize=12, weight="bold", fontproperties=jp_font)
+    ax.text(0.5, 0.87, "フラット", ha="center", va="center", fontsize=10, color="#c33", fontproperties=jp_font)
+    ax.text(0.06, 0.17, "セル＝進路（内/中/外）×位置（前/中/後）", fontsize=9, fontproperties=jp_font)
+
+    lane_to_r = {"内": radii[2] + 0.025, "中": radii[1] - 0.025, "外": radii[0] - 0.040}
+    zone_to_theta = {"後": -60, "中": -40, "前": -20}
+    if circle_radius_ax is None:
+        circle_radius_ax = 0.035 if FS <= 14 else (0.032 if FS <= 16 else 0.029)
+
+    for (lane, zone), g in df.groupby(['path4','zone4'], dropna=False):
+        if lane not in lane_to_r or zone not in zone_to_theta:
+            continue
+        base_r = lane_to_r[lane]
+        base_theta = np.deg2rad(zone_to_theta[zone])
+        offsets = _corner__cell_offsets(len(g))
+        for (dr, dth), (_, row) in zip(offsets, g.iterrows()):
+            r = base_r + dr
+            th = base_theta + dth
+            x = cx + r * np.cos(th)
+            y = cy + r * np.sin(th)
+            circle = Circle((x, y), radius=circle_radius_ax, transform=ax.transAxes,
+                            facecolor="white", edgecolor="#222", linewidth=1.2, zorder=6)
+            ax.add_patch(circle)
+            nm = _corner__wrap_name(row['馬名'], name_wrap)
+            ax.text(x, y, nm, ha="center", va="center", fontsize=8.5, zorder=7, fontproperties=jp_font)
+
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+    return fig
+
 # ======================== 結果タブ ========================
 tab_dash, tab_prob, tab_pace, tab_bets, tab_all, tab_pedi = st.tabs(
     ["🏠 ダッシュボード", "📈 勝率", "🧭 展開", "🎫 買い目", "📝 全頭コメント", "🧬 血統HTML"]
@@ -1124,6 +1233,19 @@ with tab_pace:
     }])
     st.table(pace_summary)
 
+    # === ここから：4角ポジション配置図（丸に馬名） ===
+    st.markdown("#### 4角ポジション配置図（今レース・想定）")
+    try:
+        fig_corner = render_corner_positions_nowrace(
+            horses_df=horses,
+            combined_style_series=combined_style,
+            title=f"4コーナー想定ポジション（{locals().get('pace_type','—')}／{TARGET_TURN}回り）"
+        )
+        st.pyplot(fig_corner, use_container_width=True)
+    except Exception as e:
+        st.info(f"4角ポジション配置図はスキップ: {e}")
+
+    # --- 既存：馬番×脚質のロケーション図 ---
     def _normalize_ban(x):
         return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
 
@@ -1325,7 +1447,6 @@ with tab_pedi:
 
     m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
 
-    # --- 文字コード検出 & デコード ------------------------------
     def _detect_charset_from_head(raw: bytes) -> str | None:
         if raw.startswith(b"\xef\xbb\xbf"): return "utf-8-sig"
         if raw.startswith(b"\xff\xfe"):     return "utf-16-le"
@@ -1349,14 +1470,12 @@ with tab_pedi:
                 continue
         return raw.decode("utf-8", errors="replace")
 
-    # --- NetKeiba URL → 血統テーブルURL補正 ----------------------
     def _to_pedigree_url(u: str) -> str:
         m_id = re.search(r"race_id=(\d{12})", u)
         if m_id and "pedigree" not in u:
             return f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
         return u
 
-    # --- URL取得（失敗しても安全に戻す） ------------------------
     def _fetch_url_html(u: str) -> tuple[str, str | None]:
         try:
             import requests
@@ -1374,7 +1493,6 @@ with tab_pedi:
         except Exception as e:
             return "", f"{type(e).__name__}: {e}"
 
-    # --- 表の前処理 ----------------------------------------------
     def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = ["".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip() for tup in df.columns]
@@ -1411,7 +1529,6 @@ with tab_pedi:
                 fixed.append(t.reset_index(drop=True))
         return fixed
 
-    # ===== 入力（HTML/URL/ファイル） =====
     src_url: str | None = None
     html_text = ""
 
@@ -1440,16 +1557,13 @@ with tab_pedi:
             raw  = up.read()
             html_text = _decode_html_bytes(raw)
 
-    # 表示（components が使える場合は埋め込み）
     if html_text.strip() and COMPONENTS:
         components.html(html_text, height=700, scrolling=True)
     elif html_text.strip() and not COMPONENTS:
         st.code(html_text[:8000], language="html")
 
-    # ===== テーブル抽出 =====
     dfs = _extract_pedi_tables_from_html(html_text) if html_text.strip() else []
 
-    # URLがあり、HTML抽出で取れなかった場合：URLからテーブルだけ再抽出
     if (not dfs) and src_url:
         try:
             used = _to_pedigree_url(src_url)
@@ -1464,7 +1578,6 @@ with tab_pedi:
         except Exception as e:
             st.error(f"URLからのテーブル抽出にも失敗しました: {e}")
 
-    # ===== キーワード一致 → ボーナス付与 =====
     st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
     default_pts = int(st.session_state.get('pedi:points', 3))
     points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
@@ -1477,7 +1590,6 @@ with tab_pedi:
         )
         dfp = dfs[idx]
 
-        # 馬名列と候補列
         name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", str(c))]
         name_col = st.selectbox(
             "馬名列",
@@ -1495,7 +1607,6 @@ with tab_pedi:
                                     default=[c for c in known if c in candidate_cols] or candidate_cols)
         method = st.radio("照合方法", ["部分一致", "完全一致"], index=0, horizontal=True)
 
-        # 正規化（全角→半角、空白除去）
         def _norm(s: str) -> str:
             s = str(s)
             s = s.translate(_fwid).replace('\u3000', ' ').strip()
@@ -1516,12 +1627,10 @@ with tab_pedi:
                 if hit and nm:
                     matched_names.append(nm)
 
-        # セッションに保存（→ calc_score が読む）
         st.session_state['pedi:map'] = { _trim_name(n): True for n in matched_names }
         st.session_state['pedi:points'] = int(points)
         st.session_state['pedi:keys'] = keys_text
 
-        # プレビュー
         colL, colR = st.columns([2,3])
         with colL:
             st.write("一致した馬（加点対象）")
