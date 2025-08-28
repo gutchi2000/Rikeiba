@@ -1313,12 +1313,12 @@ with tab_pedi:
 
     # --- 文字コード検出 & デコード ------------------------------
     def _detect_charset_from_head(raw: bytes) -> str | None:
-        if raw.startswith(b\"\\xef\\xbb\\xbf\"): return \"utf-8-sig\"
-        if raw.startswith(b\"\\xff\\xfe\"):     return \"utf-16-le\"
-        if raw.startswith(b\"\\xfe\\xff\"):     return \"utf-16-be\"
-        head_txt = raw[:4096].decode(\"ascii\", \"ignore\")
-        m1 = re.search(r\"charset\\s*=\\s*['\\\"]?([\\w\\-]+)\", head_txt, flags=re.I)
-        return m1.group(1).lower() if m1 else None
+    if raw.startswith(b"\xef\xbb\xbf"): return "utf-8-sig"
+    if raw.startswith(b"\xff\xfe"):     return "utf-16-le"
+    if raw.startswith(b"\xfe\xff"):     return "utf-16-be"
+    head_txt = raw[:4096].decode("ascii", "ignore")
+    m1 = re.search(r"charset\s*=\s*['\"]?([\w\-]+)", head_txt, flags=re.I)
+    return m1.group(1).lower() if m1 else None
 
     def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
         declared = _detect_charset_from_head(raw)
