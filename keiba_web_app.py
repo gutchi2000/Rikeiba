@@ -2,6 +2,8 @@
 # サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備
 # + 右/左回り 自動判定&加点 + AR100/Bandキャリブレーション（B中心化）+ 見送りロジック
 # + ★ 先頭の空行を確実に除去 / 4角ポジション図の安全化
+# + ★ 脚質エディタの値をセッションに保存・復元（リランしても消えない）
+# + ★ 脚質の表記ゆれを吸収（「追い込み」「差込」など→正規化）
 
 import streamlit as st
 import pandas as pd
@@ -52,6 +54,18 @@ div.block-container {padding-top: .6rem; padding-bottom: .8rem; max-width: 1400p
 
 STYLES = ['逃げ','先行','差し','追込']
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
+
+# === NEW: 脚質の表記ゆれ吸収（正規化関数） ===
+STYLE_ALIASES = {
+    '追い込み':'追込','追込み':'追込','おいこみ':'追込','おい込み':'追込',
+    'さし':'差し','差込':'差し','差込み':'差し',
+    'せんこう':'先行','先行 ':'先行','先行　':'先行',
+    'にげ':'逃げ','逃げ ':'逃げ','逃げ　':'逃げ'
+}
+def normalize_style(s: str) -> str:
+    s = str(s).replace('　','').strip().translate(_fwid)
+    s = STYLE_ALIASES.get(s, s)
+    return s if s in STYLES else ''
 
 # ======================== ユーティリティ ========================
 def season_of(month: int) -> str:
@@ -509,6 +523,16 @@ if '脚質' not in attrs.columns: attrs['脚質'] = ''
 if '斤量' not in attrs.columns: attrs['斤量'] = np.nan
 if '馬体重' not in attrs.columns: attrs['馬体重'] = np.nan
 
+# === NEW: エディタの内容をセッションから復元（リラン対策） ===
+if 'horses_df' in st.session_state and isinstance(st.session_state['horses_df'], pd.DataFrame) and not st.session_state['horses_df'].empty:
+    prev = st.session_state['horses_df'][['馬名','脚質','斤量','馬体重']].copy()
+    attrs = attrs.merge(prev, on='馬名', how='left', suffixes=('','_prev'))
+    for c in ['脚質','斤量','馬体重']:
+        attrs[c] = attrs[c].where(attrs[c].notna() & (attrs[c] != ''), attrs.get(f'{c}_prev'))
+    drop_cols = [f'{c}_prev' for c in ['脚質','斤量','馬体重'] if f'{c}_prev' in attrs.columns]
+    if drop_cols:
+        attrs.drop(columns=drop_cols, inplace=True)
+
 st.subheader("馬一覧・脚質・斤量・当日馬体重入力")
 edited = st.data_editor(
     attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']].copy(),
@@ -521,8 +545,17 @@ edited = st.data_editor(
     num_rows='static',
     height=H(attrs, 420),
     hide_index=True,  # ★ 行番号も非表示に（任意）
+    key="horses_editor",  # ★ セッション保持のため key を付与
 )
 horses = edited.copy()
+
+# ★ 入力直後に脚質の表記ゆれを正規化しておく
+if '脚質' in horses.columns:
+    horses['脚質'] = horses['脚質'].map(normalize_style)
+
+# ★ セッションへ保存（タブ移動やスライダー操作で消えない）
+st.session_state['horses_df'] = horses.copy()
+
 validate_inputs(df_score, horses)
 
 # --- 脚質 自動推定 ---
@@ -873,6 +906,10 @@ df_agg.loc[df_agg['WStd'] < min_floor, 'WStd'] = min_floor
 # ===== 脚質統合（手入力優先→自動） =====
 for df in [horses, df_agg]:
     if '馬名' in df.columns: df['馬名'] = df['馬名'].map(_trim_name)
+
+# ★ 念のためここでも正規化
+if '脚質' in horses.columns:
+    horses['脚質'] = horses['脚質'].map(normalize_style)
 
 name_list = df_agg['馬名'].tolist()
 combined_style = pd.Series(index=name_list, dtype=object)
@@ -1255,11 +1292,13 @@ with tab_pace:
     df_map = horses.copy()
     if '脚質' not in df_map.columns:
         df_map['脚質'] = ''
+    # 手入力があれば優先、空欄は combined_style で補完
     auto_st = df_map['馬名'].map(combined_style)
     cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
     df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
-    df_map['脚質'] = df_map['脚質'].fillna('')
-    df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
+    # 正規化して未定義は空へ
+    df_map['脚質'] = df_map['脚質'].map(normalize_style)
+    df_map['脚質'] = df_map['脚質'].fillna('').where(df_map['脚質'].isin(STYLES), other='')
 
     style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
     total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
