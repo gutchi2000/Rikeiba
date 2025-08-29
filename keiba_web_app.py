@@ -1479,87 +1479,104 @@ with tab_pedi:
 
     m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
 
-    def _detect_charset_from_head(raw: bytes) -> str | None:
-        if raw.startswith(b\"\\xef\\xbb\\xbf\"): return \"utf-8-sig\"
-        if raw.startswith(b\"\\xff\\xfe\"):     return \"utf-16-le\"
-        if raw.startswith(b\"\\xfe\\xff\"):     return \"utf-16-be\"
-        head_txt = raw[:4096].decode(\"ascii\", \"ignore\")
-        m1 = re.search(r\"charset\\s*=\\s*['\\\"]?([\\w\\-]+)\", head_txt, flags=re.I)
-        return m1.group(1).lower() if m1 else None
+    # ---- ここから差し替え（クォート正規化版）----
 
-    def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
-        declared = _detect_charset_from_head(raw)
-        cands = [c for c in [preferred, declared, \"cp932\",\"shift_jis\",\"utf-8\",\"utf-8-sig\",
-                             \"euc_jp\",\"iso2022_jp\",\"utf-16\",\"utf-16-le\",\"utf-16-be\"] if c]
-        seen = set()
-        for enc in [c for c in cands if not (c in seen or seen.add(c))]:
-            try:
-                txt = raw.decode(enc)
-                if enc.startswith(\"utf-8\") and txt.count(\"�\") > 10:
-                    continue
-                return txt
-            except Exception:
+def _detect_charset_from_head(raw: bytes) -> str | None:
+    if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
+        return "utf-8-sig"
+    if raw.startswith(b"\xff\xfe"):
+        return "utf-16-le"
+    if raw.startswith(b"\xfe\xff"):
+        return "utf-16-be"
+    head_txt = raw[:4096].decode("ascii", "ignore")
+    m1 = re.search(r'charset\s*=\s*[\'"]?([\w\-]+)', head_txt, flags=re.I)
+    return m1.group(1).lower() if m1 else None
+
+def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
+    declared = _detect_charset_from_head(raw)
+    cands = [c for c in [preferred, declared,
+                         "cp932", "shift_jis", "utf-8", "utf-8-sig",
+                         "euc_jp", "iso2022_jp", "utf-16", "utf-16-le", "utf-16-be"] if c]
+    seen = set()
+    for enc in [c for c in cands if not (c in seen or seen.add(c))]:
+        try:
+            txt = raw.decode(enc)
+            # 文字化けが酷いutf-8を弾く軽いガード
+            if enc.startswith("utf-8") and txt.count("�") > 10:
                 continue
-        return raw.decode(\"utf-8\", errors=\"replace\")
-
-    def _to_pedigree_url(u: str) -> str:
-        m_id = re.search(r\"race_id=(\\d{12})\", u)
-        if m_id and \"pedigree\" not in u:
-            return f\"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}\"
-        return u
-
-    def _fetch_url_html(u: str) -> tuple[str, str | None]:
-        try:
-            import requests
-            used = _to_pedigree_url(u)
-            headers = {
-                \"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari\",
-                \"Accept-Language\": \"ja,en-US;q=0.9,en;q=0.8\",
-                \"Referer\": \"https://race.netkeiba.com/\",
-                \"Accept\": \"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\",
-            }
-            r = requests.get(used, headers=headers, timeout=15, allow_redirects=True)
-            if r.status_code == 200 and len(r.content) > 500:
-                return _decode_html_bytes(r.content), None
-            return \"\", f\"HTTP {r.status_code} / bytes={len(r.content)}\"
-        except Exception as e:
-            return \"\", f\"{type(e).__name__}: {e}\"
-
-    def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [\"\".join([str(c) for c in tup if \"Unnamed\" not in str(c)]).strip() for tup in df.columns]
-        else:
-            df.columns = [str(c).strip() for c in df.columns]
-        return df
-
-    def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
-        cols = [str(c) for c in df.columns]
-        if any(re.search(\"馬名\", c) for c in cols):
-            return df
-        for i in range(min(6, len(df))):
-            row = df.iloc[i].astype(str)
-            if row.str.contains(\"馬名\").any():
-                new_cols = row.str.replace(r\"\\s+\", \"\", regex=True).tolist()
-                df = df.iloc[i+1:].copy()
-                df.columns = new_cols
-                break
-        return df
-
-    def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
-        try:
-            tables = pd.read_html(html_text, flavor=\"lxml\")
+            return txt
         except Exception:
-            try:
-                tables = pd.read_html(html_text, flavor=\"bs4\")
-            except Exception:
-                tables = []
-        fixed = []
-        for t in tables:
-            t = _flatten_columns(t)
-            t = _promote_header_row_if_needed(t)
-            if any(re.search(r\"(馬名|^馬$)\", str(c)) for c in t.columns):
-                fixed.append(t.reset_index(drop=True))
-        return fixed
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+def _to_pedigree_url(u: str) -> str:
+    m_id = re.search(r"race_id=(\d{12})", u)
+    if m_id and "pedigree" not in u:
+        return f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
+    return u
+
+def _fetch_url_html(u: str) -> tuple[str, str | None]:
+    try:
+        import requests
+        used = _to_pedigree_url(u)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Referer": "https://race.netkeiba.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        r = requests.get(used, headers=headers, timeout=15, allow_redirects=True)
+        if r.status_code == 200 and len(r.content) > 500:
+            return _decode_html_bytes(r.content), None
+        return "", f"HTTP {r.status_code} / bytes={len(r.content)}"
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+
+def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ["".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
+                      for tup in df.columns]
+    else:
+        df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [str(c) for c in df.columns]
+    if any(re.search("馬名", c) for c in cols):
+        return df
+    for i in range(min(6, len(df))):
+        row = df.iloc[i].astype(str)
+        if row.str.contains("馬名").any():
+            new_cols = row.str.replace(r"\s+", "", regex=True).tolist()
+            df = df.iloc[i+1:].copy()
+            df.columns = new_cols
+            break
+    return df
+
+def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
+    try:
+        tables = pd.read_html(html_text, flavor="lxml")
+    except Exception:
+        try:
+            tables = pd.read_html(html_text, flavor="bs4")
+        except Exception:
+            tables = []
+    fixed = []
+    for t in tables:
+        t = _flatten_columns(t)
+        t = _promote_header_row_if_needed(t)
+        if any(re.search(r"(馬名|^馬$)", str(c)) for c in t.columns):
+            fixed.append(t.reset_index(drop=True))
+    return fixed
+
+# ←この1行も修正（テキストエリアのplaceholderのクォート崩れを回避）
+html_txt = st.text_area(
+    "HTML（ソース全文 or URL）を貼り付け",
+    height=220,
+    placeholder="<html>...</html> または https://race.netkeiba.com/.../pedigree.html"
+)
+# ---- ここまで差し替え ----
+
 
     src_url: str | None = None
     html_text = \"\"
