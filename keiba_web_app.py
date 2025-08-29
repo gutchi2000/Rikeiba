@@ -945,6 +945,130 @@ else:
     df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
 df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
 
+# ======== ここから NEW: AR100 / Band / RLI / 見送り判定 ========
+
+# ランク帯（バンド）
+def band_of(x: float) -> str:
+    if pd.isna(x): return ""
+    if x >= 90: return "SS"
+    if x >= 80: return "S"
+    if x >= 70: return "A"
+    if x >= 60: return "B"
+    if x >= 50: return "C"
+    return "E"
+
+# クラス→アンカー（“格の芯”）
+CLASS_ANCHOR = {
+    'G1': 95, 'G2': 88, 'G3': 84, 'L': 82, 'OP': 80,
+    '3勝': 78, '2勝': 72, '1勝': 66, '未勝利': 58, '新馬': 56
+}
+
+def _class_anchor_from_row(r) -> float:
+    g = normalize_grade_text(r.get('クラス名')) or normalize_grade_text(r.get('競走名'))
+    if g in ('G1','G2','G3','L','OP'):
+        return float(CLASS_ANCHOR[g])
+    name = f"{r.get('クラス名','')} {r.get('競走名','')}"
+    if re.search(r'3\s*勝', name): return float(CLASS_ANCHOR['3勝'])
+    if re.search(r'2\s*勝', name): return float(CLASS_ANCHOR['2勝'])
+    if re.search(r'1\s*勝', name): return float(CLASS_ANCHOR['1勝'])
+    if re.search(r'未勝利', name): return float(CLASS_ANCHOR['未勝利'])
+    if re.search(r'新馬', name):   return float(CLASS_ANCHOR['新馬'])
+    return 60.0  # 不明なら中位
+
+# AR100（1走単位）
+def calc_AR100_run(r) -> float:
+    base = _class_anchor_from_row(r)
+
+    # 着順による位置点（±12）
+    pos = 0.0
+    try:
+        n = float(r.get('頭数', np.nan)); rk = float(r.get('確定着順', np.nan))
+        if n and rk and 1 <= rk <= n:
+            pos = 12.0 * (((n + 1.0 - rk) / n) - 0.5)
+    except: pass
+
+    # 上がり3F順位（小加点）
+    ag = 0.0
+    try:
+        ao = int(r.get('上3F順位', np.nan))
+        if   ao == 1: ag = 1.5
+        elif ao == 2: ag = 0.8
+        elif ao == 3: ag = 0.4
+    except: pass
+
+    # ベストタイム寄与（0〜約+5、距離/馬場/格で重み）
+    bt = 0.0
+    try:
+        if pd.notna(r.get('ベストタイム秒', np.nan)):
+            bt_norm = (bt_max - float(r['ベストタイム秒'])) / bt_span
+            bt_norm = max(0.0, min(1.0, bt_norm))
+            w = besttime_weight_final(TARGET_GRADE, TARGET_SURFACE, int(TARGET_DISTANCE), besttime_w)
+            bt = min(5.0, 5.0 * bt_norm * (w / 2.0))
+    except: pass
+
+    # 斤量（WFA基準からの差で±3目安）
+    kgp = 0.0
+    try:
+        kg = float(r.get('斤量', np.nan))
+        if not np.isnan(kg):
+            base_wfa = wfa_base_for(r.get('性別',''), int(r.get('年齢')) if pd.notna(r.get('年齢',np.nan)) else None, race_date) if use_wfa_base else 56.0
+            delta = kg - float(base_wfa)
+            kgp = -0.6 * max(0.0,  delta) + 0.3 * max(0.0, -delta)
+            kgp = np.clip(kgp, -3.0, 3.0)
+    except: pass
+
+    # 体重適合（±10kgで+1）
+    body = 0.0
+    try:
+        name = r['馬名']; now_bw = float(r.get('馬体重', np.nan))
+        tekitai = float(best_bw_map.get(name, np.nan))
+        if not np.isnan(now_bw) and not np.isnan(tekitai) and abs(now_bw - tekitai) <= 10:
+            body = 1.0
+    except: pass
+
+    # 季節/性別/脚質/枠/年齢の小加算（UI係数を足し算化）
+    add_attr = 0.0
+    try:
+        sw = season_w[season_of(pd.to_datetime(r['レース日']).month)]
+        gw = gender_w.get(r.get('性別'), 1)
+        stw= style_w.get(r.get('脚質'), 1)
+        fw = frame_w.get(str(r.get('枠')), 1)
+        aw = age_w.get(str(r.get('年齢')), 1)
+        add_attr = 2.5*(sw-1) + 1.5*(gw-1) + 1.0*(stw-1) + 0.8*(fw-1) + 1.2*(aw-1)
+    except: pass
+
+    # 血統ボーナス（任意）
+    pedi = _pedi_bonus_for(r['馬名']) if '_pedi_bonus_for' in globals() else 0.0
+
+    ar = base + pos + ag + bt + kgp + body + add_attr + pedi
+    return float(np.clip(ar, 0.0, 100.0))
+
+# 1走ごとの AR100 と 馬ごとの時間加重AR100
+df_score['AR100_run'] = df_score.apply(calc_AR100_run, axis=1)
+
+def _wavg_AR100(s: pd.DataFrame) -> float:
+    w = pd.to_numeric(s['_w'], errors='coerce').fillna(0.0).to_numpy()
+    x = pd.to_numeric(s['AR100_run'], errors='coerce').fillna(np.nan).to_numpy()
+    sw = w.sum()
+    return float(np.nansum(x*w)/sw) if sw>0 else np.nan
+
+ar_rows = []
+for name, g in df_score.groupby('馬名'):
+    ar_rows.append({'馬名': name, 'AR100': _wavg_AR100(g), 'AR_N': int((~g['AR100_run'].isna()).sum())})
+df_AR = pd.DataFrame(ar_rows)
+
+# df_agg にマージ & Band付与
+df_agg = df_agg.merge(df_AR, on='馬名', how='left')
+df_agg['Band'] = df_agg['AR100'].map(band_of)
+
+# RLI（当日レベル） & 見送り判定
+RLI = float(np.nanmedian(df_agg['AR100'])) if len(df_agg)>0 else np.nan
+RLI_Band = band_of(RLI) if pd.notna(RLI) else ""
+A_or_higher = int((df_agg['AR100'] >= 70).sum())
+SKIP_THIS_RACE = (A_or_higher == 0)  # ルール：B以下のみなら見送り
+
+# ======== ここまで NEW ========
+
 # ===== 最終スコア & 勝率MC =====
 df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
 df_agg['StabZ']    = z_score(-df_agg['WStd'])
@@ -1179,9 +1303,17 @@ with tab_dash:
         except Exception:
             c5.metric("◎ 推定勝率", "—")
 
+    # ▼ NEW: 当日レベル & 見送り判定
+    c6, _ = st.columns(2)
+    c6.metric("RLI（当日レベル）", f"{RLI:.1f}（{RLI_Band}）" if pd.notna(RLI) else "—")
+    if SKIP_THIS_RACE:
+        st.warning("本レース：**見送り推奨**（A以上が不在：B以下のみ）")
+    else:
+        st.success("本レース：**見送りしない**（A以上が1頭以上）")
+
     st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
-    _top = topN.merge(df_agg[['馬名','勝率%_MC','TurnPref']], on='馬名', how='left') if ('勝率%_MC' not in topN or 'TurnPref' not in topN) else topN
-    show_cols = [c for c in ['馬名','印','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC'] if c in _top.columns]
+    _top = topN.merge(df_agg[['馬名','勝率%_MC','TurnPref','AR100','Band']], on='馬名', how='left')
+    show_cols = [c for c in ['馬名','印','FinalZ','AR100','Band','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC'] if c in _top.columns]
     st.dataframe(_top[show_cols], use_container_width=True, height=H(_top, 220))
 
     st.markdown("#### 回り適性（今回の回りを基準）")
@@ -1195,7 +1327,7 @@ with tab_dash:
 with tab_prob:
     st.subheader("推定勝率・複勝率（モンテカルロ）")
     prob_view = (
-        df_agg[['馬名','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC','複勝率%_MC']]
+        df_agg[['馬名','AR100','Band','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC','複勝率%_MC']]
         .sort_values('勝率%_MC', ascending=False).reset_index(drop=True)
     )
     _pv = prob_view.copy()
@@ -1430,9 +1562,9 @@ with tab_bets:
 with tab_all:
     st.subheader("全頭AI診断コメント")
     q = st.text_input("馬名フィルタ（部分一致）", "")
-    show_cols = [c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref'] if c in horses2.columns or c in df_agg.columns]
-    _all = horses2.merge(df_agg[['馬名','TurnPref']], on='馬名', how='left') if 'TurnPref' in df_agg.columns else horses2.copy()
-    _all = _all[[c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref'] if c in _all.columns]]
+    show_cols = [c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref','AR100','Band'] if c in horses2.columns or c in df_agg.columns]
+    _all = horses2.merge(df_agg[['馬名','TurnPref','AR100','Band']], on='馬名', how='left') if 'TurnPref' in df_agg.columns else horses2.copy()
+    _all = _all[[c for c in ['馬名','印','脚質','短評','WAvgZ','WStd','TurnPref','AR100','Band'] if c in _all.columns]]
     if q.strip():
         _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
     if _all.empty:
