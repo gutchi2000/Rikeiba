@@ -1,6 +1,7 @@
 # keiba_web_app_final.py
 # サイドバー互換（expander）、縦軸堅牢化、年齢/枠重み・MC・血統HTML 完備
 # + 右/左回り 自動判定&加点 + AR100/Bandキャリブレーション（B中心化）+ 見送りロジック
+# + ★ 先頭の空行を確実に除去 / 4角ポジション図の安全化
 
 import streamlit as st
 import pandas as pd
@@ -495,6 +496,14 @@ for c in ['枠','番','斤量','馬体重']:
     if c in attrs: attrs[c] = pd.to_numeric(attrs[c], errors='coerce')
 if 'ベストタイム' in attrs: attrs['ベストタイム秒'] = attrs['ベストタイム'].apply(_parse_time_to_sec)
 
+# ★★★ 先頭の空行（全列NaN）や馬名が空の行を除去してからエディタへ ★★★
+attrs = attrs.replace(r'^\s*$', np.nan, regex=True)   # 空文字→NaN
+attrs = attrs.dropna(how='all')                       # 全列NaN行を削除
+if '馬名' in attrs.columns:
+    attrs['馬名'] = attrs['馬名'].astype(str).str.replace('\u3000',' ').str.strip()
+    attrs = attrs[attrs['馬名'].ne('')]
+attrs = attrs.reset_index(drop=True)
+
 # 入力UI（脚質・斤量・馬体重編集）
 if '脚質' not in attrs.columns: attrs['脚質'] = ''
 if '斤量' not in attrs.columns: attrs['斤量'] = np.nan
@@ -510,7 +519,8 @@ edited = st.data_editor(
     },
     use_container_width=True,
     num_rows='static',
-    height=H(attrs, 420)
+    height=H(attrs, 420),
+    hide_index=True,  # ★ 行番号も非表示に（任意）
 )
 horses = edited.copy()
 validate_inputs(df_score, horses)
@@ -1086,7 +1096,7 @@ try:
 except Exception:
     if '短評' not in horses2: horses2['短評'] = ""
 
-# ===== 4角ポジション配置図の関数 =====
+# ===== 4角ポジション配置図の関数（安全化） =====
 def _corner__wrap_name(name: str, width: int = 4) -> str:
     s = str(name).strip().replace("\u3000", " ")
     s = s.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
@@ -1145,14 +1155,16 @@ def render_corner_positions_nowrace(horses_df: pd.DataFrame,
     sty = combined_style_series.reindex(df['馬名']).fillna('')
     df['zone4'] = sty.map(_corner__zone_from_style).fillna('中')
     FS = max(1, len(df))
+    # ★ draw（馬番/枠）を安全に算出（pd.NA/Noneでも落ちない）
     if '番' in df.columns:
         draw = df['番'].map(_corner__to_int)
     elif '枠' in df.columns:
         _wk = df['枠'].map(_corner__to_int)
-        draw = ((_wk - 1) * int(np.ceil(FS/8)) + 1).astype('Int64')
+        group = int(np.ceil(FS/8))
+        draw = _wk.apply(lambda w: ((w-1)*group + 1) if pd.notna(w) else None)
     else:
-        draw = pd.Series(range(1, FS+1), index=df.index)
-    df['path4'] = [ _corner__path_from_draw(int(x) if x==x else None, FS) for x in draw ]
+        draw = pd.Series([i+1 for i in range(FS)], index=df.index, dtype=object)
+    df['path4'] = draw.apply(lambda x: _corner__path_from_draw(int(x) if (x is not None and pd.notna(x)) else None, FS))
 
     fig, ax = plt.subplots(figsize=(6.6, 5.2), dpi=140)
     ax.set_axis_off()
