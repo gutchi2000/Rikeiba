@@ -1086,7 +1086,7 @@ try:
 except Exception:
     if '短評' not in horses2: horses2['短評'] = ""
 
-# ===== 4角ポジション配置図の関数（省略：既存通り） =====
+# ===== 4角ポジション配置図の関数 =====
 def _corner__wrap_name(name: str, width: int = 4) -> str:
     s = str(name).strip().replace("\u3000", " ")
     s = s.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
@@ -1472,15 +1472,7 @@ with tab_all:
     else:
         st.dataframe(_all, use_container_width=True, height=H(_all, 420))
 
-# ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
-with tab_pedi:
-    st.subheader("血統HTMLビューア + ボーナス付与")
-    st.caption("NetKeiba等の血統ページHTMLを表示/解析し、キーワード一致の馬へボーナスを付与します。URLでもOK。")
-
-    m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
-
-    # ---- ここから差し替え（クォート正規化版）----
-
+# ======================== 血統HTML 抽出ユーティリティ（トップレベル定義） ========================
 def _detect_charset_from_head(raw: bytes) -> str | None:
     if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
         return "utf-8-sig"
@@ -1569,38 +1561,36 @@ def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
             fixed.append(t.reset_index(drop=True))
     return fixed
 
-# ←この1行も修正（テキストエリアのplaceholderのクォート崩れを回避）
-html_txt = st.text_area(
-    "HTML（ソース全文 or URL）を貼り付け",
-    height=220,
-    placeholder="<html>...</html> または https://race.netkeiba.com/.../pedigree.html"
-)
-# ---- ここまで差し替え ----
+# ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
+with tab_pedi:
+    st.subheader("血統HTMLビューア + ボーナス付与")
+    st.caption("NetKeiba等の血統ページHTMLを表示/解析し、キーワード一致の馬へボーナスを付与します。URLでもOK。")
 
+    m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
 
     src_url: str | None = None
-    html_text = \"\"
+    html_text = ""
 
-    if m == \"テキスト貼り付け（HTML/URL）\":
+    if m == "テキスト貼り付け（HTML/URL）":
         html_txt = st.text_area(
-            \"HTML（ソース全文 or URL）を貼り付け\",
+            "HTML（ソース全文 or URL）を貼り付け",
             height=220,
-            placeholder=\"<html>...</html> または https://race.netkeiba.com/.../pedigree.html\"
+            placeholder="<html>...</html> または https://race.netkeiba.com/.../pedigree.html"
         )
-        val = (html_txt or \"\").strip()
-        if re.match(r\"^https?://\", val):
+        val = (html_txt or "").strip()
+        if re.match(r"^https?://", val):
             src_url = val
-            with st.spinner(\"URLから取得中…\"):
+            with st.spinner("URLから取得中…"):
                 html_text, err = _fetch_url_html(val)
             if err:
                 st.warning(
-                    \"URLからの取得に失敗しました。ブラウザで『ページを保存（.html）』して『HTMLファイルをアップロード』に切り替えてください。\"\
-                    f\"（詳細: {err}）\"
+                    "URLからの取得に失敗しました。ブラウザで『ページを保存（.html）』して『HTMLファイルをアップロード』に切り替えてください。"
+                    f"（詳細: {err}）"
                 )
         else:
             html_text = val
     else:
-        up = st.file_uploader(\"血統HTMLファイル\", type=[\"html\", \"htm\"], key=\"pedi_html_up\")
+        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"], key="pedi_html_up")
         if up:
             raw  = up.read()
             html_text = _decode_html_bytes(raw)
@@ -1608,7 +1598,7 @@ html_txt = st.text_area(
     if html_text.strip() and COMPONENTS:
         components.html(html_text, height=700, scrolling=True)
     elif html_text.strip() and not COMPONENTS:
-        st.code(html_text[:8000], language=\"html\")
+        st.code(html_text[:8000], language="html")
 
     dfs = _extract_pedi_tables_from_html(html_text) if html_text.strip() else []
 
@@ -1619,46 +1609,46 @@ html_txt = st.text_area(
             for t in raw_tables:
                 t = _flatten_columns(t)
                 t = _promote_header_row_if_needed(t)
-                if any(re.search(r\"(馬名|^馬$)\", str(c)) for c in t.columns):
+                if any(re.search(r"(馬名|^馬$)", str(c)) for c in t.columns):
                     dfs.append(t.reset_index(drop=True))
             if dfs:
-                st.info(\"ページ埋め込みは不可でしたが、URLからテーブル抽出に成功しました。\")
+                st.info("ページ埋め込みは不可でしたが、URLからテーブル抽出に成功しました。")
         except Exception as e:
-            st.error(f\"URLからのテーブル抽出にも失敗しました: {e}\")
+            st.error(f"URLからのテーブル抽出にも失敗しました: {e}")
 
-    st.markdown(\"### 🧬 血統ボーナス設定（下で一致した馬に加点）\")
+    st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
     default_pts = int(st.session_state.get('pedi:points', 3))
-    points = st.slider(\"一致した馬へのボーナス点\", 0, 20, default_pts)
+    points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
 
     if dfs:
         idx = st.selectbox(
-            \"対象テーブルを選択\",
+            "対象テーブルを選択",
             options=list(range(len(dfs))),
-            format_func=lambda i: f\"Table {i+1}（列: {', '.join(map(str, dfs[i].columns[:6]))} …）\"
+            format_func=lambda i: f"Table {i+1}（列: {', '.join(map(str, dfs[i].columns[:6]))} …）"
         )
         dfp = dfs[idx]
 
-        name_candidates = [c for c in dfp.columns if re.search(r\"(馬名|^馬$)\", str(c))]
+        name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", str(c))]
         name_col = st.selectbox(
-            \"馬名列\",
+            "馬名列",
             options=dfp.columns.tolist(),
             index=dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0
         )
 
-        known = [\"父タイプ名\",\"父名\",\"母父タイプ名\",\"母父名\",\"父系\",\"母父系\",\"父\",\"母父\"]
+        known = ["父タイプ名","父名","母父タイプ名","母父名","父系","母父系","父","母父"]
         candidate_cols = [c for c in known if c in dfp.columns] or [c for c in dfp.columns if c != name_col]
 
-        st.caption(\"※ 下のキーワードが、選択した列のどれかに一致した『馬名』へ加点します。複数行OK。\")
-        keys_text = st.text_area(\"血統キーワード（1行1ワード）\",
-                                 value=st.session_state.get('pedi:keys', \"\"), height=120)
-        match_cols = st.multiselect(\"照合対象の列\", candidate_cols,
+        st.caption("※ 下のキーワードが、選択した列のどれかに一致した『馬名』へ加点します。複数行OK。")
+        keys_text = st.text_area("血統キーワード（1行1ワード）",
+                                 value=st.session_state.get('pedi:keys', ""), height=120)
+        match_cols = st.multiselect("照合対象の列", candidate_cols,
                                     default=[c for c in known if c in candidate_cols] or candidate_cols)
-        method = st.radio(\"照合方法\", [\"部分一致\", \"完全一致\"], index=0, horizontal=True)
+        method = st.radio("照合方法", ["部分一致", "完全一致"], index=0, horizontal=True)
 
         def _norm(s: str) -> str:
             s = str(s)
-            s = s.translate(_fwid).replace('\\u3000', ' ').strip()
-            return re.sub(r'\\s+', '', s)
+            s = s.translate(_fwid).replace('\u3000', ' ').strip()
+            return re.sub(r'\s+', '', s)
 
         keys = [k for k in (keys_text.splitlines() if keys_text else []) if k.strip()]
         keys_norm = [_norm(k) for k in keys]
@@ -1666,9 +1656,9 @@ html_txt = st.text_area(
         matched_names: list[str] = []
         if keys and match_cols:
             for _, row in dfp.iterrows():
-                nm = _trim_name(row.get(name_col, \"\"))
-                row_texts_norm = [_norm(row.get(c, \"\")) for c in match_cols]
-                if method == \"完全一致\":
+                nm = _trim_name(row.get(name_col, ""))
+                row_texts_norm = [_norm(row.get(c, "")) for c in match_cols]
+                if method == "完全一致":
                     hit = any(r == k for r in row_texts_norm for k in keys_norm)
                 else:
                     hit = any(k in r for r in row_texts_norm for k in keys_norm)
@@ -1681,14 +1671,13 @@ html_txt = st.text_area(
 
         colL, colR = st.columns([2,3])
         with colL:
-            st.write(\"一致した馬（加点対象）\")
+            st.write("一致した馬（加点対象）")
             if matched_names:
                 st.table(pd.DataFrame({'馬名': matched_names}))
             else:
-                st.info(\"現在、一致はありません。キーワード/照合列/照合方法を調整してください。\")
+                st.info("現在、一致はありません。キーワード/照合列/照合方法を調整してください。")
         with colR:
-            st.info(f\"設定：ボーナス {points} 点 / 照合列 {', '.join(map(str, match_cols)) if match_cols else '（未選択）'} / {method}\")
+            st.info(f"設定：ボーナス {points} 点 / 照合列 {', '.join(map(str, match_cols)) if match_cols else '（未選択）'} / {method}")
 
     else:
-        st.info(\"馬名列を含むテーブルが見つかりません。URLが取れない環境では、ページを『完全保存（.html）』してアップロードしてください。\")
-
+        st.info("馬名列を含むテーブルが見つかりません。URLが取れない環境では、ページを『完全保存（.html）』してアップロードしてください。")
