@@ -1267,199 +1267,74 @@ def render_corner_positions_nowrace(horses_df: pd.DataFrame,
     return fig
 
 # ======================== 結果タブ ========================
-tab_dash, tab_prob, tab_pace, tab_bets, tab_all, tab_pedi, tab_rank = st.tabs(
-    ["🏠 ダッシュボード", "📈 勝率", "🧭 展開", "🎫 買い目", "📝 全頭コメント", "🧬 血統HTML", "🏗 ランキング学習（任意）"]
-)
-
-with tab_dash:
-    st.subheader("サマリー")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("想定ペース", locals().get("pace_type","—"))
-    c2.metric("出走頭数", len(horses))
-    c3.metric("本レース回り", f"{TARGET_TURN}")
-    if len(topN) > 0:
-        c4.metric("◎ FinalZ", f"{topN.iloc[0]['FinalZ']:.1f}")
-        try:
-            win_pct = float(df_agg.loc[df_agg['馬名']==topN.iloc[0]['馬名'],'勝率%_MC'].iloc[0])
-            c5.metric("◎ 推定勝率", f"{win_pct:.1f}%")
-        except Exception:
-            c5.metric("◎ 推定勝率", "—")
-
-    st.markdown("#### Band分布")
-    band_counts = df_agg['Band'].value_counts().reindex(['SS','S','A','B','C','E']).fillna(0).astype(int)
-    dd = pd.DataFrame({'Band':band_counts.index, '頭数': band_counts.values})
-    st.dataframe(dd, use_container_width=True, height=H(dd, 200))
-
-    st.markdown("#### 上位馬（FinalZ≧50・最大6頭）")
-    _top = topN.merge(df_agg[['馬名','勝率%_MC','TurnPref','AR100','Band']], on='馬名', how='left')
-    show_cols = [c for c in ['馬名','印','AR100','Band','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC'] if c in _top.columns]
-    st.dataframe(_top[show_cols], use_container_width=True, height=H(_top, 260))
-
-    st.markdown("#### 回り適性（今回の回りを基準）")
-    if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
-        tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
-        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
-        st.dataframe(tv, use_container_width=True, height=H(tv, 260))
-    else:
-        st.info("回り適性を算出できるデータが不足しています。")
-
-with tab_prob:
-    st.subheader("推定勝率・複勝率（モンテカルロ）")
-    prob_view = (
-        df_agg[['馬名','AR100','Band','FinalZ','WAvgZ','WStd','PacePts','TurnPref','勝率%_MC','複勝率%_MC']]
-        .sort_values(['Band','AR100','勝率%_MC'], ascending=[True,False,False]).reset_index(drop=True)
-    )
-    _pv = prob_view.copy()
-    for c in ['勝率%_MC','複勝率%_MC']:
-        if c in _pv: _pv[c] = _pv[c].map(lambda x: f"{x:.2f}%")
-    st.dataframe(_pv, use_container_width=True, height=H(prob_view, 420))
-
-with tab_pace:
-    st.subheader("展開・脚質サマリー")
-    st.caption(f"想定ペース: {locals().get('pace_type','—')}（{'固定' if pace_mode=='固定（手動）' else '自動MC'}）")
-
-    df_map = horses.copy()
-    if '脚質' not in df_map.columns:
-        df_map['脚質'] = ''
-    auto_st = df_map['馬名'].map(combined_style)
-    cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
-    df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
-    df_map['脚質'] = df_map['脚質'].map(normalize_style).fillna('')
-    df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
-
-    style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
-    total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
-    style_pct = (style_counts / total_heads * 100).round(1)
-
-    pace_summary = pd.DataFrame([{
-        '想定ペース': locals().get('pace_type','—'),
-        '逃げ':  f"{style_counts['逃げ']}頭（{style_pct['逃げ']}%）",
-        '先行':  f"{style_counts['先行']}頭（{style_pct['先行']}%）",
-        '差し':  f"{style_counts['差し']}頭（{style_pct['差し']}%）",
-        '追込':  f"{style_counts['追込']}頭（{style_pct['追込']}%）",
-    }])
-    st.table(pace_summary)
-
-    st.markdown("#### 4角ポジション配置図（今レース・想定）")
-    try:
-        fig_corner = render_corner_positions_nowrace(
-            horses_df=horses,
-            combined_style_series=combined_style,
-            title=f"4コーナー想定ポジション（{locals().get('pace_type','—')}／{TARGET_TURN}回り）"
-        )
-        st.pyplot(fig_corner, use_container_width=True)
-    except Exception as e:
-        st.info(f"4角ポジション配置図はスキップ: {e}")
-
-    # 馬番×脚質のロケーション図（簡易）
-    def _normalize_ban(x):
-        return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
-    if '番' in df_map.columns:
-        df_map['_ban'] = _normalize_ban(df_map['番'])
-        loc_df = df_map.dropna(subset=['_ban']).copy()
-        loc_df = loc_df[loc_df['脚質'].isin(STYLES)]
-        if not loc_df.empty:
-            loc_df['_ban'] = loc_df['_ban'].astype(int)
-            loc_df = loc_df.sort_values('_ban')
-
-            fig, ax = plt.subplots(figsize=(10, 3))
-            colors = {'逃げ':'red', '先行':'orange', '差し':'green', '追込':'blue'}
-            for _, row in loc_df.iterrows():
-                x = int(row['_ban']); y = STYLES.index(row['脚質'])
-                ax.scatter(x, y, color=colors[row['脚質']], s=200)
-                ax.text(
-                    x, y, str(row['馬名']),
-                    ha='center', va='center', color='white', fontsize=9, weight='bold',
-                    bbox=dict(facecolor=colors[row['脚質']], alpha=0.7, boxstyle='round'),
-                    fontproperties=jp_font
-                )
-            ax.set_yticks([0,1,2,3]); ax.set_yticklabels(STYLES, fontproperties=jp_font)
-            xs = sorted(loc_df['_ban'].unique())
-            ax.set_xticks(xs); ax.set_xticklabels([f"{i}番" for i in xs], fontproperties=jp_font)
-            ax.set_xlabel("馬番", fontproperties=jp_font); ax.set_ylabel("脚質", fontproperties=jp_font)
-            ax.set_title(f"展開ロケーション（{locals().get('pace_type','—')}想定）", fontproperties=jp_font)
-            st.pyplot(fig)
-        else:
-            st.info("馬番または脚質が未入力のため、配置図は省略しました。")
-    else:
-        st.info("出走表に『番』列が見つからないため、配置図は省略しました。")
-
-    st.markdown("#### 回り適性サマリー（時間加重の過去走スコアで推定）")
-    if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
-        tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
-        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
-        st.dataframe(tv, use_container_width=True, height=H(tv, 260))
-    else:
-        st.info("回り適性を算出できるデータが不足しています。")
-
 with tab_bets:
-    # === 見送りロジック ===
     # ===== きょうのレース：ML予測 → 買い目案（ML×MC融合） =====
-st.markdown("### きょうのレース：ML予測→買い目案（ML×MC融合）")
+    st.markdown("### きょうのレース：ML予測→買い目案（ML×MC融合）")
 
-def _softmax_1race(x: np.ndarray) -> np.ndarray:
-    x = np.asarray(x, dtype=float)
-    x = x - np.nanmax(x)
-    e = np.exp(x)
-    s = float(np.nansum(e))
-    if s <= 0 or not np.isfinite(s):
-        return np.ones_like(e) / len(e)
-    return e / s
+    def _softmax_1race(x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=float)
+        x = x - np.nanmax(x)
+        e = np.exp(x)
+        s = float(np.nansum(e))
+        if s <= 0 or not np.isfinite(s):
+            return np.ones_like(e) / len(e)
+        return e / s
 
-# 1) ML 確率：学習時に保存した ranker/feat_cols を使って推論
-ML_prob = None
-if ('ranker' in st.session_state) and ('rank_feat_cols' in st.session_state):
-    try:
-        ranker   = st.session_state['ranker']
-        feat_cols= st.session_state['rank_feat_cols']
-        base_cols= st.session_state.get('rank_base_num_cols', [])
+    # 1) ML 確率：学習時に保存した ranker/feat_cols を使って推論
+    ML_prob = None
+    if ('ranker' in st.session_state) and ('rank_feat_cols' in st.session_state):
+        try:
+            ranker     = st.session_state['ranker']
+            feat_cols  = st.session_state['rank_feat_cols']
+            base_cols  = st.session_state.get('rank_base_num_cols', [])
 
-        # きょうのレースの“作れるだけ”の数値列を集める（horses/df_agg から）
-        today_src = pd.DataFrame(index=horses.index)
-        for c in base_cols:
-            if c in df_agg.columns:
-                today_src[c] = pd.to_numeric(df_agg[c], errors='coerce')
-            elif c in horses.columns:
-                today_src[c] = pd.to_numeric(horses[c], errors='coerce')
+            # きょうのレースで作れる数値列を集約（df_agg / horses から）
+            today_src = pd.DataFrame(index=horses.index)
+            for c in base_cols:
+                if c in df_agg.columns:
+                    today_src[c] = pd.to_numeric(df_agg[c], errors='coerce')
+                elif c in horses.columns:
+                    today_src[c] = pd.to_numeric(horses[c], errors='coerce')
 
-        if today_src.shape[1] >= 3:
-            # 学習時と同じ「レース内相対特徴」を簡易生成（zと順位）
-            rel = pd.DataFrame(index=today_src.index)
-            for c in today_src.columns:
-                s = today_src[c].astype(float)
-                rel[c+'_z']  = (s - s.mean()) / (s.std(ddof=0) + 1e-9)
-                rel[c+'_rk'] = s.rank(method='average').astype(float)
+            if today_src.shape[1] >= 3:
+                # レース内相対特徴（z と 順位）を生成
+                rel = pd.DataFrame(index=today_src.index)
+                for c in today_src.columns:
+                    s = today_src[c].astype(float)
+                    rel[c + '_z']  = (s - s.mean()) / (s.std(ddof=0) + 1e-9)
+                    rel[c + '_rk'] = s.rank(method='average').astype(float)
 
-            X_tod = rel.reindex(columns=feat_cols, fill_value=0.0).values
-            best_it = st.session_state.get('rank_best_iter', None)
-            ml_scores = ranker.predict(X_tod, num_iteration=best_it)
-            ML_prob = _softmax_1race(ml_scores)
-        else:
-            st.info("ML特徴が十分に重ならないため、FinalZ にフォールバックします。")
-    except Exception as e:
-        st.info(f"ML推論でフォールバック：{e}")
+                X_tod   = rel.reindex(columns=feat_cols, fill_value=0.0).values
+                best_it = st.session_state.get('rank_best_iter', None)
+                ml_scores = ranker.predict(X_tod, num_iteration=best_it)
+                ML_prob = _softmax_1race(ml_scores)
+            else:
+                st.info("ML特徴が十分に重ならないため、FinalZ を確率化して代用します。")
+        except Exception as e:
+            st.info(f"ML推論でフォールバック：{e}")
 
-# フォールバック：FinalZ を確率化（全頭同値を回避）
-if ML_prob is None:
-    sc = df_agg['FinalZ'].fillna(df_agg['FinalZ'].median()).to_numpy()
-    ML_prob = _softmax_1race(sc)
+    # フォールバック：FinalZ を確率化（全頭同値を回避）
+    if ML_prob is None:
+        sc = df_agg['FinalZ'].fillna(df_agg['FinalZ'].median()).to_numpy()
+        ML_prob = _softmax_1race(sc)
 
-# 2) MC 確率（既存のモンテカルロ結果）
-MC_prob = (df_agg['勝率%_MC'] / 100.0).fillna(0.0).to_numpy()
+    # 2) MC 確率（既存のモンテカルロ結果）
+    MC_prob = (df_agg['勝率%_MC'] / 100.0).fillna(0.0).to_numpy()
 
-# 3) 融合（スライダーで重み）
-alpha = st.slider("MLとMCの重み（ML寄り ↔ MC寄り）", 0.0, 1.0, 0.60, 0.05)
-Fused = alpha * ML_prob + (1 - alpha) * MC_prob
+    # 3) 融合（スライダーで重み）※ key を固有に
+    alpha = st.slider("MLとMCの重み（ML寄り ↔ MC寄り）", 0.0, 1.0, 0.60, 0.05, key="fuse_alpha_bets")
+    Fused = alpha * ML_prob + (1 - alpha) * MC_prob
 
-show = pd.DataFrame({
-    '馬名': df_agg['馬名'],
-    'ML_prob': np.round(ML_prob, 3),
-    'MC_prob': np.round(MC_prob, 3),
-    'Fused_prob': np.round(Fused, 3),
-}).sort_values('Fused_prob', ascending=False).reset_index(drop=True)
+    show = pd.DataFrame({
+        '馬名': df_agg['馬名'],
+        'ML_prob': np.round(ML_prob, 3),
+        'MC_prob': np.round(MC_prob, 3),
+        'Fused_prob': np.round(Fused, 3),
+    }).sort_values('Fused_prob', ascending=False).reset_index(drop=True)
 
-st.dataframe(show, use_container_width=True, height=H(show, 480))
+    st.dataframe(show, use_container_width=True, height=H(show, 480))
 
+    # === 見送りロジック ===
     allow_bet = bool((df_agg['AR100'] >= 70).any())
     if not allow_bet:
         st.subheader("今回のレースは『見送り』")
@@ -1842,6 +1717,15 @@ with tab_rank:
         except Exception as e:
             st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
             st.stop()
+            st.markdown("#### 検証レース 上位3（スコア&確率）")
+        st.dataframe(out, use_container_width=True, height=H(out, 600))
+
+        # --- ここを追加：推論で使うために学習器と特徴情報をセッションへ保存 ---
+        st.session_state['ranker']               = ranker
+        st.session_state['rank_feat_cols']       = feat_cols
+        st.session_state['rank_base_num_cols']   = base_num_cols  # ← num_cols ではなく base_num_cols
+        st.session_state['rank_best_iter']       = getattr(ranker, 'best_iteration_', None)
+
 
         # ==== 列ゆらぎを正規化 ====
         ALIASES = {
