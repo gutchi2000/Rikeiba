@@ -1855,16 +1855,7 @@ with tab_rank:
                 p = e / np.sum(e)
                 out.loc[idx] = p
             return out
-        def ndcg_by_race(valid_df, scores, k=3) -> float:
-            dd = valid_df.copy()
-            dd = dd.reset_index(drop=True)
-            dd['score'] = np.asarray(scores, dtype=float)
-            vals = []
-            for _, part in dd.groupby('race_id'):
-                y_true = part['y'].to_numpy().reshape(1, -1)
-                y_pred = part['score'].to_numpy().reshape(1, -1)
-                vals.append(ndcg_score(y_true, y_pred, k=k))
-            return float(np.mean(vals)) if vals else 0.0
+        
 
         # ---- データ読み込み ----
         if train_source == "このExcelのsheet0（過去走）を使う":
