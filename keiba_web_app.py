@@ -1394,6 +1394,72 @@ with tab_pace:
 
 with tab_bets:
     # === 見送りロジック ===
+    # ===== きょうのレース：ML予測 → 買い目案（ML×MC融合） =====
+st.markdown("### きょうのレース：ML予測→買い目案（ML×MC融合）")
+
+def _softmax_1race(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    x = x - np.nanmax(x)
+    e = np.exp(x)
+    s = float(np.nansum(e))
+    if s <= 0 or not np.isfinite(s):
+        return np.ones_like(e) / len(e)
+    return e / s
+
+# 1) ML 確率：学習時に保存した ranker/feat_cols を使って推論
+ML_prob = None
+if ('ranker' in st.session_state) and ('rank_feat_cols' in st.session_state):
+    try:
+        ranker   = st.session_state['ranker']
+        feat_cols= st.session_state['rank_feat_cols']
+        base_cols= st.session_state.get('rank_base_num_cols', [])
+
+        # きょうのレースの“作れるだけ”の数値列を集める（horses/df_agg から）
+        today_src = pd.DataFrame(index=horses.index)
+        for c in base_cols:
+            if c in df_agg.columns:
+                today_src[c] = pd.to_numeric(df_agg[c], errors='coerce')
+            elif c in horses.columns:
+                today_src[c] = pd.to_numeric(horses[c], errors='coerce')
+
+        if today_src.shape[1] >= 3:
+            # 学習時と同じ「レース内相対特徴」を簡易生成（zと順位）
+            rel = pd.DataFrame(index=today_src.index)
+            for c in today_src.columns:
+                s = today_src[c].astype(float)
+                rel[c+'_z']  = (s - s.mean()) / (s.std(ddof=0) + 1e-9)
+                rel[c+'_rk'] = s.rank(method='average').astype(float)
+
+            X_tod = rel.reindex(columns=feat_cols, fill_value=0.0).values
+            best_it = st.session_state.get('rank_best_iter', None)
+            ml_scores = ranker.predict(X_tod, num_iteration=best_it)
+            ML_prob = _softmax_1race(ml_scores)
+        else:
+            st.info("ML特徴が十分に重ならないため、FinalZ にフォールバックします。")
+    except Exception as e:
+        st.info(f"ML推論でフォールバック：{e}")
+
+# フォールバック：FinalZ を確率化（全頭同値を回避）
+if ML_prob is None:
+    sc = df_agg['FinalZ'].fillna(df_agg['FinalZ'].median()).to_numpy()
+    ML_prob = _softmax_1race(sc)
+
+# 2) MC 確率（既存のモンテカルロ結果）
+MC_prob = (df_agg['勝率%_MC'] / 100.0).fillna(0.0).to_numpy()
+
+# 3) 融合（スライダーで重み）
+alpha = st.slider("MLとMCの重み（ML寄り ↔ MC寄り）", 0.0, 1.0, 0.60, 0.05)
+Fused = alpha * ML_prob + (1 - alpha) * MC_prob
+
+show = pd.DataFrame({
+    '馬名': df_agg['馬名'],
+    'ML_prob': np.round(ML_prob, 3),
+    'MC_prob': np.round(MC_prob, 3),
+    'Fused_prob': np.round(Fused, 3),
+}).sort_values('Fused_prob', ascending=False).reset_index(drop=True)
+
+st.dataframe(show, use_container_width=True, height=H(show, 480))
+
     allow_bet = bool((df_agg['AR100'] >= 70).any())
     if not allow_bet:
         st.subheader("今回のレースは『見送り』")
@@ -2033,6 +2099,11 @@ with tab_rank:
         out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
         st.markdown("#### 検証レース 上位3（スコア&確率）")
         st.dataframe(out, use_container_width=True, height=H(out, 600))
+        # --- ここを追加：推論で使うために保存 ---
+st.session_state['ranker'] = ranker
+st.session_state['rank_feat_cols'] = feat_cols
+st.session_state['rank_base_num_cols'] = num_cols
+st.session_state['rank_best_iter'] = getattr(ranker, 'best_iteration_', None)
 
         # === きょうのレースへ推論し、買い目（MLベース）提案 ==========================
         st.markdown("### きょうのレース：ML予測 → 買い目案（ML×MC融合）")
@@ -2149,3 +2220,6 @@ with tab_rank:
 
     else:
         st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
+
+
+
