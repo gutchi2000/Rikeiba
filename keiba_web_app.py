@@ -1745,6 +1745,109 @@ import re
 import pandas as pd
 import numpy as np
 
+# === Ranking helpers & imports (drop-in fix) ===
+# 1) 必要ライブラリ
+try:
+    import lightgbm as lgb
+except Exception as e:
+    import streamlit as st
+    st.error("LightGBM が見つかりません。`pip install lightgbm` を実行してください。")
+    raise
+try:
+    from sklearn.metrics import ndcg_score
+except Exception as e:
+    import streamlit as st
+    st.error("scikit-learn が見つかりません。`pip install scikit-learn` を実行してください。")
+    raise
+
+import numpy as np
+import pandas as pd
+
+# 2) ラベル：着順→段階的関連度（NDCG 向け）
+def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
+    pos = pd.to_numeric(pos, errors="coerce")
+    rel = pd.Series(0.0, index=pos.index)
+    rel[pos == 1] = 3.0
+    rel[pos == 2] = 2.0
+    rel[pos == 3] = 1.0
+    rel = rel.fillna(0.0)
+    return rel
+
+# 3) レース内相対特徴（z-score と rank）。race_id が無ければ全体で処理
+def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
+    use_cols = [c for c in base_num_cols if c in df.columns]
+    if not use_cols:
+        return df.copy()
+    if 'race_id' in df.columns:
+        g = df.groupby('race_id', group_keys=False)
+        z = g[use_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9))
+        z.columns = [c + "_z" for c in z.columns]
+        rk = g[use_cols].rank(pct=False, ascending=True).astype(float)
+        rk.columns = [c + "_rk" for c in rk.columns]
+    else:
+        z = (df[use_cols] - df[use_cols].mean()) / (df[use_cols].std(ddof=0) + 1e-9)
+        z = z.add_suffix("_z")
+        rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
+    out = pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
+    return out
+
+# 4) レース内ソフトマックス（確率化）
+def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
+    scores = pd.Series(scores).astype(float)
+    race_ids = pd.Series(race_ids)
+    out = pd.Series(index=scores.index, dtype=float)
+    for rid, idx in race_ids.groupby(race_ids).groups.items():
+        s = scores.loc[idx].values / max(T, 1e-6)
+        e = np.exp(s - np.max(s))
+        p = e / np.sum(e)
+        out.loc[idx] = p
+    return out
+
+# 5) 温度（T）最適化：勝ち馬の負の対数尤度を最小化
+def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
+                     grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) -> float:
+    scores = pd.Series(valid_scores).astype(float)
+    races  = pd.Series(valid_race)
+    win_f  = pd.Series(valid_win_flag).astype(int)
+    best_T, best_nll = 1.0, float('inf')
+    for T in grid:
+        p = softmax_by_race(scores, races, T)
+        nll = 0.0
+        for rid, idx in races.groupby(races).groups.items():
+            pi = p.loc[idx][win_f.loc[idx] == 1]
+            if len(pi) == 1:
+                nll -= float(np.log(pi.values[0] + 1e-12))
+        if nll < best_nll:
+            best_T, best_nll = T, nll
+    return best_T
+
+# 6) 学習用 finish_position の存在チェック（保険）
+def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
+    if 'finish_position' not in df.columns:
+        cand = ['確定着順','順位','着','finish','result_position']
+        for c in cand:
+            if c in df.columns:
+                df = df.copy()
+                df['finish_position'] = pd.to_numeric(df[c], errors='coerce')
+                return df
+        # 無ければエラー（ランキング学習では必須）
+        raise KeyError("finish_position（=着順）列が見つかりません。エイリアスの追加または列名の確認をしてください。")
+    df = df.copy()
+    df['finish_position'] = pd.to_numeric(df['finish_position'], errors='coerce')
+    return df
+
+# 7) topk 出力の表示列を自動選択（horse_id が無いデータへの対応）
+def topk_table_safe(frame: pd.DataFrame, k=3):
+    show_id = 'horse_id' if 'horse_id' in frame.columns else ('馬名' if '馬名' in frame.columns else ('番' if '番' in frame.columns else None))
+    cols = ['race_id']
+    if show_id: cols.append(show_id)
+    cols += [c for c in ['score', 'prob'] if c in frame.columns]
+    out = []
+    for rid, part in frame.sort_values(['race_id','score'], ascending=[True, False]).groupby('race_id'):
+        out.append(part.head(k)[cols])
+    return pd.concat(out) if out else pd.DataFrame(columns=cols)
+# === /drop-in fix ===
+
 ALIASES = {
     'race_id': [
         'race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY',
