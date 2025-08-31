@@ -1732,3 +1732,153 @@ with tab_pedi:
 
     else:
         st.info("馬名列を含むテーブルが見つかりません。URLが取れない環境では、ページを『完全保存（.html）』してアップロードしてください。")
+
+
+
+
+
+
+
+
+
+
+
+# pip install lightgbm scikit-learn pandas numpy
+import pandas as pd
+import numpy as np
+import lightgbm as lgb
+from sklearn.metrics import ndcg_score
+
+# ==== 前提：df には 1 行 = 1頭・1レース ====
+# 必須列（例）：race_id, horse_id, date, finish_position（学習時のみ）
+# 推奨列（例）：distance, course, track, draw, weight_carried, age, sex, jockey_win, trainer_win,
+#                best_time, last3f, recent_index, turn_dir(±1), etc.
+# ※ “finish_position は学習用のみ”。予測時は不要。
+
+# ---------- ラベル（段階的関連度） ----------
+def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
+    # 1着=3, 2着=2, 3着=1, それ以外=0（NDCG向け）
+    rel = pd.Series(0, index=pos.index, dtype=float)
+    rel[pos == 1] = 3.0
+    rel[pos == 2] = 2.0
+    rel[pos == 3] = 1.0
+    return rel
+
+# ---------- レース内相対特徴量（z-score & rank） ----------
+def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
+    g = df.groupby('race_id', group_keys=False)
+    # z-score
+    z = g[base_num_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9))
+    z.columns = [c + "_z" for c in z.columns]
+    # rank（小さい=1位）
+    rk = g[base_num_cols].rank(pct=False, ascending=True).astype(float)
+    rk.columns = [c + "_rk" for c in rk.columns]
+    return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
+
+# ---------- 温度付きソフトマックスで“確率化” ----------
+def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
+    out = pd.Series(index=scores.index, dtype=float)
+    for rid, idx in race_ids.groupby(race_ids).groups.items():
+        s = scores.loc[idx].values / max(T, 1e-6)
+        e = np.exp(s - s.max())
+        p = e / e.sum()
+        out.loc[idx] = p
+    return out
+
+# （任意）T を検証セットで最適化：勝ち馬の負の対数尤度を最小化
+def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series, grid=(0.5,0.75,1.0,1.25,1.5,2.0)):
+    best_T, best_nll = 1.0, 1e9
+    for T in grid:
+        p = softmax_by_race(valid_scores, valid_race, T)
+        # レース毎に勝ち馬（win_flag==1）の確率を取り出す
+        nll = 0.0
+        for rid, idx in valid_race.groupby(valid_race).groups.items():
+            pi = p.loc[idx][valid_win_flag.loc[idx] == 1]
+            if len(pi) == 1:
+                nll -= np.log(pi.values[0] + 1e-12)
+        if nll < best_nll:
+            best_T, best_nll = T, nll
+    return best_T
+
+# ================= データ準備（例） =================
+# df = ...  # あなたの前処理後データ
+# 1) 学習用抽出（finish_position がある期間）
+df_train = df[df['date'] < '2025-08-01'].copy()
+df_valid = df[(df['date'] >= '2025-08-01') & (df['date'] < '2025-08-31')].copy()
+
+# 2) ラベル
+df_train['y'] = make_relevance_from_finish(df_train['finish_position'])
+df_valid['y'] = make_relevance_from_finish(df_valid['finish_position'])
+
+# 3) 数値候補から“漏洩しうる列”を除外して相対特徴を付与
+leak_cols = ['finish_position','win_odds','payout','time_sec']  # 例：確定情報や確定後しか出ない列は除く
+num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
+df_train = add_in_race_relative_features(df_train, num_cols)
+df_valid = add_in_race_relative_features(df_valid, num_cols)
+
+# 4) 使う特徴量（相対を主軸に、元の一部も入れる）
+feat_cols = []
+feat_cols += [c for c in df_train.columns if c.endswith('_z') or c.endswith('_rk')]
+# 任意で元の一部を追加（カテゴリはエンコード済み前提）
+keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
+feat_cols += [c for c in keep_raw if c in df_train.columns]
+feat_cols = sorted(set(feat_cols))
+
+# 5) グループ情報
+def make_group_counts(frame):
+    return frame.groupby('race_id').size().tolist()
+
+X_tr, y_tr = df_train[feat_cols].values, df_train['y'].values
+X_va, y_va = df_valid[feat_cols].values, df_valid['y'].values
+g_tr = make_group_counts(df_train)
+g_va = make_group_counts(df_valid)
+
+# 6) 学習
+ranker = lgb.LGBMRanker(
+    objective='lambdarank',
+    metric='ndcg',
+    n_estimators=3000,
+    learning_rate=0.05,
+    num_leaves=63,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    min_data_in_leaf=20,
+    random_state=42
+)
+
+ranker.fit(
+    X_tr, y_tr,
+    group=g_tr,
+    eval_set=[(X_va, y_va)],
+    eval_group=[g_va],
+    eval_at=[1,3,5],
+    callbacks=[lgb.early_stopping(200), lgb.log_evaluation(100)]
+)
+
+# 7) 検証評価（NDCG@3 例）
+# ndcg_score は (y_true, y_score) をレースごとに配列で渡す必要がある
+def ndcg_by_race(frame, scores, k=3):
+    vals = []
+    for rid, idx in frame.groupby('race_id').groups.items():
+        y_true = frame.loc[idx, 'y'].values.reshape(1, -1)
+        y_pred = scores[idx].reshape(1, -1)
+        vals.append(ndcg_score(y_true, y_pred, k=k))
+    return float(np.mean(vals))
+
+valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
+print("Valid NDCG@3:", ndcg_by_race(df_valid, valid_scores, k=3))
+
+# 8) 確率化（温度最適化→ソフトマックス）
+df_valid['score'] = valid_scores
+df_valid['win_flag'] = (df_valid['finish_position'] == 1).astype(int)
+T = tune_temperature(df_valid['score'], df_valid['race_id'], df_valid['win_flag'])
+df_valid['prob'] = softmax_by_race(df_valid['score'], df_valid['race_id'], T)
+
+# 9) 予測の出力（各レースの上位）
+def topk_table(frame, k=3):
+    out = []
+    for rid, part in frame.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
+        out.append(part.head(k)[['race_id','horse_id','score','prob']])
+    return pd.concat(out)
+print(topk_table(df_valid, k=3).head(20))
+
