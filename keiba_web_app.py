@@ -1740,6 +1740,144 @@ with tab_pedi:
 
 
 
+import re
+import pandas as pd
+
+# --- 列名の別名を正規化（存在するものだけリネーム） ---
+ALIASES = {
+    'race_id': [
+        'race_id','RaceID','RACE_ID','race_key','RACE_KEY','レースID','レースキー','race_code'
+    ],
+    'horse_id': [
+        'horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号'
+    ],
+    'finish_position': [
+        'finish_position','finish','着順','順位','rank','着','result_position'
+    ],
+    'date': [
+        'date','Date','race_date','開催日','日付','レース日','ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime'
+    ],
+}
+
+def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for canon, cands in ALIASES.items():
+        if canon in df.columns:
+            continue
+        for c in cands:
+            if c in df.columns:
+                df.rename(columns={c: canon}, inplace=True)
+                break
+    return df
+
+def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
+    """与えられた列を datetime に変換できれば返す。失敗なら None。"""
+    # 8桁数字(YYYYMMDD)なら文字列化して解釈
+    if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
+        ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
+    else:
+        ss = s.astype(str)
+
+    # 文字中に8連数字が含まれていたらそれを優先（RACE_KEY等から抽出）
+    cand = ss.str.extract(r'(\d{8})', expand=False)
+    if cand.notna().mean() > 0.8:
+        dt = pd.to_datetime(cand, format='%Y%m%d', errors='coerce')
+        if dt.notna().mean() > 0.8:
+            return dt
+
+    # 通常の to_datetime
+    dt = pd.to_datetime(ss, errors='coerce')
+    if dt.notna().mean() > 0.8:
+        return dt
+    return None
+
+def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
+    """date 列を作る。無ければ候補や race_id から推定。最後の手段はグループ順で擬似日付。"""
+    df = df.copy()
+    if 'date' in df.columns:
+        dt = pd.to_datetime(df['date'], errors='coerce')
+        if dt.notna().any():
+            df['date'] = dt
+            return df
+
+    # 候補列から探す
+    for c in ALIASES['date']:
+        if c in df.columns:
+            dt = _try_parse_date_series(df[c])
+            if dt is not None and dt.notna().any():
+                df['date'] = dt
+                return df
+
+    # race_id / race_key に日付が埋まっていれば抽出
+    for keycol in ['race_id','race_key','RACE_KEY']:
+        if keycol in df.columns:
+            dt = _try_parse_date_series(df[keycol])
+            if dt is not None and dt.notna().any():
+                df['date'] = dt
+                return df
+
+    # 最後の手段：レース順に擬似日付を振る
+    if 'race_id' in df.columns:
+        order = df.groupby('race_id', sort=False).ngroup()
+        df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(order, unit='D')
+        return df
+
+    # それすら無ければ全体順で擬似日付
+    order = pd.Series(range(len(df)), index=df.index)
+    df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(order, unit='D')
+    return df
+
+def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """競馬データの列名ゆらぎを吸収し、date を保証"""
+    df = _rename_to_canonical(df)
+    df = _ensure_date_column(df)
+    return df
+
+def time_or_group_split(
+    df: pd.DataFrame,
+    start: str = '2025-08-01',
+    end: str   = '2025-08-31',
+    valid_ratio_by_race: float = 0.12   # 日付が取れなかった場合のフォールバック
+):
+    """date が取れれば日付で学習/検証を分割。無理ならレース単位の後ろ何割かを検証に。"""
+    df = normalize_keiba_columns(df)
+    has_real_dates = df['date'].notna().any()
+
+    try:
+        start_dt = pd.to_datetime(start)
+        end_dt   = pd.to_datetime(end)
+    except Exception:
+        start_dt = pd.Timestamp('1900-01-01')
+        end_dt   = pd.Timestamp('2100-01-01')
+
+    if has_real_dates:
+        m_train = df['date'] < start_dt
+        m_valid = (df['date'] >= start_dt) & (df['date'] < end_dt)
+        df_train = df[m_train].copy()
+        df_valid = df[m_valid].copy()
+        # データが極端に少ない場合はフォールバック
+        if len(df_valid) == 0 or df_valid['race_id'].nunique() == 0:
+            # 後ろ何割かのレースを検証に
+            races = df['race_id'].dropna().astype(str).drop_duplicates().sort_values()
+            n_val = max(int(len(races) * valid_ratio_by_race), 1)
+            val_races = set(races.tail(n_val))
+            df_train = df[~df['race_id'].astype(str).isin(val_races)].copy()
+            df_valid = df[df['race_id'].astype(str).isin(val_races)].copy()
+        return df_train, df_valid
+    else:
+        # レース単位フォールバック
+        races = df['race_id'].dropna().astype(str).drop_duplicates().sort_values() if 'race_id' in df.columns else pd.Series(['ALL'])
+        n_val = max(int(len(races) * valid_ratio_by_race), 1)
+        val_races = set(races.tail(n_val))
+        if 'race_id' in df.columns:
+            df_train = df[~df['race_id'].astype(str).isin(val_races)].copy()
+            df_valid = df[df['race_id'].astype(str).isin(val_races)].copy()
+        else:
+            # race_id も無ければ最後の何割かの行を検証に
+            cut = int(len(df) * (1 - valid_ratio_by_race))
+            df_train = df.iloc[:cut].copy()
+            df_valid = df.iloc[cut:].copy()
+        return df_train, df_valid
 
 
 
@@ -1803,7 +1941,9 @@ def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_f
 # ================= データ準備（例） =================
 # df = ...  # あなたの前処理後データ
 # 1) 学習用抽出（finish_position がある期間）
-df_train = df[df['date'] < '2025-08-01'].copy()
+# もとの df はあなたの前処理済みデータフレーム
+df = normalize_keiba_columns(df)
+df_train, df_valid = time_or_group_split(df, start='2025-08-01', end='2025-08-31')
 df_valid = df[(df['date'] >= '2025-08-01') & (df['date'] < '2025-08-31')].copy()
 
 # 2) ラベル
