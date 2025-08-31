@@ -5,6 +5,7 @@
 # + ★ 脚質エディタの値をセッションに保存・復元（リランしても消えない）
 # + ★ 脚質の表記ゆれを吸収（「追い込み」「差込」など→正規化）
 # + ★ ランキング学習は“任意実行”へ変更（finish_positionを安全生成）
+# + ★ ndcg_by_race を堅牢実装でトップレベルに定義（重複import/インデント崩れ修正）
 
 import streamlit as st
 import pandas as pd
@@ -215,6 +216,47 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
                     df['競走名'].astype(str).str.contains(re.escape(pat), regex=True, na=False))
             df.loc[mask, '回り'] = trn
     return df
+
+# ===== NDCG（レース単位）安全実装 =====
+def ndcg_by_race(frame: pd.DataFrame, scores, k: int = 3) -> float:
+    """レース単位で NDCG@k を計算（安全版）。
+       - インデックスを 0..N-1 にリセットして配列と整合
+       - y/pred の NaN/∞ を無害化
+       - 1頭レースや IDCG=0 のときに安全に処理
+    """
+    f = frame[['race_id', 'y']].copy().reset_index(drop=True)
+
+    s = np.asarray(scores, dtype=float)
+    if len(s) != len(f):
+        s = s[:len(f)]
+
+    vals = []
+    for _, idx in f.groupby('race_id').groups.items():
+        idx = np.asarray(list(idx), dtype=int)
+        y_true = np.nan_to_num(f.loc[idx, 'y'].values.astype(float), nan=0.0, neginf=0.0, posinf=0.0)
+        y_pred = np.nan_to_num(s[idx].astype(float),                nan=0.0, neginf=0.0, posinf=0.0)
+
+        m = len(idx)
+        if m == 0:
+            continue
+        if m == 1:
+            vals.append(1.0 if y_true[0] > 0 else 0.0)
+            continue
+
+        kk = int(min(max(1, k), m))
+
+        order = np.argsort(-y_pred)
+        gains = (2.0 ** y_true[order] - 1.0)
+        discounts = 1.0 / np.log2(np.arange(2, m + 2))
+        dcg = float(np.sum(gains[:kk] * discounts[:kk]))
+
+        order_best = np.argsort(-y_true)
+        gains_best = (2.0 ** y_true[order_best] - 1.0)
+        idcg = float(np.sum(gains_best[:kk] * discounts[:kk]))
+
+        vals.append(dcg / idcg if idcg > 0 else 0.0)
+
+    return float(np.mean(vals)) if vals else float('nan')
 
 # ======================== サイドバー ========================
 st.sidebar.title("⚙️ パラメタ設定")
@@ -1740,7 +1782,7 @@ with tab_rank:
     if run_train:
         try:
             import lightgbm as lgb
-            from sklearn.metrics import ndcg_score
+            from sklearn.metrics import ndcg_score  # 未使用でも存在チェックのため
         except Exception as e:
             st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
             st.stop()
@@ -1883,57 +1925,6 @@ with tab_rank:
                 if nll < best_nll:
                     best_T, best_nll = T, nll
             return best_T
-       # === Replace: ndcg_by_race (robust, no sklearn.ndcg_score) ===
-import numpy as np
-import pandas as pd
-
-def ndcg_by_race(frame: pd.DataFrame, scores, k: int = 3) -> float:
-    """レース単位で NDCG@k を計算（安全版）。
-       - インデックスをリセットして score 配列と確実に整合
-       - y/pred の NaN/∞ を無害化
-       - 1頭レースや IDCG=0 のときは 0 or 1 を返す
-    """
-    # 必要列だけにして index を 0..N-1 に揃える
-    f = frame[['race_id', 'y']].copy().reset_index(drop=True)
-
-    # スコア配列も同じ長さにクリップしつつ浮動小数へ
-    s = np.asarray(scores, dtype=float)
-    if len(s) != len(f):
-        s = s[:len(f)]
-
-    vals = []
-    for _, idx in f.groupby('race_id').groups.items():
-        idx = np.asarray(list(idx), dtype=int)
-
-        # 正解・予測を取り出して無害化
-        y_true = np.nan_to_num(f.loc[idx, 'y'].values.astype(float), nan=0.0, neginf=0.0, posinf=0.0)
-        y_pred = np.nan_to_num(s[idx].astype(float),                nan=0.0, neginf=0.0, posinf=0.0)
-
-        m = len(idx)
-        if m == 0:
-            continue
-        if m == 1:
-            # 1頭レース：関連度>0 なら 1、そうでなければ 0
-            vals.append(1.0 if y_true[0] > 0 else 0.0)
-            continue
-
-        kk = int(min(max(1, k), m))
-
-        # DCG
-        order = np.argsort(-y_pred)
-        gains = (2.0 ** y_true[order] - 1.0)
-        discounts = 1.0 / np.log2(np.arange(2, m + 2))
-        dcg = float(np.sum(gains[:kk] * discounts[:kk]))
-
-        # IDCG
-        order_best = np.argsort(-y_true)
-        gains_best = (2.0 ** y_true[order_best] - 1.0)
-        idcg = float(np.sum(gains_best[:kk] * discounts[:kk]))
-
-        vals.append(dcg / idcg if idcg > 0 else 0.0)
-
-    return float(np.mean(vals)) if vals else float('nan')
-
 
         # ==== データ読み込み ====
         if train_source == "このExcelのsheet0（過去走）を使う":
