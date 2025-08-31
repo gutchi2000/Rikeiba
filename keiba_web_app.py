@@ -1387,7 +1387,7 @@ with tab_pace:
     st.markdown("#### 回り適性サマリー（時間加重の過去走スコアで推定）")
     if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
         tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
-        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop応)
+        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
         st.dataframe(tv, use_container_width=True, height=H(tv, 260))
     else:
         st.info("回り適性を算出できるデータが不足しています。")
