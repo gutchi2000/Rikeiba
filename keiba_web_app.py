@@ -6,6 +6,8 @@
 # + ★ 脚質の表記ゆれを吸収（「追い込み」「差込」など→正規化）
 # + ★ ランキング学習は“任意実行”へ変更（finish_positionを安全生成）
 # + ★ ndcg_by_race を堅牢実装でトップレベルに定義（重複import/インデント崩れ修正）
+# + ★ 18桁 race_id → NetKeiba 12桁 に自動変換（学習前処理）
+# + ★ 学習後：「きょうのレース」を推論→ML×MC融合→買い目案を自動提示
 
 import streamlit as st
 import pandas as pd
@@ -219,43 +221,31 @@ def _attach_turn_to_scores(df_score: pd.DataFrame,
 
 # ===== NDCG（レース単位）安全実装 =====
 def ndcg_by_race(frame: pd.DataFrame, scores, k: int = 3) -> float:
-    """レース単位で NDCG@k を計算（安全版）。
-       - インデックスを 0..N-1 にリセットして配列と整合
-       - y/pred の NaN/∞ を無害化
-       - 1頭レースや IDCG=0 のときに安全に処理
-    """
+    """レース単位で NDCG@k を計算（安全版）。"""
     f = frame[['race_id', 'y']].copy().reset_index(drop=True)
-
     s = np.asarray(scores, dtype=float)
     if len(s) != len(f):
         s = s[:len(f)]
-
     vals = []
     for _, idx in f.groupby('race_id').groups.items():
         idx = np.asarray(list(idx), dtype=int)
         y_true = np.nan_to_num(f.loc[idx, 'y'].values.astype(float), nan=0.0, neginf=0.0, posinf=0.0)
         y_pred = np.nan_to_num(s[idx].astype(float),                nan=0.0, neginf=0.0, posinf=0.0)
-
         m = len(idx)
         if m == 0:
             continue
         if m == 1:
             vals.append(1.0 if y_true[0] > 0 else 0.0)
             continue
-
         kk = int(min(max(1, k), m))
-
         order = np.argsort(-y_pred)
         gains = (2.0 ** y_true[order] - 1.0)
         discounts = 1.0 / np.log2(np.arange(2, m + 2))
         dcg = float(np.sum(gains[:kk] * discounts[:kk]))
-
         order_best = np.argsort(-y_true)
         gains_best = (2.0 ** y_true[order_best] - 1.0)
         idcg = float(np.sum(gains_best[:kk] * discounts[:kk]))
-
         vals.append(dcg / idcg if idcg > 0 else 0.0)
-
     return float(np.mean(vals)) if vals else float('nan')
 
 # ======================== サイドバー ========================
@@ -1397,7 +1387,7 @@ with tab_pace:
     st.markdown("#### 回り適性サマリー（時間加重の過去走スコアで推定）")
     if {'RightZ','LeftZ','TurnPref','TurnGap'}.issubset(df_agg.columns):
         tv = df_agg[['馬名','RightZ','LeftZ','TurnGap','TurnPref']].copy()
-        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop=True)
+        tv = tv.sort_values('TurnGap', ascending=(TARGET_TURN=='左')).reset_index(drop応)
         st.dataframe(tv, use_container_width=True, height=H(tv, 260))
     else:
         st.info("回り適性を算出できるデータが不足しています。")
@@ -1560,7 +1550,7 @@ with tab_all:
     else:
         st.dataframe(_all, use_container_width=True, height=H(_all, 420))
 
-# ======================== 血統HTML 抽出ユーティリティ ========================
+# ================= 血統HTML 抽出ユーティリティ =================
 def _detect_charset_from_head(raw: bytes) -> str | None:
     if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
         return "utf-8-sig"
@@ -1572,9 +1562,9 @@ def _detect_charset_from_head(raw: bytes) -> str | None:
     m1 = re.search(r'charset\s*=\s*[\'"]?([\w\-]+)', head_txt, flags=re.I)
     return m1.group(1).lower() if m1 else None
 
-def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
+def _decode_html_bytes(raw: bytes) -> str:
     declared = _detect_charset_from_head(raw)
-    cands = [c for c in [preferred, declared,
+    cands = [c for c in [declared,
                          "cp932", "shift_jis", "utf-8", "utf-8-sig",
                          "euc_jp", "iso2022_jp", "utf-16", "utf-16-le", "utf-16-be"] if c]
     seen = set()
@@ -1782,7 +1772,7 @@ with tab_rank:
     if run_train:
         try:
             import lightgbm as lgb
-            from sklearn.metrics import ndcg_score  # 未使用でも存在チェックのため
+            from sklearn.metrics import ndcg_score  # 存在チェック
         except Exception as e:
             st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
             st.stop()
@@ -1872,11 +1862,26 @@ with tab_rank:
                 return df
             df['race_id'] = 'G' + (np.arange(len(df)) // 18).astype(str)
             return df
+
+        # ==== ★ 正規化：18桁（年4+月日4+レースID8+馬番2）→ NetKeiba型12桁（年4+レースID8）を自動変換 ====
+        # 例）202506080503021118 → 2025 + 05030211 = 202505030211
         def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
             df = _rename_to_canonical(df)
+
+            # 18桁ID→12桁ID 変換（数字以外は無視）
+            if 'race_id' in df.columns:
+                import re as _re
+                def to_nk12(x):
+                    s = _re.sub(r'\D', '', str(x))
+                    m = _re.match(r'^(\d{4})\d{4}(\d{8})\d{2}$', s)
+                    return (m.group(1) + m.group(2)) if m else None
+                conv = df['race_id'].apply(to_nk12)
+                df['race_id'] = conv.where(conv.notna(), df['race_id'])
+
             df = _ensure_date_column(df)
             df = _ensure_race_id(df)
             return df
+
         def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             if 'finish_position' not in df.columns:
@@ -1887,6 +1892,7 @@ with tab_rank:
             if 'finish_position' not in df.columns:
                 raise KeyError("finish_position（=着順）列を生成できませんでした。")
             return df
+
         def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
             use_cols = [c for c in base_num_cols if c in df.columns]
             if not use_cols: return df.copy()
@@ -1899,6 +1905,7 @@ with tab_rank:
                 z = z.add_suffix("_z")
                 rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
             return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
+
         def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
             scores = pd.Series(scores).astype(float)
             race_ids = pd.Series(race_ids)
@@ -1909,6 +1916,7 @@ with tab_rank:
                 p = e / np.sum(e)
                 out.loc[idx] = p
             return out
+
         def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
                              grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) -> float:
             scores = pd.Series(valid_scores).astype(float)
@@ -1947,7 +1955,6 @@ with tab_rank:
         train_df = df_train_raw[df_train_raw['date'] < cut_date].copy()
         valid_df = df_train_raw[df_train_raw['date'] >= cut_date].copy()
         if valid_df['race_id'].nunique() <= 1:
-            # レース単位で後方15%を検証へ
             race_order = df_train_raw.groupby('race_id')['date'].median().sort_values().index.tolist()
             n_val = max(int(len(race_order)*0.15), 1)
             val_set = set(race_order[-n_val:])
@@ -1967,9 +1974,9 @@ with tab_rank:
 
         # 特徴量（数値のうち漏洩を除く→レース内相対特徴を付加）
         leak_cols = {'finish_position','win_odds','payout','time_sec'}
-        num_cols = [c for c in train_df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
-        train_df = add_in_race_relative_features(train_df, num_cols)
-        valid_df = add_in_race_relative_features(valid_df, num_cols)
+        base_num_cols = [c for c in train_df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
+        train_df = add_in_race_relative_features(train_df, base_num_cols)
+        valid_df = add_in_race_relative_features(valid_df, base_num_cols)
 
         feat_cols = [c for c in train_df.columns if c.endswith('_z') or c.endswith('_rk')]
         keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
@@ -2026,6 +2033,119 @@ with tab_rank:
         out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
         st.markdown("#### 検証レース 上位3（スコア&確率）")
         st.dataframe(out, use_container_width=True, height=H(out, 600))
+
+        # === きょうのレースへ推論し、買い目（MLベース）提案 ==========================
+        st.markdown("### きょうのレース：ML予測 → 買い目案（ML×MC融合）")
+
+        # きょうの出走馬（sheet1ベース）
+        today = horses[['馬名','番','斤量','年齢','性別']].copy()
+        today.rename(columns={'番':'draw','斤量':'weight_carried','年齢':'age'}, inplace=True)
+
+        # 追加の軽量特徴（存在すれば使う）
+        sex_map = {'牡':1, 'セ':0, '騙':0, '牝':-1}
+        today['sex_code'] = today['性別'].map(sex_map).fillna(0).astype(float)
+        today['turn_dir'] = 1.0 if TARGET_TURN == '右' else -1.0
+        today['race_id'] = 'today'  # 同一レース扱いでソフトマックス
+
+        # 学習で使った「数値の元列」だけ拾ってレース内相対特徴を生成
+        use_base_today = [c for c in base_num_cols if c in today.columns]
+        today_aug = add_in_race_relative_features(today, use_base_today)
+
+        # 学習時に固定された特徴セットに合わせる（欠けは0で埋める）
+        X_cols = feat_cols[:]   # 学習時に決めたカラム順
+        for c in X_cols:
+            if c not in today_aug.columns:
+                today_aug[c] = 0.0
+        X_te = today_aug[X_cols].values
+
+        # 予測 → レース内ソフトマックスで確率化
+        ml_score = ranker.predict(X_te, num_iteration=ranker.best_iteration_)
+        ml_prob  = softmax_by_race(pd.Series(ml_score), today_aug['race_id'], T=1.0).values
+
+        ml_df = pd.DataFrame({
+            '馬名': today['馬名'],
+            'ML_score': ml_score,
+            'ML_prob': ml_prob
+        })
+
+        # 既存のモンテカルロ勝率と融合（重みはスライダー）
+        alpha = st.slider("MLとMCの重み（ML寄り ←→ MC寄り）", 0.0, 1.0, 0.6, 0.05)
+        mc_map = df_agg.set_index('馬名')['勝率%_MC'].div(100.0)
+        ml_df['MC_prob'] = ml_df['馬名'].map(mc_map).fillna(0.0)
+        ml_df['Fused_prob'] = alpha*ml_df['ML_prob'] + (1.0-alpha)*ml_df['MC_prob']
+
+        # 並べ替えて表示
+        ml_df = ml_df.sort_values('Fused_prob', ascending=False).reset_index(drop=True)
+        st.dataframe(ml_df[['馬名','ML_prob','MC_prob','Fused_prob']].style.format({
+            'ML_prob':'{:.3f}','MC_prob':'{:.3f}','Fused_prob':'{:.3f}'
+        }), use_container_width=True, height=H(ml_df, 420))
+
+        # 印（◎〇▲...）を付与
+        marks = ['◎','〇','▲','☆','△','△']
+        top_names = ml_df['馬名'].tolist()
+        印map_ml = { top_names[i]: marks[i] for i in range(min(len(top_names), len(marks))) }
+        ml_df['印'] = ml_df['馬名'].map(印map_ml).fillna('')
+
+        # ====== MLベースの買い目案（既存ロジックを簡約流用） ======
+        h1 = top_names[0] if len(top_names) > 0 else None
+        h2 = top_names[1] if len(top_names) > 1 else None
+
+        def round_to_unit(x, unit):
+            return int(np.floor(x / unit) * unit)
+
+        # 予算はサイドバー設定を利用
+        _total_budget = int(total_budget)
+        _min_unit     = int(min_unit)
+        _max_lines    = int(max_lines)
+        _scenario     = scenario
+
+        st.markdown("#### MLベース資金配分（印：Fused順）")
+        if h1 is None:
+            st.info("出走馬が確認できないため買い目は作成しませんでした。")
+        else:
+            # 単勝/複勝は◎と〇に厚く
+            main_share = 0.5
+            pur1 = round_to_unit(_total_budget * main_share * (1/4), _min_unit)  # 単勝
+            pur2 = round_to_unit(_total_budget * main_share * (3/4), _min_unit)  # 複勝
+            rem  = _total_budget - (pur1 + pur2)
+
+            win_each   = round_to_unit(pur1 / (2 if h2 else 1), _min_unit)
+            place_each = round_to_unit(pur2 / (2 if h2 else 1), _min_unit)
+
+            bets = []
+            # 単複
+            bets.append({'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each})
+            bets.append({'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each})
+            if h2:
+                bets.append({'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each})
+                bets.append({'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each})
+
+            # 残りは Fused_prob に比例して連系を配分（ワイドを基本）
+            pair = []
+            if h2:
+                for nm, fp in ml_df.iloc[1:1+_max_lines][['馬名','Fused_prob']].values:
+                    pair.append((nm, float(fp)))
+
+            if rem >= _min_unit and pair:
+                weights = np.array([p for _, p in pair], dtype=float)
+                if weights.sum() <= 0:
+                    weights = np.ones_like(weights)
+                weights = weights / weights.sum()
+                alloc = (weights * rem)
+                alloc = (np.floor(alloc / _min_unit) * _min_unit).astype(int)
+                diff = rem - int(alloc.sum())
+                i = 0
+                while diff >= _min_unit and i < len(alloc):
+                    alloc[i] += _min_unit; diff -= _min_unit; i += 1
+                for (nm, _), yen in zip(pair, alloc):
+                    if yen >= _min_unit:
+                        bets.append({'券種':'ワイド','印':'◎–相手','馬':h1,'相手':nm,'金額':int(yen)})
+
+            df_bets = pd.DataFrame(bets)
+            if not df_bets.empty:
+                st.table(df_bets[['券種','印','馬','相手','金額']])
+            else:
+                st.info("現在、買い目はありません。")
 
     else:
         st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
