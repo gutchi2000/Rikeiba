@@ -1711,23 +1711,15 @@ with tab_rank:
         uploaded = st.file_uploader("CSVまたはExcel（race_id, horse_id, finish_position など）", type=['csv','xlsx'], key="rank_up")
 
     if run_train:
+        # ---- ライブラリ確認 ----
         try:
             import lightgbm as lgb
-            from sklearn.metrics import ndcg_score  # 存在チェック
-        except Exception as e:
+            from sklearn.metrics import ndcg_score
+        except Exception:
             st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
             st.stop()
-            st.markdown("#### 検証レース 上位3（スコア&確率）")
-        st.dataframe(out, use_container_width=True, height=H(out, 600))
 
-        # --- ここを追加：推論で使うために学習器と特徴情報をセッションへ保存 ---
-        st.session_state['ranker']               = ranker
-        st.session_state['rank_feat_cols']       = feat_cols
-        st.session_state['rank_base_num_cols']   = base_num_cols  # ← num_cols ではなく base_num_cols
-        st.session_state['rank_best_iter']       = getattr(ranker, 'best_iteration_', None)
-
-
-        # ==== 列ゆらぎを正規化 ====
+        # ---- ユーティリティ ----
         ALIASES = {
             'race_id': ['race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY','race_code','RaceCode','レースID','レースキー','レースコード','開催R'],
             'horse_id': ['horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号','馬番'],
@@ -1812,13 +1804,9 @@ with tab_rank:
                 return df
             df['race_id'] = 'G' + (np.arange(len(df)) // 18).astype(str)
             return df
-
-        # ==== ★ 正規化：18桁（年4+月日4+レースID8+馬番2）→ NetKeiba型12桁（年4+レースID8）を自動変換 ====
-        # 例）202506080503021118 → 2025 + 05030211 = 202505030211
         def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
             df = _rename_to_canonical(df)
-
-            # 18桁ID→12桁ID 変換（数字以外は無視）
+            # 18桁→12桁
             if 'race_id' in df.columns:
                 import re as _re
                 def to_nk12(x):
@@ -1827,11 +1815,9 @@ with tab_rank:
                     return (m.group(1) + m.group(2)) if m else None
                 conv = df['race_id'].apply(to_nk12)
                 df['race_id'] = conv.where(conv.notna(), df['race_id'])
-
             df = _ensure_date_column(df)
             df = _ensure_race_id(df)
             return df
-
         def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             if 'finish_position' not in df.columns:
@@ -1842,7 +1828,6 @@ with tab_rank:
             if 'finish_position' not in df.columns:
                 raise KeyError("finish_position（=着順）列を生成できませんでした。")
             return df
-
         def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
             use_cols = [c for c in base_num_cols if c in df.columns]
             if not use_cols: return df.copy()
@@ -1855,7 +1840,6 @@ with tab_rank:
                 z = z.add_suffix("_z")
                 rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
             return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
-
         def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
             scores = pd.Series(scores).astype(float)
             race_ids = pd.Series(race_ids)
@@ -1866,25 +1850,18 @@ with tab_rank:
                 p = e / np.sum(e)
                 out.loc[idx] = p
             return out
+        def ndcg_by_race(valid_df, scores, k=3) -> float:
+            dd = valid_df.copy()
+            dd = dd.reset_index(drop=True)
+            dd['score'] = np.asarray(scores, dtype=float)
+            vals = []
+            for _, part in dd.groupby('race_id'):
+                y_true = part['y'].to_numpy().reshape(1, -1)
+                y_pred = part['score'].to_numpy().reshape(1, -1)
+                vals.append(ndcg_score(y_true, y_pred, k=k))
+            return float(np.mean(vals)) if vals else 0.0
 
-        def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
-                             grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) -> float:
-            scores = pd.Series(valid_scores).astype(float)
-            races  = pd.Series(valid_race)
-            win_f  = pd.Series(valid_win_flag).astype(int)
-            best_T, best_nll = 1.0, float('inf')
-            for T in grid:
-                p = softmax_by_race(scores, races, T)
-                nll = 0.0
-                for rid, idx in races.groupby(races).groups.items():
-                    pi = p.loc[idx][win_f.loc[idx] == 1]
-                    if len(pi) == 1:
-                        nll -= float(np.log(pi.values[0] + 1e-12))
-                if nll < best_nll:
-                    best_T, best_nll = T, nll
-            return best_T
-
-        # ==== データ読み込み ====
+        # ---- データ読み込み ----
         if train_source == "このExcelのsheet0（過去走）を使う":
             df_train_raw = sheet0.copy()
         else:
@@ -1896,7 +1873,7 @@ with tab_rank:
             else:
                 df_train_raw = pd.read_excel(uploaded)
 
-        # ==== 前処理 ====
+        # ---- 前処理 ----
         df_train_raw = normalize_keiba_columns(df_train_raw)
         df_train_raw = ensure_finish_position(df_train_raw)
 
@@ -1911,7 +1888,7 @@ with tab_rank:
             train_df = df_train_raw[~df_train_raw['race_id'].isin(val_set)].copy()
             valid_df = df_train_raw[df_train_raw['race_id'].isin(val_set)].copy()
 
-        # ラベル（1着=3, 2着=2, 3着=1）
+        # ラベル
         def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
             pos = pd.to_numeric(pos, errors="coerce")
             rel = pd.Series(0.0, index=pos.index)
@@ -1922,12 +1899,11 @@ with tab_rank:
         train_df['y'] = make_relevance_from_finish(train_df['finish_position'])
         valid_df['y'] = make_relevance_from_finish(valid_df['finish_position'])
 
-        # 特徴量（数値のうち漏洩を除く→レース内相対特徴を付加）
+        # 特徴量
         leak_cols = {'finish_position','win_odds','payout','time_sec'}
         base_num_cols = [c for c in train_df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
         train_df = add_in_race_relative_features(train_df, base_num_cols)
         valid_df = add_in_race_relative_features(valid_df, base_num_cols)
-
         feat_cols = [c for c in train_df.columns if c.endswith('_z') or c.endswith('_rk')]
         keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
         feat_cols += [c for c in keep_raw if c in train_df.columns]
@@ -1936,14 +1912,13 @@ with tab_rank:
             st.error("特徴量が生成できませんでした。数値列が必要です。")
             st.stop()
 
-        def make_group_counts(frame):
-            return frame.groupby('race_id').size().tolist()
+        # 学習
+        def make_group_counts(frame): return frame.groupby('race_id').size().tolist()
         X_tr, y_tr = train_df[feat_cols].values, train_df['y'].values
         X_va, y_va = valid_df[feat_cols].values, valid_df['y'].values
         g_tr = make_group_counts(train_df)
         g_va = make_group_counts(valid_df)
 
-        # 学習
         ranker = lgb.LGBMRanker(
             objective='lambdarank',
             metric='ndcg',
@@ -1964,143 +1939,28 @@ with tab_rank:
             callbacks=[lgb.early_stopping(150), lgb.log_evaluation(100)]
         )
 
+        # 評価表示
         valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
         ndcg3 = ndcg_by_race(valid_df, valid_scores, k=3)
         st.success(f"NDCG@3 = {ndcg3:.4f}")
 
-        # 確率化
         valid_df = valid_df.reset_index(drop=True)
         valid_df['score'] = valid_scores
-        valid_df['win_flag'] = (valid_df['finish_position'] == 1).astype(int)
-        T = tune_temperature(valid_df['score'], valid_df['race_id'], valid_df['win_flag'])
-        valid_df['prob'] = softmax_by_race(valid_df['score'], valid_df['race_id'], T)
-
         show_id = 'horse_id' if 'horse_id' in valid_df.columns else (_first_col(valid_df, ['馬名','番']) or '番')
-        cols = ['race_id'] + ([show_id] if show_id else []) + ['score','prob']
+        cols = ['race_id'] + ([show_id] if show_id else []) + ['score']
         topk = []
         for rid, part in valid_df.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
             topk.append(part.head(3)[[c for c in cols if c in part.columns]])
         out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
-        st.markdown("#### 検証レース 上位3（スコア&確率）")
+
+        st.markdown("#### 検証レース 上位3（スコア）")
         st.dataframe(out, use_container_width=True, height=H(out, 600))
-        # --- ここを追加：推論で使うために保存 ---
-st.session_state['ranker'] = ranker
-st.session_state['rank_feat_cols'] = feat_cols
-st.session_state['rank_base_num_cols'] = num_cols
-st.session_state['rank_best_iter'] = getattr(ranker, 'best_iteration_', None)
 
-        # === きょうのレースへ推論し、買い目（MLベース）提案 ==========================
-        st.markdown("### きょうのレース：ML予測 → 買い目案（ML×MC融合）")
-
-        # きょうの出走馬（sheet1ベース）
-        today = horses[['馬名','番','斤量','年齢','性別']].copy()
-        today.rename(columns={'番':'draw','斤量':'weight_carried','年齢':'age'}, inplace=True)
-
-        # 追加の軽量特徴（存在すれば使う）
-        sex_map = {'牡':1, 'セ':0, '騙':0, '牝':-1}
-        today['sex_code'] = today['性別'].map(sex_map).fillna(0).astype(float)
-        today['turn_dir'] = 1.0 if TARGET_TURN == '右' else -1.0
-        today['race_id'] = 'today'  # 同一レース扱いでソフトマックス
-
-        # 学習で使った「数値の元列」だけ拾ってレース内相対特徴を生成
-        use_base_today = [c for c in base_num_cols if c in today.columns]
-        today_aug = add_in_race_relative_features(today, use_base_today)
-
-        # 学習時に固定された特徴セットに合わせる（欠けは0で埋める）
-        X_cols = feat_cols[:]   # 学習時に決めたカラム順
-        for c in X_cols:
-            if c not in today_aug.columns:
-                today_aug[c] = 0.0
-        X_te = today_aug[X_cols].values
-
-        # 予測 → レース内ソフトマックスで確率化
-        ml_score = ranker.predict(X_te, num_iteration=ranker.best_iteration_)
-        ml_prob  = softmax_by_race(pd.Series(ml_score), today_aug['race_id'], T=1.0).values
-
-        ml_df = pd.DataFrame({
-            '馬名': today['馬名'],
-            'ML_score': ml_score,
-            'ML_prob': ml_prob
-        })
-
-        # 既存のモンテカルロ勝率と融合（重みはスライダー）
-        alpha = st.slider("MLとMCの重み（ML寄り ←→ MC寄り）", 0.0, 1.0, 0.6, 0.05)
-        mc_map = df_agg.set_index('馬名')['勝率%_MC'].div(100.0)
-        ml_df['MC_prob'] = ml_df['馬名'].map(mc_map).fillna(0.0)
-        ml_df['Fused_prob'] = alpha*ml_df['ML_prob'] + (1.0-alpha)*ml_df['MC_prob']
-
-        # 並べ替えて表示
-        ml_df = ml_df.sort_values('Fused_prob', ascending=False).reset_index(drop=True)
-        st.dataframe(ml_df[['馬名','ML_prob','MC_prob','Fused_prob']].style.format({
-            'ML_prob':'{:.3f}','MC_prob':'{:.3f}','Fused_prob':'{:.3f}'
-        }), use_container_width=True, height=H(ml_df, 420))
-
-        # 印（◎〇▲...）を付与
-        marks = ['◎','〇','▲','☆','△','△']
-        top_names = ml_df['馬名'].tolist()
-        印map_ml = { top_names[i]: marks[i] for i in range(min(len(top_names), len(marks))) }
-        ml_df['印'] = ml_df['馬名'].map(印map_ml).fillna('')
-
-        # ====== MLベースの買い目案（既存ロジックを簡約流用） ======
-        h1 = top_names[0] if len(top_names) > 0 else None
-        h2 = top_names[1] if len(top_names) > 1 else None
-
-        def round_to_unit(x, unit):
-            return int(np.floor(x / unit) * unit)
-
-        # 予算はサイドバー設定を利用
-        _total_budget = int(total_budget)
-        _min_unit     = int(min_unit)
-        _max_lines    = int(max_lines)
-        _scenario     = scenario
-
-        st.markdown("#### MLベース資金配分（印：Fused順）")
-        if h1 is None:
-            st.info("出走馬が確認できないため買い目は作成しませんでした。")
-        else:
-            # 単勝/複勝は◎と〇に厚く
-            main_share = 0.5
-            pur1 = round_to_unit(_total_budget * main_share * (1/4), _min_unit)  # 単勝
-            pur2 = round_to_unit(_total_budget * main_share * (3/4), _min_unit)  # 複勝
-            rem  = _total_budget - (pur1 + pur2)
-
-            win_each   = round_to_unit(pur1 / (2 if h2 else 1), _min_unit)
-            place_each = round_to_unit(pur2 / (2 if h2 else 1), _min_unit)
-
-            bets = []
-            # 単複
-            bets.append({'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each})
-            bets.append({'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each})
-            if h2:
-                bets.append({'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each})
-                bets.append({'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each})
-
-            # 残りは Fused_prob に比例して連系を配分（ワイドを基本）
-            pair = []
-            if h2:
-                for nm, fp in ml_df.iloc[1:1+_max_lines][['馬名','Fused_prob']].values:
-                    pair.append((nm, float(fp)))
-
-            if rem >= _min_unit and pair:
-                weights = np.array([p for _, p in pair], dtype=float)
-                if weights.sum() <= 0:
-                    weights = np.ones_like(weights)
-                weights = weights / weights.sum()
-                alloc = (weights * rem)
-                alloc = (np.floor(alloc / _min_unit) * _min_unit).astype(int)
-                diff = rem - int(alloc.sum())
-                i = 0
-                while diff >= _min_unit and i < len(alloc):
-                    alloc[i] += _min_unit; diff -= _min_unit; i += 1
-                for (nm, _), yen in zip(pair, alloc):
-                    if yen >= _min_unit:
-                        bets.append({'券種':'ワイド','印':'◎–相手','馬':h1,'相手':nm,'金額':int(yen)})
-
-            df_bets = pd.DataFrame(bets)
-            if not df_bets.empty:
-                st.table(df_bets[['券種','印','馬','相手','金額']])
-            else:
-                st.info("現在、買い目はありません。")
+        # ---- セッションへ保存（ここが重要）----
+        st.session_state['ranker']             = ranker
+        st.session_state['rank_feat_cols']     = feat_cols
+        st.session_state['rank_base_num_cols'] = base_num_cols  # ← 修正済み
+        st.session_state['rank_best_iter']     = getattr(ranker, 'best_iteration_', None)
 
     else:
         st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
