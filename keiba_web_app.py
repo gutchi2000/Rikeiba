@@ -1719,7 +1719,7 @@ with tab_rank:
         # ---- ライブラリ確認 ----
         try:
             import lightgbm as lgb
-            from sklearn.metrics import ndcg_score
+            from sklearn.metrics import ndcg_score  # 存在チェック用（実計算は自前の関数を利用）
         except Exception:
             st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
             st.stop()
@@ -1735,6 +1735,7 @@ with tab_rank:
             for c in cands:
                 if c in df.columns: return c
             return None
+
         def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             for canon, cands in ALIASES.items():
@@ -1744,6 +1745,7 @@ with tab_rank:
                         df.rename(columns={c: canon}, inplace=True)
                         break
             return df
+
         def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
             if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
                 ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
@@ -1758,6 +1760,7 @@ with tab_rank:
             if dt.notna().mean() > 0.8:
                 return dt
             return None
+
         def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             if 'date' in df.columns:
@@ -1776,6 +1779,7 @@ with tab_rank:
                         df['date'] = dt; return df
             df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(np.arange(len(df)), unit='D')
             return df
+
         def _ensure_race_id(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             if 'race_id' in df.columns and df['race_id'].notna().any():
@@ -1809,9 +1813,10 @@ with tab_rank:
                 return df
             df['race_id'] = 'G' + (np.arange(len(df)) // 18).astype(str)
             return df
+
         def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
             df = _rename_to_canonical(df)
-            # 18桁→12桁
+            # 18桁→12桁（年4+ID8）
             if 'race_id' in df.columns:
                 import re as _re
                 def to_nk12(x):
@@ -1823,6 +1828,7 @@ with tab_rank:
             df = _ensure_date_column(df)
             df = _ensure_race_id(df)
             return df
+
         def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
             if 'finish_position' not in df.columns:
@@ -1833,6 +1839,7 @@ with tab_rank:
             if 'finish_position' not in df.columns:
                 raise KeyError("finish_position（=着順）列を生成できませんでした。")
             return df
+
         def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
             use_cols = [c for c in base_num_cols if c in df.columns]
             if not use_cols: return df.copy()
@@ -1845,6 +1852,7 @@ with tab_rank:
                 z = z.add_suffix("_z")
                 rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
             return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
+
         def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
             scores = pd.Series(scores).astype(float)
             race_ids = pd.Series(race_ids)
@@ -1855,7 +1863,26 @@ with tab_rank:
                 p = e / np.sum(e)
                 out.loc[idx] = p
             return out
-        
+
+        def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
+                             grid=None) -> float:
+            """勝者の対数尤度が最小になる温度Tを粗探索。"""
+            if grid is None:
+                grid = np.linspace(0.6, 2.5, 10)
+            scores = pd.Series(valid_scores).astype(float)
+            races  = pd.Series(valid_race)
+            win_f  = pd.Series(valid_win_flag).astype(int)
+            best_T, best_nll = 1.0, float('inf')
+            for T in grid:
+                p = softmax_by_race(scores, races, T)
+                nll = 0.0
+                for rid, idx in races.groupby(races).groups.items():
+                    pi = p.loc[idx][win_f.loc[idx] == 1]
+                    if len(pi) == 1:
+                        nll -= float(np.log(pi.values[0] + 1e-12))
+                if nll < best_nll:
+                    best_T, best_nll = float(T), float(nll)
+            return best_T
 
         # ---- データ読み込み ----
         if train_source == "このExcelのsheet0（過去走）を使う":
@@ -1879,12 +1906,12 @@ with tab_rank:
         valid_df = df_train_raw[df_train_raw['date'] >= cut_date].copy()
         if valid_df['race_id'].nunique() <= 1:
             race_order = df_train_raw.groupby('race_id')['date'].median().sort_values().index.tolist()
-            n_val = max(int(len(race_order)*0.15), 1)
+            n_val = max(int(len(race_order) * 0.15), 1)
             val_set = set(race_order[-n_val:])
             train_df = df_train_raw[~df_train_raw['race_id'].isin(val_set)].copy()
             valid_df = df_train_raw[df_train_raw['race_id'].isin(val_set)].copy()
 
-        # ラベル
+        # ラベル（1着=3, 2着=2, 3着=1, その他=0）
         def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
             pos = pd.to_numeric(pos, errors="coerce")
             rel = pd.Series(0.0, index=pos.index)
@@ -1935,31 +1962,34 @@ with tab_rank:
             callbacks=[lgb.early_stopping(150), lgb.log_evaluation(100)]
         )
 
-        # 評価表示
+        # 評価（安全版NDCG）
         valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
-        ndcg3 = ndcg_by_race(valid_df, valid_scores, k=3)
+        ndcg3 = ndcg_by_race(valid_df, valid_scores, k=3)  # ← アプリ先頭で定義した安全実装を使用
         st.success(f"NDCG@3 = {ndcg3:.4f}")
 
+        # ---- 温度チューニング＋保存（推論で使用） ----
         valid_df = valid_df.reset_index(drop=True)
         valid_df['score'] = valid_scores
+        valid_df['win_flag'] = (valid_df['finish_position'] == 1).astype(int)
+        Tcal = tune_temperature(valid_df['score'], valid_df['race_id'], valid_df['win_flag'])
+        st.session_state['rank_T'] = float(Tcal)
+        st.caption(f"Calibrated temperature T = {Tcal:.2f}")
+
+        # 検証レースの上位表示（スコア）
         show_id = 'horse_id' if 'horse_id' in valid_df.columns else (_first_col(valid_df, ['馬名','番']) or '番')
         cols = ['race_id'] + ([show_id] if show_id else []) + ['score']
         topk = []
         for rid, part in valid_df.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
             topk.append(part.head(3)[[c for c in cols if c in part.columns]])
         out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
-
         st.markdown("#### 検証レース 上位3（スコア）")
         st.dataframe(out, use_container_width=True, height=H(out, 600))
 
-        # ---- セッションへ保存（ここが重要）----
+        # ---- セッションへ保存（推論で使用） ----
         st.session_state['ranker']             = ranker
         st.session_state['rank_feat_cols']     = feat_cols
-        st.session_state['rank_base_num_cols'] = base_num_cols  # ← 修正済み
+        st.session_state['rank_base_num_cols'] = base_num_cols
         st.session_state['rank_best_iter']     = getattr(ranker, 'best_iteration_', None)
 
     else:
         st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
-
-
-
