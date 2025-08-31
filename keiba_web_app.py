@@ -1740,13 +1740,15 @@ with tab_pedi:
 
 
 
+# ====== v2: 列名ゆらぎ吸収 + date/race_id を強制生成 + 安全分割 ======
 import re
 import pandas as pd
+import numpy as np
 
-# --- 列名の別名を正規化（存在するものだけリネーム） ---
 ALIASES = {
     'race_id': [
-        'race_id','RaceID','RACE_ID','race_key','RACE_KEY','レースID','レースキー','race_code'
+        'race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY',
+        'race_code','RaceCode','レースID','レースキー','レースコード','開催R'
     ],
     'horse_id': [
         'horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号'
@@ -1755,9 +1757,20 @@ ALIASES = {
         'finish_position','finish','着順','順位','rank','着','result_position'
     ],
     'date': [
-        'date','Date','race_date','開催日','日付','レース日','ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime'
+        'date','Date','race_date','RaceDate','開催日','日付','レース日',
+        'ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime','開催年月日'
     ],
 }
+
+RACE_NO_ALIASES = ['race_no','RaceNo','RACE_NO','R','レース','レース番号','レースNo','R_No']
+VENUE_ALIASES   = ['venue','track','course','場','場所','競馬場','racecourse','場名','開催場','場コード','開催']
+RACE_NAME_ALIASES = ['race_name','RaceName','レース名','競走名']
+
+def _first_col(df, cands):
+    for c in cands:
+        if c in df.columns:
+            return c
+    return None
 
 def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -1771,172 +1784,148 @@ def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
-    """与えられた列を datetime に変換できれば返す。失敗なら None。"""
-    # 8桁数字(YYYYMMDD)なら文字列化して解釈
     if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
         ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
     else:
         ss = s.astype(str)
-
-    # 文字中に8連数字が含まれていたらそれを優先（RACE_KEY等から抽出）
     cand = ss.str.extract(r'(\d{8})', expand=False)
     if cand.notna().mean() > 0.8:
         dt = pd.to_datetime(cand, format='%Y%m%d', errors='coerce')
         if dt.notna().mean() > 0.8:
             return dt
-
-    # 通常の to_datetime
     dt = pd.to_datetime(ss, errors='coerce')
     if dt.notna().mean() > 0.8:
         return dt
     return None
 
 def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
-    """date 列を作る。無ければ候補や race_id から推定。最後の手段はグループ順で擬似日付。"""
     df = df.copy()
     if 'date' in df.columns:
         dt = pd.to_datetime(df['date'], errors='coerce')
         if dt.notna().any():
             df['date'] = dt
             return df
-
-    # 候補列から探す
     for c in ALIASES['date']:
         if c in df.columns:
             dt = _try_parse_date_series(df[c])
             if dt is not None and dt.notna().any():
                 df['date'] = dt
                 return df
-
-    # race_id / race_key に日付が埋まっていれば抽出
-    for keycol in ['race_id','race_key','RACE_KEY']:
+    for keycol in ['race_id','race_key','RACE_KEY','RaceKey','race_code','RACE_ID']:
         if keycol in df.columns:
             dt = _try_parse_date_series(df[keycol])
             if dt is not None and dt.notna().any():
                 df['date'] = dt
                 return df
-
-    # 最後の手段：レース順に擬似日付を振る
-    if 'race_id' in df.columns:
-        order = df.groupby('race_id', sort=False).ngroup()
-        df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(order, unit='D')
-        return df
-
-    # それすら無ければ全体順で擬似日付
-    order = pd.Series(range(len(df)), index=df.index)
+    # 擬似日付（グループ順）
+    order = df.reset_index(drop=True).index
     df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(order, unit='D')
     return df
 
+def _ensure_race_id(df: pd.DataFrame) -> pd.DataFrame:
+    """可能なら (date + venue + R) から race_id を合成。なければ RACE_KEY/レースID 等から拾う。"""
+    df = df.copy()
+    if 'race_id' in df.columns and df['race_id'].notna().any():
+        return df
+
+    # 1) 既存キーの流用
+    keycol = _first_col(df, ['race_id','race_key','RaceKey','RACE_KEY','race_code','RACE_ID','レースID','レースキー','レースコード'])
+    if keycol is not None:
+        df['race_id'] = df[keycol].astype(str)
+        return df
+
+    # 2) (date + venue + R) 合成
+    dcol = 'date' if 'date' in df.columns else None
+    vcol = _first_col(df, VENUE_ALIASES)
+    rcol = _first_col(df, RACE_NO_ALIASES)
+    if dcol is not None and (vcol is not None or rcol is not None):
+        dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
+        parts = [dkey]
+        if vcol is not None:
+            vkey = df[vcol].astype(str).str.replace(r'\s+', '', regex=True)
+            parts.append(vkey)
+        if rcol is not None:
+            rnum = df[rcol].astype(str).str.extract(r'(\d{1,2})', expand=False).fillna('NA')
+            parts.append('R' + rnum)
+        df['race_id'] = parts[0]
+        for p in parts[1:]:
+            df['race_id'] = df['race_id'] + '_' + p
+        return df
+
+    # 3) (date + race_name)
+    ncol = _first_col(df, RACE_NAME_ALIASES)
+    if dcol is not None and ncol is not None:
+        dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
+        nkey = df[ncol].astype(str).str.replace(r'\s+', '', regex=True)
+        df['race_id'] = dkey + '_' + nkey
+        return df
+
+    # 4) 最終手段：日付ごとに連番で仮ID（各レース頭数がバラつく場合でも“レース単位”が必要）
+    if dcol is not None:
+        tmp = df.sort_values(dcol).copy()
+        # 近い行同士を同一レースとみなすため、連続塊に番号を振る（同日で値が飛びにくい列を使うと尚良い）
+        block = tmp.groupby(pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d')).cumcount() // 18  # 18頭想定で粗く区切る
+        tmp['__rid'] = pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d') + '_G' + block.astype(str)
+        df = tmp.sort_index()
+        df['race_id'] = df['__rid'].values
+        df.drop(columns=['__rid'], inplace=True, errors='ignore')
+        return df
+
+    # 5) 何も無い場合は全体を粗くブロック化
+    block = np.arange(len(df)) // 18
+    df['race_id'] = 'G' + block.astype(str)
+    return df
+
 def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """競馬データの列名ゆらぎを吸収し、date を保証"""
     df = _rename_to_canonical(df)
     df = _ensure_date_column(df)
+    df = _ensure_race_id(df)
     return df
 
 def time_or_group_split(
     df: pd.DataFrame,
     start: str = '2025-08-01',
     end: str   = '2025-08-31',
-    valid_ratio_by_race: float = 0.12   # 日付が取れなかった場合のフォールバック
+    valid_ratio_by_race: float = 0.12
 ):
-    """date が取れれば日付で学習/検証を分割。無理ならレース単位の後ろ何割かを検証に。"""
+    """date が取れれば日付で分割。0件ならレース単位の後ろ何割かを検証に（race_id 生成済み前提）。"""
     df = normalize_keiba_columns(df)
-    has_real_dates = df['date'].notna().any()
 
     try:
-        start_dt = pd.to_datetime(start)
-        end_dt   = pd.to_datetime(end)
+        start_dt = pd.to_datetime(start); end_dt = pd.to_datetime(end)
     except Exception:
-        start_dt = pd.Timestamp('1900-01-01')
-        end_dt   = pd.Timestamp('2100-01-01')
+        start_dt = pd.Timestamp('1900-01-01'); end_dt = pd.Timestamp('2100-01-01')
 
-    if has_real_dates:
-        m_train = df['date'] < start_dt
-        m_valid = (df['date'] >= start_dt) & (df['date'] < end_dt)
-        df_train = df[m_train].copy()
-        df_valid = df[m_valid].copy()
-        # データが極端に少ない場合はフォールバック
-        if len(df_valid) == 0 or df_valid['race_id'].nunique() == 0:
-            # 後ろ何割かのレースを検証に
-            races = df['race_id'].dropna().astype(str).drop_duplicates().sort_values()
-            n_val = max(int(len(races) * valid_ratio_by_race), 1)
-            val_races = set(races.tail(n_val))
-            df_train = df[~df['race_id'].astype(str).isin(val_races)].copy()
-            df_valid = df[df['race_id'].astype(str).isin(val_races)].copy()
-        return df_train, df_valid
-    else:
-        # レース単位フォールバック
-        races = df['race_id'].dropna().astype(str).drop_duplicates().sort_values() if 'race_id' in df.columns else pd.Series(['ALL'])
-        n_val = max(int(len(races) * valid_ratio_by_race), 1)
-        val_races = set(races.tail(n_val))
-        if 'race_id' in df.columns:
-            df_train = df[~df['race_id'].astype(str).isin(val_races)].copy()
-            df_valid = df[df['race_id'].astype(str).isin(val_races)].copy()
-        else:
-            # race_id も無ければ最後の何割かの行を検証に
-            cut = int(len(df) * (1 - valid_ratio_by_race))
+    m_train = df['date'] < start_dt
+    m_valid = (df['date'] >= start_dt) & (df['date'] < end_dt)
+    df_train = df[m_train].copy()
+    df_valid = df[m_valid].copy()
+
+    # バリデーションが空/極少 or race_id が単一しか無い場合はフォールバック
+    if (len(df_valid) == 0) or ('race_id' not in df_valid.columns) or (df_valid['race_id'].nunique() <= 1):
+        races = df['race_id'].astype(str).dropna().unique().tolist()
+        if len(races) == 0:
+            # 行ベース分割（最後の何割か）
+            cut = max(int(len(df) * (1 - valid_ratio_by_race)), 1)
             df_train = df.iloc[:cut].copy()
             df_valid = df.iloc[cut:].copy()
-        return df_train, df_valid
+        else:
+            # 後ろ何割かのレースを検証に
+            # レースの“時系列”は date の中央値で並べる
+            race_order = (
+                df.groupby('race_id')['date']
+                .median()
+                .sort_values()
+                .index
+                .tolist()
+            )
+            n_val = max(int(len(race_order) * valid_ratio_by_race), 1)
+            val_set = set(race_order[-n_val:])
+            df_train = df[~df['race_id'].isin(val_set)].copy()
+            df_valid = df[df['race_id'].isin(val_set)].copy()
+    return df_train, df_valid
+# ====== /v2 ======
 
-
-
-# pip install lightgbm scikit-learn pandas numpy
-import pandas as pd
-import numpy as np
-import lightgbm as lgb
-from sklearn.metrics import ndcg_score
-
-# ==== 前提：df には 1 行 = 1頭・1レース ====
-# 必須列（例）：race_id, horse_id, date, finish_position（学習時のみ）
-# 推奨列（例）：distance, course, track, draw, weight_carried, age, sex, jockey_win, trainer_win,
-#                best_time, last3f, recent_index, turn_dir(±1), etc.
-# ※ “finish_position は学習用のみ”。予測時は不要。
-
-# ---------- ラベル（段階的関連度） ----------
-def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
-    # 1着=3, 2着=2, 3着=1, それ以外=0（NDCG向け）
-    rel = pd.Series(0, index=pos.index, dtype=float)
-    rel[pos == 1] = 3.0
-    rel[pos == 2] = 2.0
-    rel[pos == 3] = 1.0
-    return rel
-
-# ---------- レース内相対特徴量（z-score & rank） ----------
-def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
-    g = df.groupby('race_id', group_keys=False)
-    # z-score
-    z = g[base_num_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9))
-    z.columns = [c + "_z" for c in z.columns]
-    # rank（小さい=1位）
-    rk = g[base_num_cols].rank(pct=False, ascending=True).astype(float)
-    rk.columns = [c + "_rk" for c in rk.columns]
-    return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
-
-# ---------- 温度付きソフトマックスで“確率化” ----------
-def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
-    out = pd.Series(index=scores.index, dtype=float)
-    for rid, idx in race_ids.groupby(race_ids).groups.items():
-        s = scores.loc[idx].values / max(T, 1e-6)
-        e = np.exp(s - s.max())
-        p = e / e.sum()
-        out.loc[idx] = p
-    return out
-
-# （任意）T を検証セットで最適化：勝ち馬の負の対数尤度を最小化
-def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series, grid=(0.5,0.75,1.0,1.25,1.5,2.0)):
-    best_T, best_nll = 1.0, 1e9
-    for T in grid:
-        p = softmax_by_race(valid_scores, valid_race, T)
-        # レース毎に勝ち馬（win_flag==1）の確率を取り出す
-        nll = 0.0
-        for rid, idx in valid_race.groupby(valid_race).groups.items():
-            pi = p.loc[idx][valid_win_flag.loc[idx] == 1]
-            if len(pi) == 1:
-                nll -= np.log(pi.values[0] + 1e-12)
-        if nll < best_nll:
-            best_T, best_nll = T, nll
-    return best_T
 
 # ================= データ準備（例） =================
 # df = ...  # あなたの前処理後データ
@@ -1944,7 +1933,11 @@ def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_f
 # もとの df はあなたの前処理済みデータフレーム
 df = normalize_keiba_columns(df)
 df_train, df_valid = time_or_group_split(df, start='2025-08-01', end='2025-08-31')
-df_valid = df[(df['date'] >= '2025-08-01') & (df['date'] < '2025-08-31')].copy()
+
+# 念のための自己診断（最初だけ表示）
+print("cols:", list(df.columns)[:30])
+print("n_races train/valid:", df_train['race_id'].nunique(), df_valid['race_id'].nunique())
+print("rows train/valid:", len(df_train), len(df_valid))
 
 # 2) ラベル
 df_train['y'] = make_relevance_from_finish(df_train['finish_position'])
