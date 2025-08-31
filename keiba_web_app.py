@@ -1883,13 +1883,57 @@ with tab_rank:
                 if nll < best_nll:
                     best_T, best_nll = T, nll
             return best_T
-        def ndcg_by_race(frame, scores, k=3):
-            vals = []
-            for rid, idx in frame.groupby('race_id').groups.items():
-                y_true = frame.loc[idx, 'y'].values.reshape(1, -1)
-                y_pred = scores[idx].reshape(1, -1)
-                vals.append(ndcg_score(y_true, y_pred, k=k))
-            return float(np.mean(vals))
+       # === Replace: ndcg_by_race (robust, no sklearn.ndcg_score) ===
+import numpy as np
+import pandas as pd
+
+def ndcg_by_race(frame: pd.DataFrame, scores, k: int = 3) -> float:
+    """レース単位で NDCG@k を計算（安全版）。
+       - インデックスをリセットして score 配列と確実に整合
+       - y/pred の NaN/∞ を無害化
+       - 1頭レースや IDCG=0 のときは 0 or 1 を返す
+    """
+    # 必要列だけにして index を 0..N-1 に揃える
+    f = frame[['race_id', 'y']].copy().reset_index(drop=True)
+
+    # スコア配列も同じ長さにクリップしつつ浮動小数へ
+    s = np.asarray(scores, dtype=float)
+    if len(s) != len(f):
+        s = s[:len(f)]
+
+    vals = []
+    for _, idx in f.groupby('race_id').groups.items():
+        idx = np.asarray(list(idx), dtype=int)
+
+        # 正解・予測を取り出して無害化
+        y_true = np.nan_to_num(f.loc[idx, 'y'].values.astype(float), nan=0.0, neginf=0.0, posinf=0.0)
+        y_pred = np.nan_to_num(s[idx].astype(float),                nan=0.0, neginf=0.0, posinf=0.0)
+
+        m = len(idx)
+        if m == 0:
+            continue
+        if m == 1:
+            # 1頭レース：関連度>0 なら 1、そうでなければ 0
+            vals.append(1.0 if y_true[0] > 0 else 0.0)
+            continue
+
+        kk = int(min(max(1, k), m))
+
+        # DCG
+        order = np.argsort(-y_pred)
+        gains = (2.0 ** y_true[order] - 1.0)
+        discounts = 1.0 / np.log2(np.arange(2, m + 2))
+        dcg = float(np.sum(gains[:kk] * discounts[:kk]))
+
+        # IDCG
+        order_best = np.argsort(-y_true)
+        gains_best = (2.0 ** y_true[order_best] - 1.0)
+        idcg = float(np.sum(gains_best[:kk] * discounts[:kk]))
+
+        vals.append(dcg / idcg if idcg > 0 else 0.0)
+
+    return float(np.mean(vals)) if vals else float('nan')
+
 
         # ==== データ読み込み ====
         if train_source == "このExcelのsheet0（過去走）を使う":
