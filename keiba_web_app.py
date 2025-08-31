@@ -4,6 +4,7 @@
 # + ★ 先頭の空行を確実に除去 / 4角ポジション図の安全化
 # + ★ 脚質エディタの値をセッションに保存・復元（リランしても消えない）
 # + ★ 脚質の表記ゆれを吸収（「追い込み」「差込」など→正規化）
+# + ★ ランキング学習は“任意実行”へ変更（finish_positionを安全生成）
 
 import streamlit as st
 import pandas as pd
@@ -282,7 +283,7 @@ with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
     st.caption("※ 場名既定表＋競走名から自動推定。")
 
-# === NEW: バンド校正（B中心化） ===
+# === バンド校正（B中心化） ===
 with st.sidebar.expander("🏷 バンド校正（B中心化）", expanded=True):
     band_mid_target = st.slider("中央値→何点に合わせる？", 40, 80, 65, 1,
                                 help="AR100でレースの真ん中を何点に置くか（Bの真ん中=65推奨）")
@@ -543,9 +544,9 @@ edited = st.data_editor(
     },
     use_container_width=True,
     num_rows='static',
-    height=H(attrs, 420),
-    hide_index=True,  # ★ 行番号も非表示に（任意）
-    key="horses_editor",  # ★ セッション保持のため key を付与
+    height=auto_table_height(len(attrs)) if st.session_state.get('FULL_TABLE_VIEW', True) else 420,
+    hide_index=True,
+    key="horses_editor",
 )
 horses = edited.copy()
 
@@ -907,7 +908,6 @@ df_agg.loc[df_agg['WStd'] < min_floor, 'WStd'] = min_floor
 for df in [horses, df_agg]:
     if '馬名' in df.columns: df['馬名'] = df['馬名'].map(_trim_name)
 
-# ★ 念のためここでも正規化
 if '脚質' in horses.columns:
     horses['脚質'] = horses['脚質'].map(normalize_style)
 
@@ -1016,9 +1016,8 @@ if np.all(~np.isfinite(S)) or len(S)==0:
     med = 0.0; qa = 1.0
 else:
     med = float(np.nanmedian(S))
-    # A以上割合p: 上位(1-p)分位をA境界70点に合わせる
     p = max(0.01, min(0.99, 1.0 - float(band_A_share)/100.0))
-    qa = float(np.nanquantile(S, p))  # ここより上がA以上にしたい
+    qa = float(np.nanquantile(S, p))
 denom = (qa - med)
 a = (70.0 - float(band_mid_target)) / (denom if abs(denom) > 1e-8 else 1.0)
 df_agg['AR100'] = band_mid_target + a * (df_agg['FinalRaw'] - med)
@@ -1192,7 +1191,6 @@ def render_corner_positions_nowrace(horses_df: pd.DataFrame,
     sty = combined_style_series.reindex(df['馬名']).fillna('')
     df['zone4'] = sty.map(_corner__zone_from_style).fillna('中')
     FS = max(1, len(df))
-    # ★ draw（馬番/枠）を安全に算出（pd.NA/Noneでも落ちない）
     if '番' in df.columns:
         draw = df['番'].map(_corner__to_int)
     elif '枠' in df.columns:
@@ -1237,8 +1235,8 @@ def render_corner_positions_nowrace(horses_df: pd.DataFrame,
     return fig
 
 # ======================== 結果タブ ========================
-tab_dash, tab_prob, tab_pace, tab_bets, tab_all, tab_pedi = st.tabs(
-    ["🏠 ダッシュボード", "📈 勝率", "🧭 展開", "🎫 買い目", "📝 全頭コメント", "🧬 血統HTML"]
+tab_dash, tab_prob, tab_pace, tab_bets, tab_all, tab_pedi, tab_rank = st.tabs(
+    ["🏠 ダッシュボード", "📈 勝率", "🧭 展開", "🎫 買い目", "📝 全頭コメント", "🧬 血統HTML", "🏗 ランキング学習（任意）"]
 )
 
 with tab_dash:
@@ -1255,7 +1253,6 @@ with tab_dash:
         except Exception:
             c5.metric("◎ 推定勝率", "—")
 
-    # Band分布サマリー
     st.markdown("#### Band分布")
     band_counts = df_agg['Band'].value_counts().reindex(['SS','S','A','B','C','E']).fillna(0).astype(int)
     dd = pd.DataFrame({'Band':band_counts.index, '頭数': band_counts.values})
@@ -1292,13 +1289,11 @@ with tab_pace:
     df_map = horses.copy()
     if '脚質' not in df_map.columns:
         df_map['脚質'] = ''
-    # 手入力があれば優先、空欄は combined_style で補完
     auto_st = df_map['馬名'].map(combined_style)
     cond_filled = df_map['脚質'].astype(str).str.strip().ne('')
     df_map.loc[~cond_filled, '脚質'] = auto_st.loc[~cond_filled]
-    # 正規化して未定義は空へ
-    df_map['脚質'] = df_map['脚質'].map(normalize_style)
-    df_map['脚質'] = df_map['脚質'].fillna('').where(df_map['脚質'].isin(STYLES), other='')
+    df_map['脚質'] = df_map['脚質'].map(normalize_style).fillna('')
+    df_map['脚質'] = df_map['脚質'].where(df_map['脚質'].isin(STYLES), other='')
 
     style_counts = df_map['脚質'].value_counts().reindex(STYLES).fillna(0).astype(int)
     total_heads = int(style_counts.sum()) if style_counts.sum() > 0 else 1
@@ -1324,7 +1319,7 @@ with tab_pace:
     except Exception as e:
         st.info(f"4角ポジション配置図はスキップ: {e}")
 
-    # 馬番×脚質のロケーション図（既存）
+    # 馬番×脚質のロケーション図（簡易）
     def _normalize_ban(x):
         return pd.to_numeric(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')), errors='coerce')
     if '番' in df_map.columns:
@@ -1366,7 +1361,7 @@ with tab_pace:
         st.info("回り適性を算出できるデータが不足しています。")
 
 with tab_bets:
-    # === 見送りロジック（あなたの方針） ===
+    # === 見送りロジック ===
     allow_bet = bool((df_agg['AR100'] >= 70).any())
     if not allow_bet:
         st.subheader("今回のレースは『見送り』")
@@ -1523,7 +1518,7 @@ with tab_all:
     else:
         st.dataframe(_all, use_container_width=True, height=H(_all, 420))
 
-# ======================== 血統HTML 抽出ユーティリティ（トップレベル定義） ========================
+# ======================== 血統HTML 抽出ユーティリティ ========================
 def _detect_charset_from_head(raw: bytes) -> str | None:
     if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
         return "utf-8-sig"
@@ -1544,7 +1539,6 @@ def _decode_html_bytes(raw: bytes, preferred: str | None = None) -> str:
     for enc in [c for c in cands if not (c in seen or seen.add(c))]:
         try:
             txt = raw.decode(enc)
-            # 文字化けが酷いutf-8を弾く軽いガード
             if enc.startswith("utf-8") and txt.count("�") > 10:
                 continue
             return txt
@@ -1612,7 +1606,6 @@ def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
             fixed.append(t.reset_index(drop=True))
     return fixed
 
-# ======================== 血統HTML（ビュー＋キーワード一致→ボーナス） ========================
 with tab_pedi:
     st.subheader("血統HTMLビューア + ボーナス付与")
     st.caption("NetKeiba等の血統ページHTMLを表示/解析し、キーワード一致の馬へボーナスを付与します。URLでもOK。")
@@ -1733,388 +1726,271 @@ with tab_pedi:
     else:
         st.info("馬名列を含むテーブルが見つかりません。URLが取れない環境では、ページを『完全保存（.html）』してアップロードしてください。")
 
+# ================= ランキング学習（任意・安全化） =================
+with tab_rank:
+    st.subheader("LightGBM によるランキング学習（NDCG）— 任意機能")
+    st.caption("※ チェックを入れたときだけ動きます。finish_position が無くても『確定着順／着／順位』などから自動生成します。")
 
+    run_train = st.checkbox("ランキング学習デモを実行する（重い処理）", value=False)
+    train_source = st.radio("学習データの取得元", ["このExcelのsheet0（過去走）を使う", "別ファイルをアップロードする"], horizontal=False)
+    uploaded = None
+    if train_source == "別ファイルをアップロードする":
+        uploaded = st.file_uploader("CSVまたはExcel（race_id, horse_id, finish_position など）", type=['csv','xlsx'], key="rank_up")
 
+    if run_train:
+        try:
+            import lightgbm as lgb
+            from sklearn.metrics import ndcg_score
+        except Exception as e:
+            st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
+            st.stop()
 
-
-
-
-
-# ====== v2: 列名ゆらぎ吸収 + date/race_id を強制生成 + 安全分割 ======
-import re
-import pandas as pd
-import numpy as np
-
-# === Ranking helpers & imports (drop-in fix) ===
-# 1) 必要ライブラリ
-try:
-    import lightgbm as lgb
-except Exception as e:
-    import streamlit as st
-    st.error("LightGBM が見つかりません。`pip install lightgbm` を実行してください。")
-    raise
-try:
-    from sklearn.metrics import ndcg_score
-except Exception as e:
-    import streamlit as st
-    st.error("scikit-learn が見つかりません。`pip install scikit-learn` を実行してください。")
-    raise
-
-import numpy as np
-import pandas as pd
-
-# 2) ラベル：着順→段階的関連度（NDCG 向け）
-def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
-    pos = pd.to_numeric(pos, errors="coerce")
-    rel = pd.Series(0.0, index=pos.index)
-    rel[pos == 1] = 3.0
-    rel[pos == 2] = 2.0
-    rel[pos == 3] = 1.0
-    rel = rel.fillna(0.0)
-    return rel
-
-# 3) レース内相対特徴（z-score と rank）。race_id が無ければ全体で処理
-def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
-    use_cols = [c for c in base_num_cols if c in df.columns]
-    if not use_cols:
-        return df.copy()
-    if 'race_id' in df.columns:
-        g = df.groupby('race_id', group_keys=False)
-        z = g[use_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9))
-        z.columns = [c + "_z" for c in z.columns]
-        rk = g[use_cols].rank(pct=False, ascending=True).astype(float)
-        rk.columns = [c + "_rk" for c in rk.columns]
-    else:
-        z = (df[use_cols] - df[use_cols].mean()) / (df[use_cols].std(ddof=0) + 1e-9)
-        z = z.add_suffix("_z")
-        rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
-    out = pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
-    return out
-
-# 4) レース内ソフトマックス（確率化）
-def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
-    scores = pd.Series(scores).astype(float)
-    race_ids = pd.Series(race_ids)
-    out = pd.Series(index=scores.index, dtype=float)
-    for rid, idx in race_ids.groupby(race_ids).groups.items():
-        s = scores.loc[idx].values / max(T, 1e-6)
-        e = np.exp(s - np.max(s))
-        p = e / np.sum(e)
-        out.loc[idx] = p
-    return out
-
-# 5) 温度（T）最適化：勝ち馬の負の対数尤度を最小化
-def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
-                     grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) -> float:
-    scores = pd.Series(valid_scores).astype(float)
-    races  = pd.Series(valid_race)
-    win_f  = pd.Series(valid_win_flag).astype(int)
-    best_T, best_nll = 1.0, float('inf')
-    for T in grid:
-        p = softmax_by_race(scores, races, T)
-        nll = 0.0
-        for rid, idx in races.groupby(races).groups.items():
-            pi = p.loc[idx][win_f.loc[idx] == 1]
-            if len(pi) == 1:
-                nll -= float(np.log(pi.values[0] + 1e-12))
-        if nll < best_nll:
-            best_T, best_nll = T, nll
-    return best_T
-
-# 6) 学習用 finish_position の存在チェック（保険）
-def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
-    if 'finish_position' not in df.columns:
-        cand = ['確定着順','順位','着','finish','result_position']
-        for c in cand:
-            if c in df.columns:
-                df = df.copy()
-                df['finish_position'] = pd.to_numeric(df[c], errors='coerce')
-                return df
-        # 無ければエラー（ランキング学習では必須）
-        raise KeyError("finish_position（=着順）列が見つかりません。エイリアスの追加または列名の確認をしてください。")
-    df = df.copy()
-    df['finish_position'] = pd.to_numeric(df['finish_position'], errors='coerce')
-    return df
-
-# 7) topk 出力の表示列を自動選択（horse_id が無いデータへの対応）
-def topk_table_safe(frame: pd.DataFrame, k=3):
-    show_id = 'horse_id' if 'horse_id' in frame.columns else ('馬名' if '馬名' in frame.columns else ('番' if '番' in frame.columns else None))
-    cols = ['race_id']
-    if show_id: cols.append(show_id)
-    cols += [c for c in ['score', 'prob'] if c in frame.columns]
-    out = []
-    for rid, part in frame.sort_values(['race_id','score'], ascending=[True, False]).groupby('race_id'):
-        out.append(part.head(k)[cols])
-    return pd.concat(out) if out else pd.DataFrame(columns=cols)
-# === /drop-in fix ===
-
-ALIASES = {
-    'race_id': [
-        'race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY',
-        'race_code','RaceCode','レースID','レースキー','レースコード','開催R'
-    ],
-    'horse_id': [
-        'horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号'
-    ],
-    'finish_position': [
-        'finish_position','finish','着順','順位','rank','着','result_position'
-    ],
-    'date': [
-        'date','Date','race_date','RaceDate','開催日','日付','レース日',
-        'ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime','開催年月日'
-    ],
-}
-
-RACE_NO_ALIASES = ['race_no','RaceNo','RACE_NO','R','レース','レース番号','レースNo','R_No']
-VENUE_ALIASES   = ['venue','track','course','場','場所','競馬場','racecourse','場名','開催場','場コード','開催']
-RACE_NAME_ALIASES = ['race_name','RaceName','レース名','競走名']
-
-def _first_col(df, cands):
-    for c in cands:
-        if c in df.columns:
-            return c
-    return None
-
-def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for canon, cands in ALIASES.items():
-        if canon in df.columns:
-            continue
-        for c in cands:
-            if c in df.columns:
-                df.rename(columns={c: canon}, inplace=True)
-                break
-    return df
-
-def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
-    if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
-        ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
-    else:
-        ss = s.astype(str)
-    cand = ss.str.extract(r'(\d{8})', expand=False)
-    if cand.notna().mean() > 0.8:
-        dt = pd.to_datetime(cand, format='%Y%m%d', errors='coerce')
-        if dt.notna().mean() > 0.8:
-            return dt
-    dt = pd.to_datetime(ss, errors='coerce')
-    if dt.notna().mean() > 0.8:
-        return dt
-    return None
-
-def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if 'date' in df.columns:
-        dt = pd.to_datetime(df['date'], errors='coerce')
-        if dt.notna().any():
-            df['date'] = dt
+        # ==== 列ゆらぎを正規化 ====
+        ALIASES = {
+            'race_id': ['race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY','race_code','RaceCode','レースID','レースキー','レースコード','開催R'],
+            'horse_id': ['horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号','馬番'],
+            'finish_position': ['finish_position','finish','着順','順位','rank','着','result_position','確定着順'],
+            'date': ['date','Date','race_date','RaceDate','開催日','日付','レース日','ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime','開催年月日'],
+        }
+        def _first_col(df, cands):
+            for c in cands:
+                if c in df.columns: return c
+            return None
+        def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            for canon, cands in ALIASES.items():
+                if canon in df.columns: continue
+                for c in cands:
+                    if c in df.columns:
+                        df.rename(columns={c: canon}, inplace=True)
+                        break
             return df
-    for c in ALIASES['date']:
-        if c in df.columns:
-            dt = _try_parse_date_series(df[c])
-            if dt is not None and dt.notna().any():
-                df['date'] = dt
+        def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
+            if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
+                ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
+            else:
+                ss = s.astype(str)
+            cand = ss.str.extract(r'(\d{8})', expand=False)
+            if cand.notna().mean() > 0.8:
+                dt = pd.to_datetime(cand, format='%Y%m%d', errors='coerce')
+                if dt.notna().mean() > 0.8:
+                    return dt
+            dt = pd.to_datetime(ss, errors='coerce')
+            if dt.notna().mean() > 0.8:
+                return dt
+            return None
+        def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            if 'date' in df.columns:
+                dt = pd.to_datetime(df['date'], errors='coerce')
+                if dt.notna().any():
+                    df['date'] = dt; return df
+            for c in ALIASES['date']:
+                if c in df.columns:
+                    dt = _try_parse_date_series(df[c])
+                    if dt is not None and dt.notna().any():
+                        df['date'] = dt; return df
+            for keycol in ['race_id','race_key','RACE_KEY','RaceKey','race_code','RACE_ID']:
+                if keycol in df.columns:
+                    dt = _try_parse_date_series(df[keycol])
+                    if dt is not None and dt.notna().any():
+                        df['date'] = dt; return df
+            df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(np.arange(len(df)), unit='D')
+            return df
+        def _ensure_race_id(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            if 'race_id' in df.columns and df['race_id'].notna().any():
                 return df
-    for keycol in ['race_id','race_key','RACE_KEY','RaceKey','race_code','RACE_ID']:
-        if keycol in df.columns:
-            dt = _try_parse_date_series(df[keycol])
-            if dt is not None and dt.notna().any():
-                df['date'] = dt
+            keycol = _first_col(df, ['race_id','race_key','RaceKey','RACE_KEY','race_code','RACE_ID','レースID','レースキー','レースコード'])
+            if keycol is not None:
+                df['race_id'] = df[keycol].astype(str); return df
+            dcol = 'date' if 'date' in df.columns else None
+            vcol = _first_col(df, ['venue','track','course','場','場所','競馬場','racecourse','場名','開催場','場コード','開催'])
+            rcol = _first_col(df, ['race_no','RaceNo','RACE_NO','R','レース','レース番号','レースNo','R_No'])
+            if dcol is not None and (vcol is not None or rcol is not None):
+                dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
+                parts = [dkey]
+                if vcol is not None:
+                    vkey = df[vcol].astype(str).str.replace(r'\s+', '', regex=True)
+                    parts.append(vkey)
+                if rcol is not None:
+                    rnum = df[rcol].astype(str).str.extract(r'(\d{1,2})', expand=False).fillna('NA')
+                    parts.append('R' + rnum)
+                df['race_id'] = parts[0]
+                for p in parts[1:]:
+                    df['race_id'] = df['race_id'] + '_' + p
                 return df
-    # 擬似日付（グループ順）
-    order = df.reset_index(drop=True).index
-    df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(order, unit='D')
-    return df
+            if dcol is not None:
+                tmp = df.sort_values(dcol).copy()
+                block = tmp.groupby(pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d')).cumcount() // 18
+                tmp['__rid'] = pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d') + '_G' + block.astype(str)
+                df = tmp.sort_index()
+                df['race_id'] = df['__rid'].values
+                df.drop(columns=['__rid'], inplace=True, errors='ignore')
+                return df
+            df['race_id'] = 'G' + (np.arange(len(df)) // 18).astype(str)
+            return df
+        def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
+            df = _rename_to_canonical(df)
+            df = _ensure_date_column(df)
+            df = _ensure_race_id(df)
+            return df
+        def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            if 'finish_position' not in df.columns:
+                for c in ['確定着順','順位','着','finish','result_position','着順']:
+                    if c in df.columns:
+                        df['finish_position'] = pd.to_numeric(df[c], errors='coerce'); break
+            df['finish_position'] = pd.to_numeric(df.get('finish_position', np.nan), errors='coerce')
+            if 'finish_position' not in df.columns:
+                raise KeyError("finish_position（=着順）列を生成できませんでした。")
+            return df
+        def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
+            use_cols = [c for c in base_num_cols if c in df.columns]
+            if not use_cols: return df.copy()
+            if 'race_id' in df.columns:
+                g = df.groupby('race_id', group_keys=False)
+                z = g[use_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9)).add_suffix("_z")
+                rk = g[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
+            else:
+                z = (df[use_cols] - df[use_cols].mean()) / (df[use_cols].std(ddof=0) + 1e-9)
+                z = z.add_suffix("_z")
+                rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
+            return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
+        def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
+            scores = pd.Series(scores).astype(float)
+            race_ids = pd.Series(race_ids)
+            out = pd.Series(index=scores.index, dtype=float)
+            for rid, idx in race_ids.groupby(race_ids).groups.items():
+                s = scores.loc[idx].values / max(T, 1e-6)
+                e = np.exp(s - np.max(s))
+                p = e / np.sum(e)
+                out.loc[idx] = p
+            return out
+        def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
+                             grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) -> float:
+            scores = pd.Series(valid_scores).astype(float)
+            races  = pd.Series(valid_race)
+            win_f  = pd.Series(valid_win_flag).astype(int)
+            best_T, best_nll = 1.0, float('inf')
+            for T in grid:
+                p = softmax_by_race(scores, races, T)
+                nll = 0.0
+                for rid, idx in races.groupby(races).groups.items():
+                    pi = p.loc[idx][win_f.loc[idx] == 1]
+                    if len(pi) == 1:
+                        nll -= float(np.log(pi.values[0] + 1e-12))
+                if nll < best_nll:
+                    best_T, best_nll = T, nll
+            return best_T
+        def ndcg_by_race(frame, scores, k=3):
+            vals = []
+            for rid, idx in frame.groupby('race_id').groups.items():
+                y_true = frame.loc[idx, 'y'].values.reshape(1, -1)
+                y_pred = scores[idx].reshape(1, -1)
+                vals.append(ndcg_score(y_true, y_pred, k=k))
+            return float(np.mean(vals))
 
-def _ensure_race_id(df: pd.DataFrame) -> pd.DataFrame:
-    """可能なら (date + venue + R) から race_id を合成。なければ RACE_KEY/レースID 等から拾う。"""
-    df = df.copy()
-    if 'race_id' in df.columns and df['race_id'].notna().any():
-        return df
-
-    # 1) 既存キーの流用
-    keycol = _first_col(df, ['race_id','race_key','RaceKey','RACE_KEY','race_code','RACE_ID','レースID','レースキー','レースコード'])
-    if keycol is not None:
-        df['race_id'] = df[keycol].astype(str)
-        return df
-
-    # 2) (date + venue + R) 合成
-    dcol = 'date' if 'date' in df.columns else None
-    vcol = _first_col(df, VENUE_ALIASES)
-    rcol = _first_col(df, RACE_NO_ALIASES)
-    if dcol is not None and (vcol is not None or rcol is not None):
-        dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
-        parts = [dkey]
-        if vcol is not None:
-            vkey = df[vcol].astype(str).str.replace(r'\s+', '', regex=True)
-            parts.append(vkey)
-        if rcol is not None:
-            rnum = df[rcol].astype(str).str.extract(r'(\d{1,2})', expand=False).fillna('NA')
-            parts.append('R' + rnum)
-        df['race_id'] = parts[0]
-        for p in parts[1:]:
-            df['race_id'] = df['race_id'] + '_' + p
-        return df
-
-    # 3) (date + race_name)
-    ncol = _first_col(df, RACE_NAME_ALIASES)
-    if dcol is not None and ncol is not None:
-        dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
-        nkey = df[ncol].astype(str).str.replace(r'\s+', '', regex=True)
-        df['race_id'] = dkey + '_' + nkey
-        return df
-
-    # 4) 最終手段：日付ごとに連番で仮ID（各レース頭数がバラつく場合でも“レース単位”が必要）
-    if dcol is not None:
-        tmp = df.sort_values(dcol).copy()
-        # 近い行同士を同一レースとみなすため、連続塊に番号を振る（同日で値が飛びにくい列を使うと尚良い）
-        block = tmp.groupby(pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d')).cumcount() // 18  # 18頭想定で粗く区切る
-        tmp['__rid'] = pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d') + '_G' + block.astype(str)
-        df = tmp.sort_index()
-        df['race_id'] = df['__rid'].values
-        df.drop(columns=['__rid'], inplace=True, errors='ignore')
-        return df
-
-    # 5) 何も無い場合は全体を粗くブロック化
-    block = np.arange(len(df)) // 18
-    df['race_id'] = 'G' + block.astype(str)
-    return df
-
-def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = _rename_to_canonical(df)
-    df = _ensure_date_column(df)
-    df = _ensure_race_id(df)
-    return df
-
-def time_or_group_split(
-    df: pd.DataFrame,
-    start: str = '2025-08-01',
-    end: str   = '2025-08-31',
-    valid_ratio_by_race: float = 0.12
-):
-    """date が取れれば日付で分割。0件ならレース単位の後ろ何割かを検証に（race_id 生成済み前提）。"""
-    df = normalize_keiba_columns(df)
-
-    try:
-        start_dt = pd.to_datetime(start); end_dt = pd.to_datetime(end)
-    except Exception:
-        start_dt = pd.Timestamp('1900-01-01'); end_dt = pd.Timestamp('2100-01-01')
-
-    m_train = df['date'] < start_dt
-    m_valid = (df['date'] >= start_dt) & (df['date'] < end_dt)
-    df_train = df[m_train].copy()
-    df_valid = df[m_valid].copy()
-
-    # バリデーションが空/極少 or race_id が単一しか無い場合はフォールバック
-    if (len(df_valid) == 0) or ('race_id' not in df_valid.columns) or (df_valid['race_id'].nunique() <= 1):
-        races = df['race_id'].astype(str).dropna().unique().tolist()
-        if len(races) == 0:
-            # 行ベース分割（最後の何割か）
-            cut = max(int(len(df) * (1 - valid_ratio_by_race)), 1)
-            df_train = df.iloc[:cut].copy()
-            df_valid = df.iloc[cut:].copy()
+        # ==== データ読み込み ====
+        if train_source == "このExcelのsheet0（過去走）を使う":
+            df_train_raw = sheet0.copy()
         else:
-            # 後ろ何割かのレースを検証に
-            # レースの“時系列”は date の中央値で並べる
-            race_order = (
-                df.groupby('race_id')['date']
-                .median()
-                .sort_values()
-                .index
-                .tolist()
-            )
-            n_val = max(int(len(race_order) * valid_ratio_by_race), 1)
+            if uploaded is None:
+                st.warning("学習用ファイルをアップロードしてください。")
+                st.stop()
+            if uploaded.name.lower().endswith(".csv"):
+                df_train_raw = pd.read_csv(uploaded)
+            else:
+                df_train_raw = pd.read_excel(uploaded)
+
+        # ==== 前処理 ====
+        df_train_raw = normalize_keiba_columns(df_train_raw)
+        df_train_raw = ensure_finish_position(df_train_raw)
+
+        # 期間分割（直近を検証に）
+        cut_date = pd.to_datetime(df_train_raw['date']).quantile(0.85)
+        train_df = df_train_raw[df_train_raw['date'] < cut_date].copy()
+        valid_df = df_train_raw[df_train_raw['date'] >= cut_date].copy()
+        if valid_df['race_id'].nunique() <= 1:
+            # レース単位で後方15%を検証へ
+            race_order = df_train_raw.groupby('race_id')['date'].median().sort_values().index.tolist()
+            n_val = max(int(len(race_order)*0.15), 1)
             val_set = set(race_order[-n_val:])
-            df_train = df[~df['race_id'].isin(val_set)].copy()
-            df_valid = df[df['race_id'].isin(val_set)].copy()
-    return df_train, df_valid
-# ====== /v2 ======
+            train_df = df_train_raw[~df_train_raw['race_id'].isin(val_set)].copy()
+            valid_df = df_train_raw[df_train_raw['race_id'].isin(val_set)].copy()
 
+        # ラベル（1着=3, 2着=2, 3着=1）
+        def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
+            pos = pd.to_numeric(pos, errors="coerce")
+            rel = pd.Series(0.0, index=pos.index)
+            rel[pos == 1] = 3.0
+            rel[pos == 2] = 2.0
+            rel[pos == 3] = 1.0
+            return rel.fillna(0.0)
+        train_df['y'] = make_relevance_from_finish(train_df['finish_position'])
+        valid_df['y'] = make_relevance_from_finish(valid_df['finish_position'])
 
-# ================= データ準備（例） =================
-# df = ...  # あなたの前処理後データ
-# 1) 学習用抽出（finish_position がある期間）
-# もとの df はあなたの前処理済みデータフレーム
-df = normalize_keiba_columns(df)
-df_train, df_valid = time_or_group_split(df, start='2025-08-01', end='2025-08-31')
+        # 特徴量（数値のうち漏洩を除く→レース内相対特徴を付加）
+        leak_cols = {'finish_position','win_odds','payout','time_sec'}
+        num_cols = [c for c in train_df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
+        train_df = add_in_race_relative_features(train_df, num_cols)
+        valid_df = add_in_race_relative_features(valid_df, num_cols)
 
-# 念のための自己診断（最初だけ表示）
-print("cols:", list(df.columns)[:30])
-print("n_races train/valid:", df_train['race_id'].nunique(), df_valid['race_id'].nunique())
-print("rows train/valid:", len(df_train), len(df_valid))
+        feat_cols = [c for c in train_df.columns if c.endswith('_z') or c.endswith('_rk')]
+        keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
+        feat_cols += [c for c in keep_raw if c in train_df.columns]
+        feat_cols = sorted(set(feat_cols))
+        if not feat_cols:
+            st.error("特徴量が生成できませんでした。数値列が必要です。")
+            st.stop()
 
-# 2) ラベル
-df_train['y'] = make_relevance_from_finish(df_train['finish_position'])
-df_valid['y'] = make_relevance_from_finish(df_valid['finish_position'])
+        def make_group_counts(frame):
+            return frame.groupby('race_id').size().tolist()
+        X_tr, y_tr = train_df[feat_cols].values, train_df['y'].values
+        X_va, y_va = valid_df[feat_cols].values, valid_df['y'].values
+        g_tr = make_group_counts(train_df)
+        g_va = make_group_counts(valid_df)
 
-# 3) 数値候補から“漏洩しうる列”を除外して相対特徴を付与
-leak_cols = ['finish_position','win_odds','payout','time_sec']  # 例：確定情報や確定後しか出ない列は除く
-num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
-df_train = add_in_race_relative_features(df_train, num_cols)
-df_valid = add_in_race_relative_features(df_valid, num_cols)
+        # 学習
+        ranker = lgb.LGBMRanker(
+            objective='lambdarank',
+            metric='ndcg',
+            n_estimators=1200,
+            learning_rate=0.05,
+            num_leaves=63,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            min_data_in_leaf=20,
+            random_state=42
+        )
+        ranker.fit(
+            X_tr, y_tr,
+            group=g_tr,
+            eval_set=[(X_va, y_va)],
+            eval_group=[g_va],
+            eval_at=[1,3,5],
+            callbacks=[lgb.early_stopping(150), lgb.log_evaluation(100)]
+        )
 
-# 4) 使う特徴量（相対を主軸に、元の一部も入れる）
-feat_cols = []
-feat_cols += [c for c in df_train.columns if c.endswith('_z') or c.endswith('_rk')]
-# 任意で元の一部を追加（カテゴリはエンコード済み前提）
-keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
-feat_cols += [c for c in keep_raw if c in df_train.columns]
-feat_cols = sorted(set(feat_cols))
+        valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
+        ndcg3 = ndcg_by_race(valid_df, valid_scores, k=3)
+        st.success(f"NDCG@3 = {ndcg3:.4f}")
 
-# 5) グループ情報
-def make_group_counts(frame):
-    return frame.groupby('race_id').size().tolist()
+        # 確率化
+        valid_df = valid_df.reset_index(drop=True)
+        valid_df['score'] = valid_scores
+        valid_df['win_flag'] = (valid_df['finish_position'] == 1).astype(int)
+        T = tune_temperature(valid_df['score'], valid_df['race_id'], valid_df['win_flag'])
+        valid_df['prob'] = softmax_by_race(valid_df['score'], valid_df['race_id'], T)
 
-X_tr, y_tr = df_train[feat_cols].values, df_train['y'].values
-X_va, y_va = df_valid[feat_cols].values, df_valid['y'].values
-g_tr = make_group_counts(df_train)
-g_va = make_group_counts(df_valid)
+        show_id = 'horse_id' if 'horse_id' in valid_df.columns else (_first_col(valid_df, ['馬名','番']) or '番')
+        cols = ['race_id'] + ([show_id] if show_id else []) + ['score','prob']
+        topk = []
+        for rid, part in valid_df.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
+            topk.append(part.head(3)[[c for c in cols if c in part.columns]])
+        out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
+        st.markdown("#### 検証レース 上位3（スコア&確率）")
+        st.dataframe(out, use_container_width=True, height=H(out, 600))
 
-# 6) 学習
-ranker = lgb.LGBMRanker(
-    objective='lambdarank',
-    metric='ndcg',
-    n_estimators=3000,
-    learning_rate=0.05,
-    num_leaves=63,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    min_data_in_leaf=20,
-    random_state=42
-)
-
-ranker.fit(
-    X_tr, y_tr,
-    group=g_tr,
-    eval_set=[(X_va, y_va)],
-    eval_group=[g_va],
-    eval_at=[1,3,5],
-    callbacks=[lgb.early_stopping(200), lgb.log_evaluation(100)]
-)
-
-# 7) 検証評価（NDCG@3 例）
-# ndcg_score は (y_true, y_score) をレースごとに配列で渡す必要がある
-def ndcg_by_race(frame, scores, k=3):
-    vals = []
-    for rid, idx in frame.groupby('race_id').groups.items():
-        y_true = frame.loc[idx, 'y'].values.reshape(1, -1)
-        y_pred = scores[idx].reshape(1, -1)
-        vals.append(ndcg_score(y_true, y_pred, k=k))
-    return float(np.mean(vals))
-
-valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
-print("Valid NDCG@3:", ndcg_by_race(df_valid, valid_scores, k=3))
-
-# 8) 確率化（温度最適化→ソフトマックス）
-df_valid['score'] = valid_scores
-df_valid['win_flag'] = (df_valid['finish_position'] == 1).astype(int)
-T = tune_temperature(df_valid['score'], df_valid['race_id'], df_valid['win_flag'])
-df_valid['prob'] = softmax_by_race(df_valid['score'], df_valid['race_id'], T)
-
-# 9) 予測の出力（各レースの上位）
-def topk_table(frame, k=3):
-    out = []
-    for rid, part in frame.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
-        out.append(part.head(k)[['race_id','horse_id','score','prob']])
-    return pd.concat(out)
-print(topk_table(df_valid, k=3).head(20))
-
+    else:
+        st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
