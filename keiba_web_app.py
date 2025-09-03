@@ -1236,6 +1236,32 @@ st.download_button("📥 本日の評価テーブルをCSVで保存", data=csv, 
 # ====================== タブ ======================
 tab_main, tab_vis, tab_eval, tab_calib, tab_bet = st.tabs(["🏁 本命","📊 可視化","📈 評価","📏 校正","💸 買い目"])
 
+with tab_main:
+    st.markdown("#### 本命・対抗（Top候補）")
+
+    # 表示用：上位を抜粋
+    top_cols = ['順位','印','枠','番','馬名','AR100','Band','勝率%_PL','複勝率%_PL','PacePts','TurnPref']
+    top_view = df_disp[top_cols].head(6).copy()
+    st.dataframe(
+        top_view.style.format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','PacePts':'{:.2f}'}),
+        use_container_width=True, height=H(top_view, 360)
+    )
+
+    # 見送りルールのメモ
+    if not (df_disp['AR100'] >= 70).any():
+        st.warning("今回のレースは『見送り』：A以上（AR100≥70）が不在。")
+    else:
+        lead = top_view.iloc[0] if len(top_view)>0 else None
+        if lead is not None:
+            st.info(f"本命候補：**{int(lead['枠'])}-{int(lead['番'])} {lead['馬名']}** / 勝率{lead['勝率%_PL']:.2f}% / AR100 {lead['AR100']:.1f}")
+
+    # 4コーナー配置図（脚質×枠からの想定）
+    try:
+        fig = render_corner_positions_nowrace(horses, combined_style, title="4コーナー想定ポジション（本レース）")
+        st.pyplot(fig)
+    except Exception as e:
+        st.caption(f"4角ポジション図は表示できませんでした：{e}")
+
 with tab_vis:
     st.markdown("#### 散布図（AR100 × ペース適性）")
     df_plot = df_disp[['馬名','AR100','PacePts','勝率%_PL','脚質','枠','番']].copy()
