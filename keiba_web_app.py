@@ -46,18 +46,48 @@ except Exception:
     SK_PLATT = False
 
 # ---- 基本設定とフォント ----
+# ---- 日本語フォント設定（置き換え）----
+import os
+from matplotlib import font_manager
+
 @st.cache_resource
 def get_jp_font():
-    for path in ["ipaexg.ttf", "C:/Windows/Fonts/meiryo.ttc"]:
-        try:
-            return font_manager.FontProperties(fname=path)
-        except Exception:
-            pass
+    # 同梱 or OSの代表的な場所を順に探索
+    candidates = [
+        "ipaexg.ttf",  # リポジトリ直下に置いた場合（推奨：IPAexGothic）
+        "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/System/Library/Fonts/Hiragino Sans W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "C:/Windows/Fonts/meiryo.ttc",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                font_manager.fontManager.addfont(p)  # ← 実体を登録
+            except Exception:
+                pass
+            return font_manager.FontProperties(fname=p)
     return None
 
 jp_font = get_jp_font()
+
+import matplotlib.pyplot as plt
+plt.rcParams['axes.unicode_minus'] = False  # マイナス記号の豆腐対策
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['IPAPGothic', 'Meiryo', 'MS Gothic']
+plt.rcParams['font.sans-serif'] = [
+    'IPAexGothic', 'IPAGothic', 'Noto Sans CJK JP',
+    'Yu Gothic UI', 'Meiryo', 'Hiragino Sans', 'MS Gothic'
+]
+
+# 見つかった実フォント名を優先で適用
+if jp_font is not None:
+    try:
+        plt.rcParams['font.family'] = jp_font.get_name()
+    except Exception:
+        pass
+
 st.set_page_config(page_title="競馬予想アプリ（修正版）", layout="wide")
 
 # ---- 便利CSS（sidebar 幅だけ調整）----
