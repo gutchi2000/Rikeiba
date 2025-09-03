@@ -4,10 +4,10 @@
 # + ★ 先頭の空行を確実に除去 / 4角ポジション図の安全化
 # + ★ 脚質エディタの値をセッションに保存・復元（リランしても消えない）
 # + ★ 脚質の表記ゆれを吸収（「追い込み」「差込」など→正規化）
-# + ★ ランキング学習は“任意実行”へ変更（finish_positionを安全生成）
 # + ★ ndcg_by_race を堅牢実装でトップレベルに定義（重複import/インデント崩れ修正）
 # + ★ 18桁 race_id → NetKeiba 12桁 に自動変換（学習前処理）
-# + ★ 学習後：「きょうのレース」を推論→ML×MC融合→買い目案を自動提示
+# + ★ 【置き換え】勝率は Plackett–Luce（softmax）で解析計算、Top3は軽量MC。等温回帰で確率校正（任意）。
+# + ★ 【削除予定】LightGBM学習UI/ロジック（後半で完全削除＆評価タブへ差し替え）
 
 import streamlit as st
 import pandas as pd
@@ -31,6 +31,19 @@ try:
     COMPONENTS = True
 except Exception:
     COMPONENTS = False
+
+# ===== Optional: 確率校正（等温回帰 / Platt用ロジット） =====
+try:
+    from sklearn.isotonic import IsotonicRegression
+    SK_ISO = True
+except Exception:
+    SK_ISO = False
+
+try:
+    from sklearn.linear_model import LogisticRegression
+    SK_PLATT = True
+except Exception:
+    SK_PLATT = False
 
 # ---- 基本設定とフォント ----
 @st.cache_resource
@@ -324,39 +337,15 @@ with st.sidebar.expander("🏷 バンド校正（B中心化）", expanded=True):
     band_clip_lo = st.slider("下限クリップ", 0, 60, 40, 1)
     band_clip_hi = st.slider("上限クリップ", 80, 100, 100, 1)
 
-# === 表示設定 ===
-with st.sidebar.expander("🖥 表示設定", expanded=True):
-    FULL_TABLE_VIEW = st.checkbox("表は全頭表示（内部スクロールを無くす）", value=True)
-    MAX_TABLE_HEIGHT = st.slider("全頭表示の最大高さ(px)", 800, 10000, 5000, 200)
-
-def auto_table_height(n_rows: int, row_px: int = 35, header_px: int = 38, pad_px: int = 28) -> int:
-    h = int(header_px + row_px * max(1, int(n_rows)) + pad_px)
-    return min(h, int(MAX_TABLE_HEIGHT))
-
-def H(df, default_px: int) -> int:
-    try:
-        return auto_table_height(len(df)) if FULL_TABLE_VIEW else int(default_px)
-    except Exception:
-        return int(default_px)
-
-# === 便利リセット ===
-with st.sidebar.expander("🧹 トラブル時のリセット", expanded=False):
-    if st.button("列マッピングをリセット"):
-        for key in list(st.session_state.keys()):
-            if key.startswith("s0:") or key.startswith("map:s0:") or key.startswith("s1:") or key.startswith("map:s1:"):
-                del st.session_state[key]
-        st.success("列マッピングをリセットしました。Excelを再読み込みしてください。")
-
-with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
-    mc_iters   = st.slider("勝率MC 反復回数", 1000, 100000, 20000, 1000)
-    mc_beta    = st.slider("強さ→勝率 温度β", 0.1, 5.0, 1.5, 0.1)
-    mc_tau     = st.slider("安定度ノイズ係数 τ", 0.0, 2.0, 0.6, 0.05)
+# === NEW: PL/Top3と保存系 ===
+with st.sidebar.expander("🧪 勝率化 / 保存", expanded=False):
+    mc_iters   = st.slider("Top3近似サンプル数（軽量MC）", 1000, 50000, 8000, 1000)
+    mc_beta    = st.slider("PL温度 β（大=鋭い）", 0.3, 5.0, 1.4, 0.1)
     mc_seed    = st.number_input("乱数Seed", 0, 999999, 42, 1)
     st.markdown("---")
     total_budget = st.slider("合計予算", 500, 50000, 10000, 100)
     min_unit     = st.selectbox("最小賭け単位", [100, 200, 300, 500], index=0)
     max_lines    = st.slider("最大点数(連系)", 1, 60, 20, 1)
-    scenario     = st.selectbox("シナリオ", ['通常','ちょい余裕','余裕'])
     st.markdown("---")
 
     # ---- JSON保存を安全化（非シリアライズ品を文字列化） ----
@@ -400,6 +389,35 @@ with st.sidebar.expander("🧪 モンテカルロ / 保存", expanded=False):
             st.success("設定を読み込みました（必要なら再実行）。")
         except Exception as e:
             st.error(f"設定ファイルの読み込みエラー: {e}")
+
+# === NEW: 確率校正の設定 ===
+with st.sidebar.expander("📏 確率校正（任意）", expanded=False):
+    do_calib = st.checkbox("勝率を校正する（等温回帰/Platt）", value=False)
+    calib_method = st.radio("校正法", ["Isotonic（推奨）","Platt（ロジット）"], index=0, horizontal=True, disabled=not do_calib)
+    st.caption("※ sheet0の過去走からレース内softmax→1着ラベルで学習。芝/ダ分割などは後半の評価タブで。")
+
+# === 表示設定 ===
+with st.sidebar.expander("🖥 表示設定", expanded=True):
+    FULL_TABLE_VIEW = st.checkbox("表は全頭表示（内部スクロールを無くす）", value=True)
+    MAX_TABLE_HEIGHT = st.slider("全頭表示の最大高さ(px)", 800, 10000, 5000, 200)
+
+def auto_table_height(n_rows: int, row_px: int = 35, header_px: int = 38, pad_px: int = 28) -> int:
+    h = int(header_px + row_px * max(1, int(n_rows)) + pad_px)
+    return min(h, int(MAX_TABLE_HEIGHT))
+
+def H(df, default_px: int) -> int:
+    try:
+        return auto_table_height(len(df)) if FULL_TABLE_VIEW else int(default_px)
+    except Exception:
+        return int(default_px)
+
+# === 便利リセット ===
+with st.sidebar.expander("🧹 トラブル時のリセット", expanded=False):
+    if st.button("列マッピングをリセット"):
+        for key in list(st.session_state.keys()):
+            if key.startswith("s0:") or key.startswith("map:s0:") or key.startswith("s1:") or key.startswith("map:s1:"):
+                del st.session_state[key]
+        st.success("列マッピングをリセットしました。Excelを再読み込みしてください。")
 
 # ======================== ファイルアップロード ========================
 st.title("競馬予想アプリ（修正版）")
@@ -591,7 +609,8 @@ st.session_state['horses_df'] = horses.copy()
 
 validate_inputs(df_score, horses)
 
-# --- 脚質 自動推定 ---
+# --- 脚質 自動推定（略、既存ロジック維持） ---
+# （ここは元のコードと同一のため省略せず残しています）
 df_style = pd.DataFrame({'馬名': [], 'p_逃げ': [], 'p_先行': [], 'p_差し': [], 'p_追込': [], '推定脚質': []})
 need_cols = {'馬名','レース日','頭数','通過4角'}
 if auto_style_on and need_cols.issubset(df_score.columns):
@@ -1068,928 +1087,393 @@ def to_band(x):
     return 'E'
 df_agg['Band'] = df_agg['AR100'].map(to_band)
 
-# ===== 勝率MC =====
-S2 = df_agg['FinalRaw'].to_numpy(dtype=float)
-S2 = (S2 - np.nanmean(S2)) / (np.nanstd(S2) + 1e-9)
-W = df_agg['WStd'].to_numpy(dtype=float)
-W = (W - W.min()) / (W.max() - W.min() + 1e-9)
-n = len(S2)
-rng = np.random.default_rng(int(mc_seed))
-gumbel = rng.gumbel(loc=0.0, scale=1.0, size=(mc_iters, n))
-noise  = (mc_tau * W)[None, :] * rng.standard_normal((mc_iters, n))
-U = mc_beta * S2[None, :] + noise + gumbel
-rank_idx = np.argsort(-U, axis=1)
-win_counts  = np.bincount(rank_idx[:, 0], minlength=n).astype(float)
-top3_counts = np.zeros(n, dtype=float)
-for k in range(3):
-    top3_counts += np.bincount(rank_idx[:, k], minlength=n).astype(float)
-p_win  = win_counts  / mc_iters
-p_top3 = top3_counts / mc_iters
-df_agg['勝率%_MC']   = (p_win  * 100).round(2)
-df_agg['複勝率%_MC'] = (p_top3 * 100).round(2)
+# ============================================================
+# ========== ここから：勝率は PL（解析解）に置き換え ==========
+# ============================================================
 
-# 上位抽出と印（内部用）
-CUTOFF = 50.0
-cand = df_agg[df_agg['FinalZ'] >= CUTOFF].sort_values('FinalZ', ascending=False).copy()
-topN = cand.head(6).copy()
-marks = ['◎','〇','▲','☆','△','△']
-if len(topN)>0: topN['印'] = marks[:len(topN)]
+def _softmax_vec(v: np.ndarray) -> np.ndarray:
+    v = np.asarray(v, float)
+    v = v - np.max(v)
+    ev = np.exp(v)
+    s = ev.sum()
+    return ev / s if (s > 0 and np.isfinite(s)) else np.ones_like(ev)/len(ev)
 
-# ===== 散布図（縦軸堅牢化） =====
-st.markdown("### 散布図（最終偏差値 × 安定度）")
-if ALT_AVAILABLE and len(df_agg)>0:
-    w_all = df_agg['WStd'].replace([np.inf,-np.inf], np.nan).dropna()
-    if len(w_all) >= 2:
-        q10, q25, q75, q90 = np.percentile(w_all, [10,25,75,90])
-        iqr = max(0.1, q75 - q25)
-        y_lo = max(0.0, q10 - 0.3*iqr)
-        y_hi = q90 + 0.3*iqr
-        if (y_hi - y_lo) < 4.0:
-            mid = (y_hi + y_lo)/2
-            y_lo, y_hi = max(0.0, mid-2.5), mid+2.5
-    else:
-        y_lo, y_hi = (0.0, 5.0)
+# --- （任意）過去走からの等温回帰/Platt校正器の学習 ---
+def _make_race_id_for_hist(df: pd.DataFrame) -> pd.Series:
+    d = pd.to_datetime(df['レース日'], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
+    n = df['競走名'].astype(str).fillna('')
+    return d + '_' + n
 
-    x_mid = 50.0
-    y_mid = float(df_agg['WStd'].mean())
-    rect = alt.Chart(pd.DataFrame([
-        {'x1': df_agg['FinalZ'].min(), 'x2': x_mid, 'y1': y_mid, 'y2': y_hi},
-        {'x1': x_mid, 'x2': df_agg['FinalZ'].max(), 'y1': y_mid, 'y2': y_hi},
-        {'x1': df_agg['FinalZ'].min(), 'x2': x_mid, 'y1': y_lo, 'y2': y_mid},
-        {'x1': x_mid, 'x2': df_agg['FinalZ'].max(), 'y1': y_lo, 'y2': y_mid},
-    ])).mark_rect(opacity=0.07).encode(x='x1:Q', x2='x2:Q', y='y1:Q', y2='y2:Q')
-    points = alt.Chart(df_agg).mark_circle(size=100).encode(
-        x=alt.X('FinalZ:Q', title='最終偏差値'),
-        y=alt.Y('WStd:Q',  title='加重標準偏差（小さいほど安定）', scale=alt.Scale(domain=(float(y_lo), float(y_hi)))),
-        tooltip=['馬名','AR100','Band','WAvgZ','WStd','RecencyZ','StabZ','PacePts','TurnPref','FinalZ','勝率%_MC']
-    )
-    labels = alt.Chart(df_agg).mark_text(dx=6, dy=-6, fontSize=10, color='#ffffff').encode(
-        x='FinalZ:Q', y='WStd:Q', text='馬名:N'
-    )
-    vline = alt.Chart(pd.DataFrame({'x':[x_mid]})).mark_rule(color='gray').encode(x='x:Q')
-    hline = alt.Chart(pd.DataFrame({'y':[y_mid]})).mark_rule(color='gray').encode(y='y:Q')
-    chart = (rect + points + labels + vline + hline).properties(width=700, height=420).interactive()
-    st.altair_chart(chart, use_container_width=True)
-else:
-    st.table(df_agg[['馬名','FinalZ','WStd']].sort_values('FinalZ', ascending=False).head(20))
-
-# ===== horses2（短評） =====
-印map = dict(zip(topN.get('馬名', pd.Series(dtype=str)), topN.get('印', pd.Series(dtype=str))))
-merge_cols = [c for c in ['馬名','WAvgZ','WStd','FinalZ','脚質','PacePts'] if c in df_agg.columns]
-horses2 = horses.merge(df_agg[merge_cols], on='馬名', how='left') if merge_cols else horses.copy()
-for col, default in [('印',''), ('脚質',''), ('短評',''), ('WAvgZ', np.nan), ('WStd', np.nan), ('FinalZ', np.nan), ('PacePts', np.nan)]:
-    if col not in horses2.columns: horses2[col] = default
-horses2['印'] = horses2['馬名'].map(印map).fillna('')
-
-def ai_comment(row):
-    base = ""
-    if row['印'] == '◎':
-        base += "本命評価。" + ("高い安定感で信頼度抜群。" if pd.notna(row['WStd']) and row['WStd'] <= 8 else "能力上位もムラあり。")
-    elif row['印'] == '〇':
-        base += "対抗評価。" + ("近走安定しており軸候補。" if pd.notna(row['WStd']) and row['WStd'] <= 10 else "展開ひとつで逆転も。")
-    elif row['印'] in ['▲','☆']:
-        base += "上位グループの一角。" + ("ムラがあり一発タイプ。" if pd.notna(row['WStd']) and row['WStd'] > 15 else "安定型で堅実。")
-    elif row['印'] == '△':
-        base += "押さえ候補。" + ("堅実だが勝ち切るまでは？" if pd.notna(row['WStd']) and row['WStd'] < 12 else "展開次第で浮上も。")
-    style = str(row.get('脚質','')).strip()
-    base += {
-        "逃げ":"ハナを奪えれば粘り込み十分。",
-        "先行":"先行力を活かして上位争い。",
-        "差し":"展開が向けば末脚強烈。",
-        "追込":"直線勝負の一撃に期待。"
-    }.get(style, "")
-    return base
-try:
-    horses2['短評'] = horses2.apply(ai_comment, axis=1)
-except Exception:
-    if '短評' not in horses2: horses2['短評'] = ""
-
-# ===== 4角ポジション配置図の関数（安全化） =====
-def _corner__wrap_name(name: str, width: int = 4) -> str:
-    s = str(name).strip().replace("\u3000", " ")
-    s = s.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
-    return "\n".join([s[i:i+width] for i in range(0, len(s), width)]) if s else s
-def _corner__zone_from_style(sty: str) -> str:
-    sty = str(sty)
-    if '逃' in sty or '先' in sty: return '前'
-    if '差' in sty:               return '中'
-    if '追' in sty:               return '後'
-    return '中'
-def _corner__to_int(x):
-    try:
-        return int(str(x).translate(str.maketrans('０１２３４５６７８９','0123456789')))
-    except Exception:
+def fit_isotonic_from_history(df_hist: pd.DataFrame, beta: float = 1.4):
+    if not SK_ISO: 
         return None
-def _corner__path_from_draw(draw: int | None, field_size: int) -> str:
-    if not field_size or field_size <= 0: field_size = 16
-    if draw is None:
-        return "中"
-    lo = max(1, int(np.ceil(field_size * 0.25)))
-    hi = int(np.floor(field_size * 0.75))
-    if draw <= lo:   return "内"
-    if draw >  hi:   return "外"
-    return "中"
-def _corner__cell_offsets(n: int) -> list[tuple[float, float]]:
-    if n <= 0: return []
-    out = [(0.0, 0.0)]
-    if n == 1: return out
-    step_r = 0.018; step_t = 0.10
-    i = 1
-    while len(out) < n:
-        ring = (i-1)//6 + 1
-        pos  = (i-1)%6
-        dr = ((-1)**ring) * step_r * ring
-        dtheta = (pos - 2.5) * step_t
-        out.append((dr, dtheta))
-        i += 1
-    return out[:n]
-def _corner__draw_track(ax):
-    ax.add_patch(Rectangle((0.05, 0.22), 0.55, 0.48, facecolor="#97b42b", edgecolor="none", alpha=0.92))
-    cx, cy = 0.60, 0.46
-    radii = [0.40, 0.34, 0.28, 0.22]
-    lane_colors = ["#6f8f0c", "#7aa012", "#86b71a"]
-    for i in range(3):
-        ax.add_patch(Wedge((cx, cy), r=radii[i], theta1=-90, theta2=0,
-                           width=radii[i]-radii[i+1], facecolor=lane_colors[i], edgecolor="none", alpha=0.98))
-    return (cx, cy, radii)
-def render_corner_positions_nowrace(horses_df: pd.DataFrame,
-                                    combined_style_series: pd.Series,
-                                    title: str = "4コーナー想定ポジション（今レース）",
-                                    circle_radius_ax: float | None = None,
-                                    name_wrap: int = 4) -> plt.Figure:
-    df = horses_df.copy()
-    if '馬名' not in df.columns:
-        raise ValueError("horses_df に『馬名』列が必要です")
-    sty = combined_style_series.reindex(df['馬名']).fillna('')
-    df['zone4'] = sty.map(_corner__zone_from_style).fillna('中')
-    FS = max(1, len(df))
-    if '番' in df.columns:
-        draw = df['番'].map(_corner__to_int)
-    elif '枠' in df.columns:
-        _wk = df['枠'].map(_corner__to_int)
-        group = int(np.ceil(FS/8))
-        draw = _wk.apply(lambda w: ((w-1)*group + 1) if pd.notna(w) else None)
-    else:
-        draw = pd.Series([i+1 for i in range(FS)], index=df.index, dtype=object)
-    df['path4'] = draw.apply(lambda x: _corner__path_from_draw(int(x) if (x is not None and pd.notna(x)) else None, FS))
+    need = {'レース日','競走名','score_norm','確定着順'}
+    if not need.issubset(df_hist.columns):
+        return None
+    df = df_hist.dropna(subset=['score_norm','確定着順']).copy()
+    df['race_id'] = _make_race_id_for_hist(df)
+    X_list, y_list = [], []
+    for rid, g in df.groupby('race_id'):
+        s = g['score_norm'].astype(float).to_numpy()
+        p = _softmax_vec(beta * s)
+        y = (pd.to_numeric(g['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
+        if len(p) == len(y) and len(p) >= 2:
+            X_list.append(p); y_list.append(y)
+    if not X_list:
+        return None
+    X = np.concatenate(X_list)
+    Y = np.concatenate(y_list)
+    ir = IsotonicRegression(out_of_bounds='clip')
+    ir.fit(X, Y)
+    return ir
 
-    fig, ax = plt.subplots(figsize=(6.6, 5.2), dpi=140)
-    ax.set_axis_off()
-    cx, cy, radii = _corner__draw_track(ax)
+def fit_platt_from_history(df_hist: pd.DataFrame, beta: float = 1.4):
+    if not SK_PLATT:
+        return None
+    need = {'レース日','競走名','score_norm','確定着順'}
+    if not need.issubset(df_hist.columns):
+        return None
+    df = df_hist.dropna(subset=['score_norm','確定着順']).copy()
+    df['race_id'] = _make_race_id_for_hist(df)
+    X_list, y_list = [], []
+    for rid, g in df.groupby('race_id'):
+        s = g['score_norm'].astype(float).to_numpy()
+        p = _softmax_vec(beta * s)
+        y = (pd.to_numeric(g['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
+        if len(p) == len(y) and len(p) >= 2:
+            X_list.append(p.reshape(-1,1)); y_list.append(y)
+    if not X_list:
+        return None
+    X = np.vstack(X_list)
+    Y = np.concatenate(y_list)
+    lr = LogisticRegression(max_iter=1000, solver='lbfgs')
+    lr.fit(X, Y)
+    return lr
 
-    ax.text(0.5, 0.93, title, ha="center", va="center", fontsize=12, weight="bold", fontproperties=jp_font)
-    ax.text(0.5, 0.87, "フラット", ha="center", va="center", fontsize=10, color="#c33", fontproperties=jp_font)
-    ax.text(0.06, 0.17, "セル＝進路（内/中/外）×位置（前/中/後）", fontsize=9, fontproperties=jp_font)
+# --- 本レース：PL（softmax）で勝率、Top3は軽量MC ---
+abilities = df_agg['FinalRaw'].to_numpy(float)
+m = np.nanmean(abilities); s = np.nanstd(abilities) + 1e-9
+abilities = (abilities - m) / s  # スケーリングのみ（順位は不変）
 
-    lane_to_r = {"内": radii[2] + 0.025, "中": radii[1] - 0.025, "外": radii[0] - 0.040}
-    zone_to_theta = {"後": -60, "中": -40, "前": -20}
-    if circle_radius_ax is None:
-        circle_radius_ax = 0.035 if FS <= 14 else (0.032 if FS <= 16 else 0.029)
+beta_pl = float(mc_beta)
+x = beta_pl * (abilities - np.max(abilities))
+ex = np.exp(x)
+p_win_pl = ex / np.sum(ex)
 
-    for (lane, zone), g in df.groupby(['path4','zone4'], dropna=False):
-        if lane not in lane_to_r or zone not in zone_to_theta:
-            continue
-        base_r = lane_to_r[lane]
-        base_theta = np.deg2rad(zone_to_theta[zone])
-        offsets = _corner__cell_offsets(len(g))
-        for (dr, dth), (_, row) in zip(offsets, g.iterrows()):
-            r = base_r + dr
-            th = base_theta + dth
-            x = cx + r * np.cos(th)
-            y = cy + r * np.sin(th)
-            circle = Circle((x, y), radius=circle_radius_ax, transform=ax.transAxes,
-                            facecolor="white", edgecolor="#222", linewidth=1.2, zorder=6)
-            ax.add_patch(circle)
-            nm = _corner__wrap_name(row['馬名'], name_wrap)
-            ax.text(x, y, nm, ha="center", va="center", fontsize=8.5, zorder=7, fontproperties=jp_font)
+# （任意）校正
+calibrator = None
+if do_calib:
+    if calib_method.startswith("Isotonic") and SK_ISO:
+        with st.spinner("校正（Isotonic）を学習中…"):
+            calibrator = fit_isotonic_from_history(df_score.copy(), beta=beta_pl)
+    elif calib_method.startswith("Platt") and SK_PLATT:
+        with st.spinner("校正（Platt）を学習中…"):
+            calibrator = fit_platt_from_history(df_score.copy(), beta=beta_pl)
 
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-    return fig
-
-# ======================== 結果タブ ========================
-# ---- タブを作成（結果 / 全頭 / 血統 / 学習）----
-tab_bets, tab_all, tab_pedi, tab_rank = st.tabs(
-    ["💸 買い目", "📝 全頭コメント", "🧬 血統HTML", "📈 ランキング学習"]
-)
-
-with tab_bets:
-    # ===== きょうのレース：ML予測 → 買い目案（ML×MC融合） =====
-    st.markdown("### きょうのレース：ML予測→買い目案（ML×MC融合）")
-
-    def _softmax_1race(x: np.ndarray) -> np.ndarray:
-        x = np.asarray(x, dtype=float)
-        x = x - np.nanmax(x)
-        e = np.exp(x)
-        s = float(np.nansum(e))
-        if s <= 0 or not np.isfinite(s):
-            return np.ones_like(e) / len(e)
-        return e / s
-
-    # 1) ML 確率：学習時に保存した ranker/feat_cols を使って推論
-    ML_prob = None
-    if ('ranker' in st.session_state) and ('rank_feat_cols' in st.session_state):
-        try:
-            ranker     = st.session_state['ranker']
-            feat_cols  = st.session_state['rank_feat_cols']
-            base_cols  = st.session_state.get('rank_base_num_cols', [])
-
-            # きょうのレースで作れる数値列を集約（df_agg / horses から）
-            today_src = pd.DataFrame(index=horses.index)
-            for c in base_cols:
-                if c in df_agg.columns:
-                    today_src[c] = pd.to_numeric(df_agg[c], errors='coerce')
-                elif c in horses.columns:
-                    today_src[c] = pd.to_numeric(horses[c], errors='coerce')
-
-            if today_src.shape[1] >= 3:
-                # レース内相対特徴（z と 順位）を生成
-                rel = pd.DataFrame(index=today_src.index)
-                for c in today_src.columns:
-                    s = today_src[c].astype(float)
-                    rel[c + '_z']  = (s - s.mean()) / (s.std(ddof=0) + 1e-9)
-                    rel[c + '_rk'] = s.rank(method='average').astype(float)
-
-                X_tod   = rel.reindex(columns=feat_cols, fill_value=0.0).values
-                best_it = st.session_state.get('rank_best_iter', None)
-                ml_scores = ranker.predict(X_tod, num_iteration=best_it)
-                ML_prob = _softmax_1race(ml_scores)
-            else:
-                st.info("ML特徴が十分に重ならないため、FinalZ を確率化して代用します。")
-        except Exception as e:
-            st.info(f"ML推論でフォールバック：{e}")
-
-    # フォールバック：FinalZ を確率化（全頭同値を回避）
-    if ML_prob is None:
-        sc = df_agg['FinalZ'].fillna(df_agg['FinalZ'].median()).to_numpy()
-        ML_prob = _softmax_1race(sc)
-
-    # 2) MC 確率（既存のモンテカルロ結果）
-    MC_prob = (df_agg['勝率%_MC'] / 100.0).fillna(0.0).to_numpy()
-
-    # 3) 融合（スライダーで重み）※ key を固有に
-    alpha = st.slider("MLとMCの重み（ML寄り ↔ MC寄り）", 0.0, 1.0, 0.60, 0.05, key="fuse_alpha_bets")
-    Fused = alpha * ML_prob + (1 - alpha) * MC_prob
-
-    show = pd.DataFrame({
-        '馬名': df_agg['馬名'],
-        'ML_prob': np.round(ML_prob, 3),
-        'MC_prob': np.round(MC_prob, 3),
-        'Fused_prob': np.round(Fused, 3),
-    }).sort_values('Fused_prob', ascending=False).reset_index(drop=True)
-
-    st.dataframe(show, use_container_width=True, height=H(show, 480))
-
-    # === 見送りロジック ===
-    allow_bet = bool((df_agg['AR100'] >= 70).any())
-    if not allow_bet:
-        st.subheader("今回のレースは『見送り』")
-        st.info("方針：**A以上が1頭でもいたら買う／B以下しかいないなら見送り**。本レースはA以上が0頭のため見送り判定です。")
-    else:
-        h1 = topN.iloc[0]['馬名'] if len(topN) >= 1 else None
-        h2 = topN.iloc[1]['馬名'] if len(topN) >= 2 else None
-        symbols = topN.get('印', pd.Series([], dtype=str)).tolist()
-        names   = topN['馬名'].tolist()
-        others_names   = names[1:] if len(names) > 1 else []
-        others_symbols = symbols[1:] if len(symbols) > 1 else []
-
-        three = ['馬連','ワイド','馬単']
-        def round_to_unit(x, unit): return int(np.floor(x / unit) * unit)
-
-        main_share = 0.5
-        pur1 = round_to_unit(total_budget * main_share * (1/4), int(min_unit))  # 単勝
-        pur2 = round_to_unit(total_budget * main_share * (3/4), int(min_unit))  # 複勝
-        rem  = total_budget - (pur1 + pur2)
-
-        win_each   = round_to_unit(pur1 / 2, int(min_unit))
-        place_each = round_to_unit(pur2 / 2, int(min_unit))
-
-        st.subheader("■ 資金配分 (厳密合計)")
-        st.write(f"合計予算：{total_budget:,}円  単勝：{pur1:,}円  複勝：{pur2:,}円  残：{rem:,}円  [単位:{min_unit}円]")
-
-        bets = []
-        if h1 is not None:
-            bets += [{'券種':'単勝','印':'◎','馬':h1,'相手':'','金額':win_each},
-                     {'券種':'複勝','印':'◎','馬':h1,'相手':'','金額':place_each}]
-        if h2 is not None:
-            bets += [{'券種':'単勝','印':'〇','馬':h2,'相手':'','金額':win_each},
-                     {'券種':'複勝','印':'〇','馬':h2,'相手':'','金額':place_each}]
-
-        finalZ_map = df_agg.set_index('馬名')['FinalZ'].to_dict()
-        pair_candidates, tri_candidates, tri1_candidates = [], [], []
-        if h1 is not None and len(others_names) > 0:
-            for nm, mk in zip(others_names, others_symbols):
-                score = finalZ_map.get(nm, 0)
-                pair_candidates.append(('ワイド', f'◎–{mk}', h1, nm, score))
-                pair_candidates.append(('馬連', f'◎–{mk}', h1, nm, score))
-                pair_candidates.append(('馬単', f'◎→{mk}', h1, nm, score))
-            for a, b in combinations(others_names, 2):
-                score = finalZ_map.get(a,0) + finalZ_map.get(b,0)
-                tri_candidates.append(('三連複','◎-〇▲☆△△', h1, f"{a}／{b}", score))
-            second_opts = others_names[:2]
-            for s in second_opts:
-                for t in others_names:
-                    if t == s: continue
-                    score = finalZ_map.get(s,0) + 0.7*finalZ_map.get(t,0)
-                    tri1_candidates.append(('三連単フォーメーション','◎-〇▲-〇▲☆△△', h1, f"{s}／{t}", score))
-
-        if scenario == '通常':
-            with st.expander("馬連・ワイド・馬単 から１券種を選択", expanded=True):
-                choice = st.radio("購入券種", options=three, index=1)
-                st.write(f"▶ {choice} に残り {rem:,}円 を充当")
-            cand = [c for c in pair_candidates if c[0]==choice]
-            cand = sorted(cand, key=lambda x: x[-1], reverse=True)[:int(max_lines)]
-            K = len(cand)
-            if K > 0 and rem >= int(min_unit):
-                base = round_to_unit(rem / K, int(min_unit))
-                amounts = [base]*K
-                leftover = rem - base*K
-                i = 0
-                while leftover >= int(min_unit) and i < K:
-                    amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-                for (typ, mks, base_h, pair_h, _), amt in zip(cand, amounts):
-                    bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-            else:
-                st.info("連系はスキップ（相手不足 or 予算不足）")
-
-        elif scenario == 'ちょい余裕':
-            st.write("▶ 残り予算を ワイド ＋ 三連複 で配分")
-            cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
-            cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
-            cut_w = min(len(cand_wide), int(max_lines)//2 if int(max_lines)>1 else 1)
-            cut_t = min(len(cand_tri),  int(max_lines) - cut_w)
-            cand_wide, cand_tri = cand_wide[:cut_w], cand_tri[:cut_t]
-            K = len(cand_wide) + len(cand_tri)
-            if K>0 and rem >= int(min_unit):
-                base = round_to_unit(rem / K, int(min_unit))
-                amounts = [base]*K
-                leftover = rem - base*K
-                i = 0
-                while leftover >= int(min_unit) and i < K:
-                    amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-                all_cand = cand_wide + cand_tri
-                for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
-                    bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-            else:
-                st.info("連系はスキップ（相手不足 or 予算不足）")
-
-        elif scenario == '余裕':
-            st.write("▶ 残り予算を ワイド ＋ 三連複 ＋ 三連単フォーメーション で配分")
-            cand_wide = sorted([c for c in pair_candidates if c[0]=='ワイド'], key=lambda x: x[-1], reverse=True)
-            cand_tri  = sorted(tri_candidates, key=lambda x: x[-1], reverse=True)
-            cand_tri1 = sorted(tri1_candidates, key=lambda x: x[-1], reverse=True)
-            r_w, r_t, r_t1 = 2, 2, 1
-            denom = r_w + r_t + r_t1
-            q_w = max(1, (int(max_lines) * r_w)//denom)
-            q_t = max(1, (int(max_lines) * r_t)//denom)
-            q_t1= max(1, int(max_lines) - q_w - q_t)
-            cand_wide, cand_tri, cand_tri1 = cand_wide[:q_w], cand_tri[:q_t], cand_tri1[:q_t1]
-            K = len(cand_wide) + len(cand_tri) + len(cand_tri1)
-            if K>0 and rem >= int(min_unit):
-                base = round_to_unit(rem / K, int(min_unit))
-                amounts = [base]*K
-                leftover = rem - base*K
-                i = 0
-                while leftover >= int(min_unit) and i < K:
-                    amounts[i] += int(min_unit); leftover -= int(min_unit); i += 1
-                all_cand = cand_wide + cand_tri + cand_tri1
-                for (typ, mks, base_h, pair_h, _), amt in zip(all_cand, amounts):
-                    bets.append({'券種':typ,'印':mks,'馬':base_h,'相手':pair_h,'金額':int(amt)})
-            else:
-                st.info("連系はスキップ（相手不足 or 予算不足）")
-
-        _df = pd.DataFrame(bets)
-        spent = int(_df['金額'].fillna(0).replace('',0).sum()) if len(_df)>0 else 0
-        diff = total_budget - spent
-        if diff != 0 and len(_df) > 0:
-            for idx in _df.index:
-                cur = int(_df.at[idx,'金額'])
-                new = cur + diff
-                if new >= 0 and new % int(min_unit) == 0:
-                    _df.at[idx,'金額'] = new
-                    break
-
-        _df_disp = _df.copy()
-        if '金額' in _df_disp.columns and len(_df_disp) > 0:
-            def fmt_money(x):
-                try:
-                    xv = float(x)
-                    if np.isnan(xv) or int(xv) <= 0: return ""
-                    return f"{int(xv):,}円"
-                except Exception:
-                    return ""
-            _df_disp['金額'] = _df_disp['金額'].map(fmt_money)
-        st.subheader("■ 最終買い目一覧（全券種まとめ）")
-        if len(_df_disp) == 0:
-            st.info("現在、買い目はありません。")
+if calibrator is not None:
+    try:
+        if isinstance(calibrator, IsotonicRegression):
+            p_win_cal = calibrator.predict(p_win_pl)
         else:
-            st.table(safe_take(_df_disp, ['券種','印','馬','相手','金額']))
-
-with tab_all:
-    st.subheader("全頭AI診断コメント")
-    q = st.text_input("馬名フィルタ（部分一致）", "")
-    _all = horses2.merge(df_agg[['馬名','TurnPref','AR100','Band']], on='馬名', how='left')
-    _all = _all[[c for c in ['馬名','印','脚質','短評','AR100','Band','WAvgZ','WStd','TurnPref'] if c in _all.columns]]
-    if q.strip():
-        _all = _all[_all['馬名'].astype(str).str.contains(q.strip(), case=False, na=False)]
-    if _all.empty:
-        st.info("コメント表示対象がありません。")
-    else:
-        st.dataframe(_all, use_container_width=True, height=H(_all, 420))
-
-# ================= 血統HTML 抽出ユーティリティ =================
-def _detect_charset_from_head(raw: bytes) -> str | None:
-    if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
-        return "utf-8-sig"
-    if raw.startswith(b"\xff\xfe"):
-        return "utf-16-le"
-    if raw.startswith(b"\xfe\xff"):
-        return "utf-16-be"
-    head_txt = raw[:4096].decode("ascii", "ignore")
-    m1 = re.search(r'charset\s*=\s*[\'"]?([\w\-]+)', head_txt, flags=re.I)
-    return m1.group(1).lower() if m1 else None
-
-def _decode_html_bytes(raw: bytes) -> str:
-    declared = _detect_charset_from_head(raw)
-    cands = [c for c in [declared,
-                         "cp932", "shift_jis", "utf-8", "utf-8-sig",
-                         "euc_jp", "iso2022_jp", "utf-16", "utf-16-le", "utf-16-be"] if c]
-    seen = set()
-    for enc in [c for c in cands if not (c in seen or seen.add(c))]:
-        try:
-            txt = raw.decode(enc)
-            if enc.startswith("utf-8") and txt.count("�") > 10:
-                continue
-            return txt
-        except Exception:
-            continue
-    return raw.decode("utf-8", errors="replace")
-
-def _to_pedigree_url(u: str) -> str:
-    m_id = re.search(r"race_id=(\d{12})", u)
-    if m_id and "pedigree" not in u:
-        return f"https://race.netkeiba.com/race/shutuba/pedigree.html?race_id={m_id.group(1)}"
-    return u
-
-def _fetch_url_html(u: str) -> tuple[str, str | None]:
-    try:
-        import requests
-        used = _to_pedigree_url(u)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Referer": "https://race.netkeiba.com/",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        r = requests.get(used, headers=headers, timeout=15, allow_redirects=True)
-        if r.status_code == 200 and len(r.content) > 500:
-            return _decode_html_bytes(r.content), None
-        return "", f"HTTP {r.status_code} / bytes={len(r.content)}"
-    except Exception as e:
-        return "", f"{type(e).__name__}: {e}"
-
-def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = ["".join([str(c) for c in tup if "Unnamed" not in str(c)]).strip()
-                      for tup in df.columns]
-    else:
-        df.columns = [str(c).strip() for c in df.columns]
-    return df
-
-def _promote_header_row_if_needed(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [str(c) for c in df.columns]
-    if any(re.search("馬名", c) for c in cols):
-        return df
-    for i in range(min(6, len(df))):
-        row = df.iloc[i].astype(str)
-        if row.str.contains("馬名").any():
-            new_cols = row.str.replace(r"\s+", "", regex=True).tolist()
-            df = df.iloc[i+1:].copy()
-            df.columns = new_cols
-            break
-    return df
-
-def _extract_pedi_tables_from_html(html_text: str) -> list[pd.DataFrame]:
-    try:
-        tables = pd.read_html(html_text, flavor="lxml")
+            p_win_cal = calibrator.predict_proba(p_win_pl.reshape(-1,1))[:,1]
+        p_win_pl = np.clip(p_win_cal, 1e-6, 1-1e-6)
     except Exception:
+        pass
+
+df_agg['勝率%_PL'] = (100 * p_win_pl).round(2)
+
+# ---- Top3はPLの逐次サンプリングで近似（軽量MC）。勝率はPLそのものなのでMCはTop3用だけ。
+draws_top3 = int(mc_iters)
+rng_top3 = np.random.default_rng(int(mc_seed) + 24601)
+U = beta_pl * abilities[None, :] + rng_top3.gumbel(size=(draws_top3, len(abilities)))
+rank_idx = np.argsort(-U, axis=1)
+top3_counts = np.zeros(len(abilities), float)
+for k in range(3):
+    top3_counts += np.bincount(rank_idx[:, k], minlength=len(abilities)).astype(float)
+df_agg['複勝率%_PL'] = (100 * (top3_counts / draws_top3)).round(2)
+
+# ------------------------------------------------------------
+# （この先：散布図、コメント、ポジション図、タブUI、EV/ケリー、評価タブ等は【後半】で差し替え）
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# ここから後半：UIタブ／可視化／評価／校正ダッシュボード／買い目（EV>1 + 分数ケリー）
+# ------------------------------------------------------------
+
+st.subheader("本日の見立て")
+
+# 表示用テーブル作成
+disp_cols = ['枠','番','馬名','脚質','PacePts','TurnPref','RightZ','LeftZ',
+             'RecencyZ','StabZ','FinalRaw','FinalZ','AR100','Band','勝率%_PL','複勝率%_PL']
+df_disp = df_agg.copy()
+for c in disp_cols:
+    if c not in df_disp.columns:
+        df_disp[c] = np.nan
+
+df_disp = df_disp.merge(horses[['馬名','枠','番','脚質']], on='馬名', how='left', suffixes=('','_h'))
+df_disp['枠'] = df_disp['枠_h'].fillna(df_disp['枠'])
+df_disp['番'] = df_disp['番_h'].fillna(df_disp['番'])
+df_disp['脚質'] = df_disp['脚質_h'].fillna(df_disp['脚質'])
+df_disp.drop(columns=[c for c in ['枠_h','番_h','脚質_h'] if c in df_disp], inplace=True)
+
+df_disp.sort_values(['AR100','勝率%_PL','FinalZ'], ascending=[False, False, False], inplace=True)
+df_disp.insert(0, '順位', np.arange(1, len(df_disp)+1))
+mark_syms = ['◎','〇','▲','△']
+df_disp['印'] = df_disp['順位'].apply(lambda x: mark_syms[x-1] if 1 <= x <= len(mark_syms) else '')
+
+# ペース見立て
+st.info(f"🕒 ペース見立て：**{pace_type}**")
+
+# 表（ダウンロード付き）
+show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band','勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
+st.dataframe(
+    df_disp[show_cols].style.format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'}),
+    use_container_width=True, height=H(df_disp, 560)
+)
+csv = df_disp[show_cols].to_csv(index=False).encode('utf-8-sig')
+st.download_button("📥 本日の評価テーブルをCSVで保存", data=csv, file_name="race_view.csv", mime="text/csv")
+
+# ====================== タブ ======================
+tab_main, tab_vis, tab_eval, tab_calib, tab_bet = st.tabs(["🏁 本命","📊 可視化","📈 評価","📏 校正","💸 買い目"])
+
+with tab_vis:
+    st.markdown("#### 散布図（AR100 × ペース適性）")
+    df_plot = df_disp[['馬名','AR100','PacePts','勝率%_PL','脚質','枠','番']].copy()
+    df_plot = df_plot.dropna(subset=['AR100','PacePts'])
+    if ALT_AVAILABLE and not df_plot.empty:
+        ch = (
+            alt.Chart(df_plot)
+            .mark_circle()
+            .encode(
+                x=alt.X('PacePts:Q', title='PacePts（＋が追込/差し有利・−が逃げ/先行有利）'),
+                y=alt.Y('AR100:Q', title='AR100（B中心化指数）'),
+                size=alt.Size('勝率%_PL:Q', title='勝率%（PL）', scale=alt.Scale(range=[40, 600])),
+                tooltip=['枠','番','馬名','脚質','AR100','勝率%_PL','PacePts']
+            )
+            .properties(height=480)
+        )
+        st.altair_chart(ch, use_container_width=True)
+    elif not df_plot.empty:
+        fig = plt.figure(figsize=(8,6))
+        ax = fig.add_subplot(111)
+        s = 40 + (df_plot['勝率%_PL'].fillna(0).to_numpy())*8
+        ax.scatter(df_plot['PacePts'], df_plot['AR100'], s=s, alpha=0.6)
+        for _, r in df_plot.iterrows():
+            ax.annotate(str(r['番']), (r['PacePts'], r['AR100']), xytext=(3,3), textcoords="offset points", fontsize=8)
+        ax.set_xlabel('PacePts')
+        ax.set_ylabel('AR100')
+        ax.grid(True, ls='--', alpha=0.3)
+        st.pyplot(fig)
+    else:
+        st.info("可視化できるデータがありません。")
+
+with tab_eval:
+    st.markdown("#### 過去走での妥当性評価（レース内softmax）")
+
+    def history_probs_and_labels(df_hist: pd.DataFrame, beta: float = 1.4, calibrator_obj=None):
+        need = {'レース日','競走名','score_norm','確定着順'}
+        if not need.issubset(df_hist.columns): 
+            return np.array([]), np.array([])
+        dfh = df_hist.dropna(subset=['score_norm','確定着順']).copy()
+        dfh['race_id'] = (pd.to_datetime(dfh['レース日'], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
+                          + '_' + dfh['競走名'].astype(str).fillna(''))
+        probs = []; labels = []
+        for rid, g in dfh.groupby('race_id'):
+            s = g['score_norm'].astype(float).to_numpy()
+            p = _softmax_vec(beta * s)
+            y = (pd.to_numeric(g['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
+            if len(p)==len(y) and len(p)>=2:
+                if calibrator_obj is not None:
+                    try:
+                        if isinstance(calibrator_obj, IsotonicRegression):
+                            p = calibrator_obj.predict(p)
+                        else:
+                            p = calibrator_obj.predict_proba(p.reshape(-1,1))[:,1]
+                        p = np.clip(p, 1e-6, 1-1e-6)
+                    except Exception:
+                        pass
+                probs.append(p); labels.append(y)
+        if not probs:
+            return np.array([]), np.array([])
+        return np.concatenate(probs), np.concatenate(labels)
+
+    def brier_score(p, y):
+        p = np.clip(p, 1e-9, 1-1e-9); y = np.asarray(y, float)
+        return float(np.mean((p - y)**2))
+
+    def log_loss_bin(p, y):
+        p = np.clip(p, 1e-9, 1-1e-9); y = np.asarray(y, float)
+        return float(-np.mean(y*np.log(p) + (1-y)*np.log(1-p)))
+
+    # Raw
+    p_raw, y = history_probs_and_labels(df_score.copy(), beta=beta_pl, calibrator_obj=None)
+    # Calibrated（If available）
+    p_cal, _ = history_probs_and_labels(df_score.copy(), beta=beta_pl, calibrator_obj=calibrator) if (calibrator is not None) else (np.array([]), None)
+
+    if p_raw.size == 0:
+        st.info("評価に十分な過去走データがありません。")
+    else:
+        bs_raw = brier_score(p_raw, y)
+        ll_raw = log_loss_bin(p_raw, y)
+        st.write(f"**Brier**: {bs_raw:.4f}　/　**LogLoss**: {ll_raw:.4f}（未校正）")
+        if p_cal.size > 0:
+            bs_cal = brier_score(p_cal, y)
+            ll_cal = log_loss_bin(p_cal, y)
+            st.write(f"**Brier**: {bs_cal:.4f}　/　**LogLoss**: {ll_cal:.4f}（校正後）")
+
+        # Reliability Diagram
+        def reliability_points(p, y, n_bins=10):
+            bins = np.linspace(0,1,n_bins+1)
+            idx = np.digitize(p, bins)-1
+            xs, ys, ns = [], [], []
+            for b in range(n_bins):
+                m = idx==b
+                if m.sum() == 0: 
+                    continue
+                xs.append(p[m].mean())
+                ys.append(y[m].mean())
+                ns.append(int(m.sum()))
+            return np.array(xs), np.array(ys), np.array(ns)
+
+        fig = plt.figure(figsize=(6,6))
+        ax = fig.add_subplot(111)
+        ax.plot([0,1],[0,1], ls='--', alpha=0.5)
+        x1,y1,n1 = reliability_points(p_raw, y, n_bins=12)
+        ax.plot(x1, y1, marker='o', label='Raw')
+        if p_cal.size > 0:
+            x2,y2,n2 = reliability_points(p_cal, y, n_bins=12)
+            ax.plot(x2, y2, marker='o', label='Calibrated')
+        ax.set_xlabel('平均 予測勝率')
+        ax.set_ylabel('実測 勝率（Top1）')
+        ax.grid(True, ls=':', alpha=0.3)
+        ax.legend()
+        st.pyplot(fig)
+
+        # NDCG@3（参考）
         try:
-            tables = pd.read_html(html_text, flavor="bs4")
+            df_tmp = df_score[['レース日','競走名','score_norm','確定着順']].dropna().copy()
+            df_tmp['race_id'] = (pd.to_datetime(df_tmp['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + df_tmp['競走名'].astype(str))
+            df_tmp['y'] = (pd.to_numeric(df_tmp['確定着順'], errors='coerce') == 1).astype(int)
+            ndcg_raw = ndcg_by_race(df_tmp[['race_id','y']], p_raw, k=3)
+            st.caption(f"NDCG@3（未校正softmax）：{ndcg_raw:.4f}")
         except Exception:
-            tables = []
-    fixed = []
-    for t in tables:
-        t = _flatten_columns(t)
-        t = _promote_header_row_if_needed(t)
-        if any(re.search(r"(馬名|^馬$)", str(c)) for c in t.columns):
-            fixed.append(t.reset_index(drop=True))
-    return fixed
+            pass
 
-with tab_pedi:
-    st.subheader("血統HTMLビューア + ボーナス付与")
-    st.caption("NetKeiba等の血統ページHTMLを表示/解析し、キーワード一致の馬へボーナスを付与します。URLでもOK。")
-
-    m = st.radio("入力方法", ["テキスト貼り付け（HTML/URL）", "HTMLファイルをアップロード"], horizontal=True)
-
-    src_url: str | None = None
-    html_text = ""
-
-    if m == "テキスト貼り付け（HTML/URL）":
-        html_txt = st.text_area(
-            "HTML（ソース全文 or URL）を貼り付け",
-            height=220,
-            placeholder="<html>...</html> または https://race.netkeiba.com/.../pedigree.html"
-        )
-        val = (html_txt or "").strip()
-        if re.match(r"^https?://", val):
-            src_url = val
-            with st.spinner("URLから取得中…"):
-                html_text, err = _fetch_url_html(val)
-            if err:
-                st.warning(
-                    "URLからの取得に失敗しました。ブラウザで『ページを保存（.html）』して『HTMLファイルをアップロード』に切り替えてください。"
-                    f"（詳細: {err}）"
-                )
+with tab_calib:
+    st.markdown("#### 確率校正の状況")
+    if not do_calib:
+        st.info("現在は**未校正**です。サイドバーの「📏 確率校正」をONにすると、等温回帰（推奨）またはPlattで校正します。")
+    else:
+        if calibrator is None:
+            st.warning("校正器の学習に必要なデータが不足しています。sheet0に過去走（レース内の着順・score_norm）が必要です。")
         else:
-            html_text = val
+            method = "IsotonicRegression" if isinstance(calibrator, IsotonicRegression) else "Platt (Logistic)"
+            st.success(f"校正器：**{method}** を使用中。")
+            st.write("- 評価タブでBrier/LogLossと信頼度曲線（Reliability）を確認できます。")
+            st.write("- 現在の勝率列：**勝率%_PL**（校正後があればそれを反映）")
+
+with tab_bet:
+    st.markdown("#### オッズ入力（小数＝払い戻し総額倍率）")
+    st.caption("例：単勝3.5倍 → 3.5、複勝2.1倍 → 2.1。未入力はスキップ。")
+    # オッズ編集テーブル
+    if 'odds_df' not in st.session_state:
+        st.session_state['odds_df'] = df_disp[['枠','番','馬名']].copy().assign(単オッズ=np.nan, 複オッズ=np.nan)
+    # マージで新馬追加/順序同期
+    odds_merge = df_disp[['枠','番','馬名']].merge(st.session_state['odds_df'], on=['枠','番','馬名'], how='left')
+    odds_merge[['単オッズ','複オッズ']] = odds_merge[['単オッズ','複オッズ']].astype(float)
+    odds_edit = st.data_editor(
+        odds_merge,
+        column_config={
+            '単オッズ': st.column_config.NumberColumn('単オッズ', min_value=1.01, step=0.01),
+            '複オッズ': st.column_config.NumberColumn('複オッズ', min_value=1.01, step=0.01),
+        },
+        hide_index=True,
+        height=H(odds_merge, 460),
+        use_container_width=True,
+        key="odds_editor",
+    )
+    st.session_state['odds_df'] = odds_edit[['枠','番','馬名','単オッズ','複オッズ']].copy()
+
+    st.markdown("---")
+    kelly_frac = st.slider("分数ケリー係数", 0.05, 1.0, 0.5, 0.05, help="0.5=ハーフケリー。過積みを防ぐ係数。")
+    alloc_mode = st.selectbox("配分対象", ["単勝のみ","複勝のみ","単勝＋複勝"], index=2)
+    st.caption(f"総予算: **{total_budget} 円** / 最小単位: **{min_unit} 円** / 最大点数: **{max_lines}**")
+
+    # 期待値 & ケリー計算
+    picks = []
+    p_win = (df_disp['勝率%_PL'].to_numpy()/100.0)
+    p_plc = (df_disp['複勝率%_PL'].to_numpy()/100.0)
+    names = df_disp['馬名'].tolist()
+    waku  = df_disp['枠'].tolist()
+    umaban= df_disp['番'].tolist()
+
+    for i, row in odds_edit.reset_index(drop=True).iterrows():
+        name = names[i]; w=waku[i]; n=umaban[i]
+        # 単勝
+        o_t = row.get('単オッズ', np.nan)
+        if pd.notna(o_t) and alloc_mode in ("単勝のみ","単勝＋複勝"):
+            p = float(p_win[i]); b = float(o_t) - 1.0; q = 1.0 - p
+            ev_roi = p * float(o_t) - 1.0                      # ROI（1なら等価、>0で+EV）
+            f = max(0.0, (b*p - q) / max(1e-9, b))             # Kelly fraction
+            if ev_roi > 0 and f > 0:
+                picks.append({'種別':'単勝','枠':w,'番':n,'馬名':name,'p':p,'odds':float(o_t),'EV_ROI':ev_roi,'kelly_f':f})
+        # 複勝（簡易：Top3確率×複勝オッズ）
+        o_p = row.get('複オッズ', np.nan)
+        if pd.notna(o_p) and alloc_mode in ("複勝のみ","単勝＋複勝"):
+            p = float(p_plc[i]); b = float(o_p) - 1.0; q = 1.0 - p
+            ev_roi = p * float(o_p) - 1.0
+            f = max(0.0, (b*p - q) / max(1e-9, b))
+            if ev_roi > 0 and f > 0:
+                picks.append({'種別':'複勝','枠':w,'番':n,'馬名':name,'p':p,'odds':float(o_p),'EV_ROI':ev_roi,'kelly_f':f})
+
+    if not picks:
+        st.warning("現状、EV>0（= p×オッズ > 1）となる候補がありません。オッズを入力/更新して再評価してください。")
     else:
-        up = st.file_uploader("血統HTMLファイル", type=["html", "htm"], key="pedi_html_up")
-        if up:
-            raw  = up.read()
-            html_text = _decode_html_bytes(raw)
+        df_picks = pd.DataFrame(picks)
+        # 上限点数でカット（期待値の高い順）
+        df_picks.sort_values(['EV_ROI','p','odds'], ascending=[False, False, True], inplace=True)
+        df_picks = df_picks.head(int(max_lines)).copy()
 
-    if html_text.strip() and COMPONENTS:
-        components.html(html_text, height=700, scrolling=True)
-    elif html_text.strip() and not COMPONENTS:
-        st.code(html_text[:8000], language="html")
-
-    dfs = _extract_pedi_tables_from_html(html_text) if html_text.strip() else []
-
-    if (not dfs) and src_url:
-        try:
-            used = _to_pedigree_url(src_url)
-            raw_tables = pd.read_html(used)
-            for t in raw_tables:
-                t = _flatten_columns(t)
-                t = _promote_header_row_if_needed(t)
-                if any(re.search(r"(馬名|^馬$)", str(c)) for c in t.columns):
-                    dfs.append(t.reset_index(drop=True))
-            if dfs:
-                st.info("ページ埋め込みは不可でしたが、URLからテーブル抽出に成功しました。")
-        except Exception as e:
-            st.error(f"URLからのテーブル抽出にも失敗しました: {e}")
-
-    st.markdown("### 🧬 血統ボーナス設定（下で一致した馬に加点）")
-    default_pts = int(st.session_state.get('pedi:points', 3))
-    points = st.slider("一致した馬へのボーナス点", 0, 20, default_pts)
-
-    if dfs:
-        idx = st.selectbox(
-            "対象テーブルを選択",
-            options=list(range(len(dfs))),
-            format_func=lambda i: f"Table {i+1}（列: {', '.join(map(str, dfs[i].columns[:6]))} …）"
-        )
-        dfp = dfs[idx]
-
-        name_candidates = [c for c in dfp.columns if re.search(r"(馬名|^馬$)", str(c))]
-        name_col = st.selectbox(
-            "馬名列",
-            options=dfp.columns.tolist(),
-            index=dfp.columns.tolist().index(name_candidates[0]) if name_candidates else 0
-        )
-
-        known = ["父タイプ名","父名","母父タイプ名","母父名","父系","母父系","父","母父"]
-        candidate_cols = [c for c in known if c in dfp.columns] or [c for c in dfp.columns if c != name_col]
-
-        st.caption("※ 下のキーワードが、選択した列のどれかに一致した『馬名』へ加点します。複数行OK。")
-        keys_text = st.text_area("血統キーワード（1行1ワード）",
-                                 value=st.session_state.get('pedi:keys', ""), height=120)
-        match_cols = st.multiselect("照合対象の列", candidate_cols,
-                                    default=[c for c in known if c in candidate_cols] or candidate_cols)
-        method = st.radio("照合方法", ["部分一致", "完全一致"], index=0, horizontal=True)
-
-        def _norm(s: str) -> str:
-            s = str(s)
-            s = s.translate(_fwid).replace('\u3000', ' ').strip()
-            return re.sub(r'\s+', '', s)
-
-        keys = [k for k in (keys_text.splitlines() if keys_text else []) if k.strip()]
-        keys_norm = [_norm(k) for k in keys]
-
-        matched_names: list[str] = []
-        if keys and match_cols:
-            for _, row in dfp.iterrows():
-                nm = _trim_name(row.get(name_col, ""))
-                row_texts_norm = [_norm(row.get(c, "")) for c in match_cols]
-                if method == "完全一致":
-                    hit = any(r == k for r in row_texts_norm for k in keys_norm)
-                else:
-                    hit = any(k in r for r in row_texts_norm for k in keys_norm)
-                if hit and nm:
-                    matched_names.append(nm)
-
-        st.session_state['pedi:map'] = { _trim_name(n): True for n in matched_names }
-        st.session_state['pedi:points'] = int(points)
-        st.session_state['pedi:keys'] = keys_text
-
-        colL, colR = st.columns([2,3])
-        with colL:
-            st.write("一致した馬（加点対象）")
-            if matched_names:
-                st.table(pd.DataFrame({'馬名': matched_names}))
-            else:
-                st.info("現在、一致はありません。キーワード/照合列/照合方法を調整してください。")
-        with colR:
-            st.info(f"設定：ボーナス {points} 点 / 照合列 {', '.join(map(str, match_cols)) if match_cols else '（未選択）'} / {method}")
-
-    else:
-        st.info("馬名列を含むテーブルが見つかりません。URLが取れない環境では、ページを『完全保存（.html）』してアップロードしてください。")
-
-# ================= ランキング学習（任意・安全化） =================
-with tab_rank:
-    st.subheader("LightGBM によるランキング学習（NDCG）— 任意機能")
-    st.caption("※ チェックを入れたときだけ動きます。finish_position が無くても『確定着順／着／順位』などから自動生成します。")
-
-    run_train = st.checkbox("ランキング学習デモを実行する（重い処理）", value=False)
-    train_source = st.radio("学習データの取得元", ["このExcelのsheet0（過去走）を使う", "別ファイルをアップロードする"], horizontal=False)
-    uploaded = None
-    if train_source == "別ファイルをアップロードする":
-        uploaded = st.file_uploader("CSVまたはExcel（race_id, horse_id, finish_position など）", type=['csv','xlsx'], key="rank_up")
-
-    if run_train:
-        # ---- ライブラリ確認 ----
-        try:
-            import lightgbm as lgb
-            from sklearn.metrics import ndcg_score  # 存在チェック用（実計算は自前の関数を利用）
-        except Exception:
-            st.error("必要モジュール未インストール：`pip install lightgbm scikit-learn` を実行してください。")
-            st.stop()
-
-        # ---- ユーティリティ ----
-        ALIASES = {
-            'race_id': ['race_id','RaceID','RACE_ID','race_key','RaceKey','RACE_KEY','race_code','RaceCode','レースID','レースキー','レースコード','開催R'],
-            'horse_id': ['horse_id','HorseID','HORSE_ID','馬ID','競走馬コード','血統登録番号','登録番号','馬番'],
-            'finish_position': ['finish_position','finish','着順','順位','rank','着','result_position','確定着順'],
-            'date': ['date','Date','race_date','RaceDate','開催日','日付','レース日','ymd','YYYYMMDD','YMD','date8','date_ymd','timestamp','DateTime','開催年月日'],
-        }
-        def _first_col(df, cands):
-            for c in cands:
-                if c in df.columns: return c
-            return None
-
-        def _rename_to_canonical(df: pd.DataFrame) -> pd.DataFrame:
-            df = df.copy()
-            for canon, cands in ALIASES.items():
-                if canon in df.columns: continue
-                for c in cands:
-                    if c in df.columns:
-                        df.rename(columns={c: canon}, inplace=True)
-                        break
-            return df
-
-        def _try_parse_date_series(s: pd.Series) -> pd.Series | None:
-            if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
-                ss = s.astype('Int64').astype(str).str.replace(r'\.0$', '', regex=True)
-            else:
-                ss = s.astype(str)
-            cand = ss.str.extract(r'(\d{8})', expand=False)
-            if cand.notna().mean() > 0.8:
-                dt = pd.to_datetime(cand, format='%Y%m%d', errors='coerce')
-                if dt.notna().mean() > 0.8:
-                    return dt
-            dt = pd.to_datetime(ss, errors='coerce')
-            if dt.notna().mean() > 0.8:
-                return dt
-            return None
-
-        def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
-            df = df.copy()
-            if 'date' in df.columns:
-                dt = pd.to_datetime(df['date'], errors='coerce')
-                if dt.notna().any():
-                    df['date'] = dt; return df
-            for c in ALIASES['date']:
-                if c in df.columns:
-                    dt = _try_parse_date_series(df[c])
-                    if dt is not None and dt.notna().any():
-                        df['date'] = dt; return df
-            for keycol in ['race_id','race_key','RACE_KEY','RaceKey','race_code','RACE_ID']:
-                if keycol in df.columns:
-                    dt = _try_parse_date_series(df[keycol])
-                    if dt is not None and dt.notna().any():
-                        df['date'] = dt; return df
-            df['date'] = pd.Timestamp('2000-01-01') + pd.to_timedelta(np.arange(len(df)), unit='D')
-            return df
-
-        def _ensure_race_id(df: pd.DataFrame) -> pd.DataFrame:
-            df = df.copy()
-            if 'race_id' in df.columns and df['race_id'].notna().any():
-                return df
-            keycol = _first_col(df, ['race_id','race_key','RaceKey','RACE_KEY','race_code','RACE_ID','レースID','レースキー','レースコード'])
-            if keycol is not None:
-                df['race_id'] = df[keycol].astype(str); return df
-            dcol = 'date' if 'date' in df.columns else None
-            vcol = _first_col(df, ['venue','track','course','場','場所','競馬場','racecourse','場名','開催場','場コード','開催'])
-            rcol = _first_col(df, ['race_no','RaceNo','RACE_NO','R','レース','レース番号','レースNo','R_No'])
-            if dcol is not None and (vcol is not None or rcol is not None):
-                dkey = pd.to_datetime(df[dcol], errors='coerce').dt.strftime('%Y%m%d').fillna('00000000')
-                parts = [dkey]
-                if vcol is not None:
-                    vkey = df[vcol].astype(str).str.replace(r'\s+', '', regex=True)
-                    parts.append(vkey)
-                if rcol is not None:
-                    rnum = df[rcol].astype(str).str.extract(r'(\d{1,2})', expand=False).fillna('NA')
-                    parts.append('R' + rnum)
-                df['race_id'] = parts[0]
-                for p in parts[1:]:
-                    df['race_id'] = df['race_id'] + '_' + p
-                return df
-            if dcol is not None:
-                tmp = df.sort_values(dcol).copy()
-                block = tmp.groupby(pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d')).cumcount() // 18
-                tmp['__rid'] = pd.to_datetime(tmp[dcol]).dt.strftime('%Y%m%d') + '_G' + block.astype(str)
-                df = tmp.sort_index()
-                df['race_id'] = df['__rid'].values
-                df.drop(columns=['__rid'], inplace=True, errors='ignore')
-                return df
-            df['race_id'] = 'G' + (np.arange(len(df)) // 18).astype(str)
-            return df
-
-        def normalize_keiba_columns(df: pd.DataFrame) -> pd.DataFrame:
-            df = _rename_to_canonical(df)
-            # 18桁→12桁（年4+ID8）
-            if 'race_id' in df.columns:
-                import re as _re
-                def to_nk12(x):
-                    s = _re.sub(r'\D', '', str(x))
-                    m = _re.match(r'^(\d{4})\d{4}(\d{8})\d{2}$', s)
-                    return (m.group(1) + m.group(2)) if m else None
-                conv = df['race_id'].apply(to_nk12)
-                df['race_id'] = conv.where(conv.notna(), df['race_id'])
-            df = _ensure_date_column(df)
-            df = _ensure_race_id(df)
-            return df
-
-        def ensure_finish_position(df: pd.DataFrame) -> pd.DataFrame:
-            df = df.copy()
-            if 'finish_position' not in df.columns:
-                for c in ['確定着順','順位','着','finish','result_position','着順']:
-                    if c in df.columns:
-                        df['finish_position'] = pd.to_numeric(df[c], errors='coerce'); break
-            df['finish_position'] = pd.to_numeric(df.get('finish_position', np.nan), errors='coerce')
-            if 'finish_position' not in df.columns:
-                raise KeyError("finish_position（=着順）列を生成できませんでした。")
-            return df
-
-        def add_in_race_relative_features(df: pd.DataFrame, base_num_cols: list) -> pd.DataFrame:
-            use_cols = [c for c in base_num_cols if c in df.columns]
-            if not use_cols: return df.copy()
-            if 'race_id' in df.columns:
-                g = df.groupby('race_id', group_keys=False)
-                z = g[use_cols].apply(lambda x: (x - x.mean()) / (x.std(ddof=0) + 1e-9)).add_suffix("_z")
-                rk = g[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
-            else:
-                z = (df[use_cols] - df[use_cols].mean()) / (df[use_cols].std(ddof=0) + 1e-9)
-                z = z.add_suffix("_z")
-                rk = df[use_cols].rank(pct=False, ascending=True).astype(float).add_suffix("_rk")
-            return pd.concat([df.reset_index(drop=True), z.reset_index(drop=True), rk.reset_index(drop=True)], axis=1)
-
-        def softmax_by_race(scores: pd.Series, race_ids: pd.Series, T: float = 1.0) -> pd.Series:
-            scores = pd.Series(scores).astype(float)
-            race_ids = pd.Series(race_ids)
-            out = pd.Series(index=scores.index, dtype=float)
-            for rid, idx in race_ids.groupby(race_ids).groups.items():
-                s = scores.loc[idx].values / max(T, 1e-6)
-                e = np.exp(s - np.max(s))
-                p = e / np.sum(e)
-                out.loc[idx] = p
-            return out
-
-        def tune_temperature(valid_scores: pd.Series, valid_race: pd.Series, valid_win_flag: pd.Series,
-                             grid=None) -> float:
-            """勝者の対数尤度が最小になる温度Tを粗探索。"""
-            if grid is None:
-                grid = np.linspace(0.6, 2.5, 10)
-            scores = pd.Series(valid_scores).astype(float)
-            races  = pd.Series(valid_race)
-            win_f  = pd.Series(valid_win_flag).astype(int)
-            best_T, best_nll = 1.0, float('inf')
-            for T in grid:
-                p = softmax_by_race(scores, races, T)
-                nll = 0.0
-                for rid, idx in races.groupby(races).groups.items():
-                    pi = p.loc[idx][win_f.loc[idx] == 1]
-                    if len(pi) == 1:
-                        nll -= float(np.log(pi.values[0] + 1e-12))
-                if nll < best_nll:
-                    best_T, best_nll = float(T), float(nll)
-            return best_T
-
-        # ---- データ読み込み ----
-        if train_source == "このExcelのsheet0（過去走）を使う":
-            df_train_raw = sheet0.copy()
+        # 分数ケリーに基づく重み → 予算でスケール
+        df_picks['w'] = df_picks['kelly_f'] * float(kelly_frac)
+        sw = df_picks['w'].sum()
+        if sw <= 0:
+            st.warning("ケリー基準の重みがゼロです。ケリー係数やオッズ・確率を見直してください。")
         else:
-            if uploaded is None:
-                st.warning("学習用ファイルをアップロードしてください。")
-                st.stop()
-            if uploaded.name.lower().endswith(".csv"):
-                df_train_raw = pd.read_csv(uploaded)
-            else:
-                df_train_raw = pd.read_excel(uploaded)
+            budget = float(total_budget)
+            raw_alloc = budget * (df_picks['w'] / sw)
+            # 最小単位で丸め
+            stake = (np.floor(raw_alloc / float(min_unit)) * float(min_unit)).astype(int)
+            # 0行を削除しすぎないよう、最低1単位を高EVから順に配布
+            deficit = int(budget - stake.sum())
+            if deficit >= min_unit:
+                # 余りを高EV順に割当
+                order = df_picks['EV_ROI'].rank(method='first', ascending=False).astype(int)
+                idx_order = np.argsort(order.values)
+                for j in idx_order:
+                    if deficit < min_unit: break
+                    stake.iloc[j] += int(min_unit)
+                    deficit -= int(min_unit)
+            df_picks['推奨金額(円)'] = stake
+            df_picks['想定期待収益(円)'] = (df_picks['推奨金額(円)'] * (df_picks['p'] * df_picks['odds'] - 1.0)).round(1)
 
-        # ---- 前処理 ----
-        df_train_raw = normalize_keiba_columns(df_train_raw)
-        df_train_raw = ensure_finish_position(df_train_raw)
+            # 出力
+            show_bet_cols = ['種別','枠','番','馬名','odds','p','EV_ROI','kelly_f','推奨金額(円)','想定期待収益(円)']
+            st.dataframe(
+                df_picks[show_bet_cols].rename(columns={'odds':'オッズ','p':'勝率(またはTop3確率)','EV_ROI':'期待ROI','kelly_f':'ケリー率'})
+                    .style.format({'オッズ':'{:.2f}','勝率(またはTop3確率)':'{:.3f}','期待ROI':'{:.3f}','ケリー率':'{:.3f}'}),
+                use_container_width=True, height=H(df_picks, 480)
+            )
+            st.write(f"**合計投入額:** {int(df_picks['推奨金額(円)'].sum())} 円 / 予算 {int(budget)} 円")
 
-        # 期間分割（直近を検証に）
-        cut_date = pd.to_datetime(df_train_raw['date']).quantile(0.85)
-        train_df = df_train_raw[df_train_raw['date'] < cut_date].copy()
-        valid_df = df_train_raw[df_train_raw['date'] >= cut_date].copy()
-        if valid_df['race_id'].nunique() <= 1:
-            race_order = df_train_raw.groupby('race_id')['date'].median().sort_values().index.tolist()
-            n_val = max(int(len(race_order) * 0.15), 1)
-            val_set = set(race_order[-n_val:])
-            train_df = df_train_raw[~df_train_raw['race_id'].isin(val_set)].copy()
-            valid_df = df_train_raw[df_train_raw['race_id'].isin(val_set)].copy()
+            bet_csv = df_picks[show_bet_cols].to_csv(index=False).encode('utf-8-sig')
+            st.download_button("🧾 買い目CSVを保存", data=bet_csv, file_name="bets_kelly.csv", mime="text/csv")
 
-        # ラベル（1着=3, 2着=2, 3着=1, その他=0）
-        def make_relevance_from_finish(pos: pd.Series) -> pd.Series:
-            pos = pd.to_numeric(pos, errors="coerce")
-            rel = pd.Series(0.0, index=pos.index)
-            rel[pos == 1] = 3.0
-            rel[pos == 2] = 2.0
-            rel[pos == 3] = 1.0
-            return rel.fillna(0.0)
-        train_df['y'] = make_relevance_from_finish(train_df['finish_position'])
-        valid_df['y'] = make_relevance_from_finish(valid_df['finish_position'])
-
-        # 特徴量
-        leak_cols = {'finish_position','win_odds','payout','time_sec'}
-        base_num_cols = [c for c in train_df.select_dtypes(include=[np.number]).columns if c not in leak_cols]
-        train_df = add_in_race_relative_features(train_df, base_num_cols)
-        valid_df = add_in_race_relative_features(valid_df, base_num_cols)
-        feat_cols = [c for c in train_df.columns if c.endswith('_z') or c.endswith('_rk')]
-        keep_raw = ['distance','draw','weight_carried','age','sex_code','turn_dir','jockey_win','trainer_win','recent_index']
-        feat_cols += [c for c in keep_raw if c in train_df.columns]
-        feat_cols = sorted(set(feat_cols))
-        if not feat_cols:
-            st.error("特徴量が生成できませんでした。数値列が必要です。")
-            st.stop()
-
-        # 学習
-        def make_group_counts(frame): return frame.groupby('race_id').size().tolist()
-        X_tr, y_tr = train_df[feat_cols].values, train_df['y'].values
-        X_va, y_va = valid_df[feat_cols].values, valid_df['y'].values
-        g_tr = make_group_counts(train_df)
-        g_va = make_group_counts(valid_df)
-
-        ranker = lgb.LGBMRanker(
-            objective='lambdarank',
-            metric='ndcg',
-            n_estimators=1200,
-            learning_rate=0.05,
-            num_leaves=63,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_data_in_leaf=20,
-            random_state=42
-        )
-        ranker.fit(
-            X_tr, y_tr,
-            group=g_tr,
-            eval_set=[(X_va, y_va)],
-            eval_group=[g_va],
-            eval_at=[1,3,5],
-            callbacks=[lgb.early_stopping(150), lgb.log_evaluation(100)]
-        )
-
-        # 評価（安全版NDCG）
-        valid_scores = ranker.predict(X_va, num_iteration=ranker.best_iteration_)
-        ndcg3 = ndcg_by_race(valid_df, valid_scores, k=3)  # ← アプリ先頭で定義した安全実装を使用
-        st.success(f"NDCG@3 = {ndcg3:.4f}")
-
-        # ---- 温度チューニング＋保存（推論で使用） ----
-        valid_df = valid_df.reset_index(drop=True)
-        valid_df['score'] = valid_scores
-        valid_df['win_flag'] = (valid_df['finish_position'] == 1).astype(int)
-        Tcal = tune_temperature(valid_df['score'], valid_df['race_id'], valid_df['win_flag'])
-        st.session_state['rank_T'] = float(Tcal)
-        st.caption(f"Calibrated temperature T = {Tcal:.2f}")
-
-        # 検証レースの上位表示（スコア）
-        show_id = 'horse_id' if 'horse_id' in valid_df.columns else (_first_col(valid_df, ['馬名','番']) or '番')
-        cols = ['race_id'] + ([show_id] if show_id else []) + ['score']
-        topk = []
-        for rid, part in valid_df.sort_values(['race_id','score'], ascending=[True,False]).groupby('race_id'):
-            topk.append(part.head(3)[[c for c in cols if c in part.columns]])
-        out = pd.concat(topk) if topk else pd.DataFrame(columns=cols)
-        st.markdown("#### 検証レース 上位3（スコア）")
-        st.dataframe(out, use_container_width=True, height=H(out, 600))
-
-        # ---- セッションへ保存（推論で使用） ----
-        st.session_state['ranker']             = ranker
-        st.session_state['rank_feat_cols']     = feat_cols
-        st.session_state['rank_base_num_cols'] = base_num_cols
-        st.session_state['rank_best_iter']     = getattr(ranker, 'best_iteration_', None)
-
-    else:
-        st.info("チェックを入れると学習を実行します。普段はオフのままでOK。")
+# ============== 仕上げメモ ==============
+st.markdown("""
+<small>
+- 勝率はレース内 **Plackett–Luce（softmax）** の解析解です。Top3（複勝率）は**軽量Gumbelサンプリング**で近似しています。<br>
+- 「📏 確率校正」をONにすると、sheet0（過去走）から**等温回帰/Platt**で校正カーブを学習し、現行レース勝率に反映します。<br>
+- 「💸 買い目」は**EV>0**かつ分数ケリーで予算配分。オッズは小数（払戻総額倍率）で入力してください。
+</small>
+""", unsafe_allow_html=True)
