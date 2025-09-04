@@ -1,5 +1,5 @@
 [theme]
-base = "dark" # "light" でもOK
+base = "light" # "light" でもOK
 primaryColor = "#4f46e5" # Indigo 600
 backgroundColor = "#0b1020" # 深いネイビーバック
 secondaryBackgroundColor = "#121a2d" # カード背景
