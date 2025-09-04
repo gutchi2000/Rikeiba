@@ -1,7 +1,7 @@
 [theme]
-base = "light" # "light" でもOK
-primaryColor = "#4f46e5" # Indigo 600
-backgroundColor = "#0b1020" # 深いネイビーバック
-secondaryBackgroundColor = "#121a2d" # カード背景
-textColor = "#e6e9f2"
+base = "light"
+primaryColor = "#3B82F6"            # 明るめのブルー（アクセント）
+backgroundColor = "#F8FAFC"         # ほぼ白（ページ背景）
+secondaryBackgroundColor = "#FFFFFF" # 真っ白（カード/コンテナ）
+textColor = "#334155"               # スレート系の濃グレー（読みやすい）
 font = "sans serif"
