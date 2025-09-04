@@ -94,21 +94,59 @@ st.set_page_config(page_title="競馬予想アプリ（修正版）", layout="wi
 
 # ---- 便利CSS（sidebar 幅だけ調整）----
 # 枠→HEX
+# ── 枠の色（近似：JRA/NetKeibaの枠色）
 def _waku_hex(v: int) -> str:
-    m={1:"#ffffff",2:"#000000",3:"#ff0000",4:"#0000ff",
-       5:"#ffff00",6:"#00ff00",7:"#ff8000",8:"#ff8080"}
-    return m.get(int(v), "#ffffff")
+    palette = {
+        1:"#ffffff",  # 白
+        2:"#000000",  # 黒
+        3:"#e6002b",  # 赤
+        4:"#1560bd",  # 青
+        5:"#ffd700",  # 黄
+        6:"#00a04b",  # 緑
+        7:"#ff7f27",  # 橙
+        8:"#f19ec2",  # 桃
+    }
+    return palette.get(int(v), "#ffffff")
 
-# Styler: 枠列の背景＆文字色
-def _style_waku(s):
-    out=[]
+# ── Styler: 枠セルの背景＋文字色（1枠=黒文字／その他=白文字）
+def _style_waku(s: pd.Series):
+    out = []
     for v in s:
         if pd.isna(v):
             out.append("")
         else:
-            v=int(v); bg=_waku_hex(v); fg="#fff" if v==2 else "#111"
-            out.append(f"background-color:{bg}; color:{fg}; font-weight:700;")
+            v = int(v)
+            bg = _waku_hex(v)
+            fg = "#000" if v == 1 else "#fff"   # ← ここがポイント
+            out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
     return out
+
+# ── 表示用に「枠」「番」を整数化（小数点を消す）
+for c in ("枠", "番"):
+    df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
+
+# Int64 に NA がある時に備えた整数フォーマッタ
+def _fmt_int(x):
+    try:
+        return f"{int(x)}"
+    except Exception:
+        return ""
+
+show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
+             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
+
+styled = (
+    df_disp[show_cols]
+      .style
+      .apply(_style_waku, subset=['枠'])
+      .format({
+          '枠': _fmt_int, '番': _fmt_int,
+          'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
+          'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'
+      }, na_rep="")
+)
+
+st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
 
 
 STYLES = ['逃げ','先行','差し','追込']
