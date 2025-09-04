@@ -103,9 +103,16 @@ st.markdown("""
   --rail:#E5E7EB;            /* ラチ/白系 */
   --border:#E5E7EB;
 
-  /* 枠色（JRAの枠色に合わせた近似色） */
-  --waku-1:#FFFFFF;  --waku-2:#111111;  --waku-3:#DC2626;  --waku-4:#2563EB;
-  --waku-5:#FACC15;  --waku-6:#16A34A;  --waku-7:#FB923C;  --waku-8:#F472B6;
+  /* 枠色（JRAの枠色：1=白,2=黒,3=赤,4=青,5=黄,6=緑,7=橙,8=桃）
+     ※HEXは一般的に用いられる近似 */
+  --waku-1:#ffffff;
+  --waku-2:#000000;
+  --waku-3:#ff0000;
+  --waku-4:#0000ff;
+  --waku-5:#ffff00;
+  --waku-6:#00ff00;
+  --waku-7:#ff8000;
+  --waku-8:#ff8080;
 }
 
 /* 背景とカード（白ベース＋軽い影でメリハリ） */
@@ -131,12 +138,12 @@ h1,h2,h3{ color:var(--text)!important; font-weight:800; letter-spacing:.2px; }
 .waku{ display:inline-flex; align-items:center; gap:.45rem;
   padding:.35rem .6rem; border-radius:12px; border:1px solid var(--border);
   font-weight:800; }
-.w1{ background:var(--waku-1); color:#111; }
-.w2{ background:var(--waku-2); color:#FFF; }
+.w1{ background:var(--waku-1); color:#111; }  /* 白地→黒文字 */
+.w2{ background:var(--waku-2); color:#FFF; }  /* 黒地→白文字 */
 .w3{ background:var(--waku-3); color:#FFF; }
 .w4{ background:var(--waku-4); color:#FFF; }
-.w5{ background:var(--waku-5); color:#111; }
-.w6{ background:var(--waku-6); color:#FFF; }
+.w5{ background:var(--waku-5); color:#111; }  /* 黄は黒文字で可読性UP */
+.w6{ background:var(--waku-6); color:#111; }  /* 緑は黒文字に変更 */
 .w7{ background:var(--waku-7); color:#111; }
 .w8{ background:var(--waku-8); color:#111; }
 
@@ -159,6 +166,7 @@ h2::after{
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
