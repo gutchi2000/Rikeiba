@@ -10,76 +10,84 @@
 # + ★ 【削除予定】LightGBM学習UI/ロジック（後半で完全削除＆評価タブへ差し替え）
 # app.py（あなたの既存アプリ）
 # ---- コントロール（左） × 概況（右） ----
+import streamlit as st
+import pandas as pd
+from ui_style import topbar, card, pill, score_bar, inject_css  # 追加済み前提
+
+st.set_page_config(page_title="競馬予想アプリ（リデザイン）", layout="wide")
+inject_css()
+
+# ---- コントロール（左） × 概況（右） ----
 left, right = st.columns([0.9, 1.1])
+
 with left:
-with card("データ入力"):
-uploaded = st.file_uploader("Excel/CSV をアップロード", type=["xlsx","csv"])
-race_id = st.text_input("レースID（任意）", placeholder="例：202509040101")
-st.caption("※ 未入力でも動きます")
+    with card("データ入力"):
+        uploaded = st.file_uploader("Excel/CSV をアップロード", type=["xlsx", "csv"])
+        race_id = st.text_input("レースID（任意）", placeholder="例：202509040101")
+        st.caption("※ 未入力でも動きます")
 
-
-with card("フィルタ"):
-col1, col2, col3 = st.columns(3)
-with col1:
-st.selectbox("開催", ["札幌","新潟","小倉","中山","阪神","東京","京都"])
-with col2:
-st.selectbox("距離", ["芝1200","芝1600","芝2000","ダ1600","ダ1800"]) # 例
-with col3:
-st.radio("馬場", ["良","稍","重","不良"], horizontal=True)
-
+    with card("フィルタ"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.selectbox("開催", ["札幌", "新潟", "小倉", "中山", "阪神", "東京", "京都"])
+        with col2:
+            st.selectbox("距離", ["芝1200", "芝1600", "芝2000", "ダ1600", "ダ1800"])  # 例
+        with col3:
+            st.radio("馬場", ["良", "稍", "重", "不良"], horizontal=True)
 
 with right:
-with card("現在のフォーカス"):
-st.markdown(
-f"""
-<div class='tags'>
-{pill('◎')} <span class='subtle'>本命候補：ステレンボッシュ</span>
-{pill('○')} <span class='subtle'>対抗：アラタ</span>
-{pill('▲')} <span class='subtle'>単穴：モズメイメイ</span>
-</div>
-""",
-unsafe_allow_html=True,
-)
-st.write("")
-st.markdown("### 全体スコア分布（例）")
-st.markdown(score_bar(78, 100), unsafe_allow_html=True)
-st.markdown("<span class='scoreval'>78.0 / 100</span>", unsafe_allow_html=True)
+    with card("現在のフォーカス"):
+        st.markdown(
+            f"""
+            <div class='tags'>
+              {pill('◎')} <span class='subtle'>本命候補：ステレンボッシュ</span>
+              {pill('○')} <span class='subtle'>対抗：アラタ</span>
+              {pill('▲')} <span class='subtle'>単穴：モズメイメイ</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        st.markdown("### 全体スコア分布（例）")
+        st.markdown(score_bar(78, 100), unsafe_allow_html=True)
+        st.markdown("<span class='scoreval'>78.0 / 100</span>", unsafe_allow_html=True)
 
-
-# ---- 一覧カード（行ごと装飾例） ----
 with card("出走馬プレビュー", right="スコアで並び替え"):
-df = pd.DataFrame([
-{"馬名":"ステレンボッシュ","年齢":4,"斤量":56,"印":"◎","スコア":82.1},
-{"馬名":"アラタ","年齢":7,"斤量":58,"印":"○","スコア":79.4},
-{"馬名":"モズメイメイ","年齢":4,"斤量":55,"印":"▲","スコア":75.2},
-{"馬名":"その他","年齢":5,"斤量":57,"印":"△","スコア":68.8},
-])
+    df = pd.DataFrame(
+        [
+            {"馬名": "ステレンボッシュ", "年齢": 4, "斤量": 56, "印": "◎", "スコア": 82.1},
+            {"馬名": "アラタ", "年齢": 7, "斤量": 58, "印": "○", "スコア": 79.4},
+            {"馬名": "モズメイメイ", "年齢": 4, "斤量": 55, "印": "▲", "スコア": 75.2},
+            {"馬名": "その他", "年齢": 5, "斤量": 57, "印": "△", "スコア": 68.8},
+        ]
+    )
+
+    for _, r in df.iterrows():
+        st.markdown(
+            f"""
+            <div class='card'>
+              <div style='display:flex;justify-content:space-between;gap:12px;align-items:center;'>
+                <div>
+                  <div style='display:flex;align-items:center;gap:10px;'>
+                    {pill(r['印'])}
+                    <strong style='font-size:16px'>{r['馬名']}</strong>
+                    <span class='subtle'>年齢 {int(r['年齢'])} / 斤量 {int(r['斤量'])}kg</span>
+                  </div>
+                </div>
+                <div style='min-width:220px;text-align:right'>
+                  <div style='margin-bottom:6px'><span class='subtle'>Score</span> <span class='scoreval'>{r['スコア']:.1f}</span></div>
+                  {score_bar(r['スコア'], 100)}
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+st.caption("© 2025 Keiba App - Designed with the Streamlit UI Makeover Kit")
 
 
-for _, r in df.iterrows():
-st.markdown(
-f"""
-<div class='card'>
-<div style='display:flex;justify-content:space-between;gap:12px;align-items:center;'>
-<div>
-<div style='display:flex;align-items:center;gap:10px;'>
-{pill(r['印'])}
-<strong style='font-size:16px'>{r['馬名']}</strong>
-<span class='subtle'>年齢 {int(r['年齢'])} / 斤量 {int(r['斤量'])}kg</span>
-</div>
-</div>
-<div style='min-width:220px;text-align:right'>
-<div style='margin-bottom:6px'><span class='subtle'>Score</span> <span class='scoreval'>{r['スコア']:.1f}</span></div>
-{score_bar(r['スコア'], 100)}
-</div>
-</div>
-</div>
-""",
-unsafe_allow_html=True,
-)
 
-
-st.caption("© 2025 Keiba App — Designed with the Streamlit UI Makeover Kit")　
 import streamlit as st
 import pandas as pd
 import numpy as np
