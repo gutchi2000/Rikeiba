@@ -93,79 +93,35 @@ if jp_font is not None:
 st.set_page_config(page_title="競馬予想アプリ（修正版）", layout="wide")
 
 # ---- 便利CSS（sidebar 幅だけ調整）----
-st.markdown("""
-<style>
-:root{
-  /* ベース */
-  --bg:#FFFFFF; --bg2:#F6F7FB; --text:#0B1220; --muted:#475569;
-  --accent:#166534;          /* 芝(ターフ)グリーン */
-  --dirt:#8B5E34;            /* ダートブラウン */
-  --rail:#E5E7EB;            /* ラチ/白系 */
-  --border:#E5E7EB;
+# 枠→HEX
+def _waku_hex(v: int) -> str:
+    m={1:"#ffffff",2:"#000000",3:"#ff0000",4:"#0000ff",
+       5:"#ffff00",6:"#00ff00",7:"#ff8000",8:"#ff8080"}
+    return m.get(int(v), "#ffffff")
 
-  /* 枠色（JRAの枠色：1=白,2=黒,3=赤,4=青,5=黄,6=緑,7=橙,8=桃）
-     ※HEXは一般的に用いられる近似 */
-  --waku-1:#ffffff;
-  --waku-2:#000000;
-  --waku-3:#ff0000;
-  --waku-4:#0000ff;
-  --waku-5:#ffff00;
-  --waku-6:#00ff00;
-  --waku-7:#ff8000;
-  --waku-8:#ff8080;
-}
+# Styler: 枠列の背景＆文字色
+def _style_waku(s):
+    out=[]
+    for v in s:
+        if pd.isna(v):
+            out.append("")
+        else:
+            v=int(v); bg=_waku_hex(v); fg="#fff" if v==2 else "#111"
+            out.append(f"background-color:{bg}; color:{fg}; font-weight:700;")
+    return out
 
-/* 背景とカード（白ベース＋軽い影でメリハリ） */
-section.main{ background:var(--bg); }
-[data-testid="stSidebar"]{ background:var(--bg2); }
-.block-container > div, .stCard{
-  background:#FFF!important; border:1px solid var(--border)!important;
-  box-shadow:0 6px 18px rgba(2,6,23,.06), 0 2px 6px rgba(2,6,23,.04);
-  border-radius:14px; padding:16px; color:var(--text)!important;
-}
-h1,h2,h3{ color:var(--text)!important; font-weight:800; letter-spacing:.2px; }
+# 本日の見立てテーブル直前をこれに置換
+show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
+             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
 
-/* コースバッジ（芝/ダート） */
-.badge{ display:inline-flex; gap:.4rem; align-items:center; font-weight:700;
-  padding:.25rem .6rem; border-radius:999px; border:1px solid var(--border);}
-.badge.turf{ background:#ECFDF5; color:var(--accent); }
-.badge.dirt{ background:#FEF7EE; color:var(--dirt); }
-.badge .dot{ width:.6rem; height:.6rem; border-radius:999px; }
-.badge.turf .dot{ background:var(--accent); }
-.badge.dirt .dot{ background:var(--dirt); }
+styled = (df_disp[show_cols]
+          .style
+          .apply(_style_waku, subset=['枠'])
+          .format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
+                   'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'}))
 
-/* 枠色ピル（左端に“枠色×馬番”の視覚手がかり） */
-.waku{ display:inline-flex; align-items:center; gap:.45rem;
-  padding:.35rem .6rem; border-radius:12px; border:1px solid var(--border);
-  font-weight:800; }
-.w1{ background:var(--waku-1); color:#111; }  /* 白地→黒文字 */
-.w2{ background:var(--waku-2); color:#FFF; }  /* 黒地→白文字 */
-.w3{ background:var(--waku-3); color:#FFF; }
-.w4{ background:var(--waku-4); color:#FFF; }
-.w5{ background:var(--waku-5); color:#111; }  /* 黄は黒文字で可読性UP */
-.w6{ background:var(--waku-6); color:#111; }  /* 緑は黒文字に変更 */
-.w7{ background:var(--waku-7); color:#111; }
-.w8{ background:var(--waku-8); color:#111; }
+st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
 
-/* 進捗/スコア（トラック=ラチ色、バー=芝色） */
-div.stProgress>div{ background:var(--rail); height:12px; border-radius:999px; }
-div.stProgress>div>div{ background:var(--accent); }
-
-/* 見出し下に“ゲートの芝ライン” */
-h2::after{
-  content:""; display:block; height:4px; margin:.35rem 0 .8rem;
-  background:linear-gradient(90deg,var(--accent) 0 60%, var(--dirt) 60% 100%);
-  border-radius:999px;
-}
-
-/* オッズ盤（ライト版：薄いアンバー面 × 等幅数字） */
-.odds{
-  background:#FFF8E1; border:1px solid #FDE68A; border-radius:10px; padding:.6rem .8rem;
-  font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color:#1F2937;
-}
-</style>
-""", unsafe_allow_html=True)
 
 
 
