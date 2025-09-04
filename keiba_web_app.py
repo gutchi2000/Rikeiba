@@ -96,19 +96,9 @@ st.set_page_config(page_title="競馬予想アプリ（修正版）", layout="wi
 # 枠→HEX
 # ── 枠の色（近似：JRA/NetKeibaの枠色）
 def _waku_hex(v: int) -> str:
-    palette = {
-        1:"#ffffff",  # 白
-        2:"#000000",  # 黒
-        3:"#e6002b",  # 赤
-        4:"#1560bd",  # 青
-        5:"#ffd700",  # 黄
-        6:"#00a04b",  # 緑
-        7:"#ff7f27",  # 橙
-        8:"#f19ec2",  # 桃
-    }
+    palette = {1:"#ffffff",2:"#000000",3:"#e6002b",4:"#1560bd",5:"#ffd700",6:"#00a04b",7:"#ff7f27",8:"#f19ec2"}
     return palette.get(int(v), "#ffffff")
 
-# ── Styler: 枠セルの背景＋文字色（1枠=黒文字／その他=白文字）
 def _style_waku(s: pd.Series):
     out = []
     for v in s:
@@ -117,9 +107,10 @@ def _style_waku(s: pd.Series):
         else:
             v = int(v)
             bg = _waku_hex(v)
-            fg = "#000" if v == 1 else "#fff"   # ← ここがポイント
+            fg = "#000" if v == 1 else "#fff"   # ← 1枠は黒文字、それ以外は白文字
             out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
     return out
+
 
 # ── 表示用に「枠」「番」を整数化（小数点を消す）
 for c in ("枠", "番"):
@@ -1393,17 +1384,30 @@ st.info(f"🕒 ペース見立て：**{pace_type}**")
 show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
              '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
 
+# 枠・番は「nullable 整数(Int64)」で保持 → 欠損も扱え、小数点が出ない
+for c in ("枠", "番"):
+    df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
+
+# Int64（欠損あり整数）を安全に文字列化するフォーマッタ
+def _fmt_int(x):
+    try:
+        return f"{int(x)}"
+    except Exception:
+        return ""
+
 styled = (
     df_disp[show_cols]
       .style
-      .apply(_style_waku, subset=['枠'])  # ← 枠セルに色を塗る
-      .format({
-          'AR100':'{:.1f}', '勝率%_PL':'{:.2f}', '複勝率%_PL':'{:.2f}',
+      .apply(_style_waku, subset=['枠'])                 # ← 1枠=黒文字／他=白文字
+      .format({                                          # ← 小数点いらない列の整形
+          '枠': _fmt_int, '番': _fmt_int,
+          'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
           'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'
-      })
+      }, na_rep="")
 )
 
 st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
+
 
 # ====================== タブ ======================
 tab_main, tab_vis, tab_eval, tab_calib, tab_bet = st.tabs(["🏁 本命","📊 可視化","📈 評価","📏 校正","💸 買い目"])
