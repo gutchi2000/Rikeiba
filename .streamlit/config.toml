@@ -1,3 +1,7 @@
-[server]
-headless = true
-maxUploadSize = 200
+[theme]
+base = "dark" # "light" でもOK
+primaryColor = "#4f46e5" # Indigo 600
+backgroundColor = "#0b1020" # 深いネイビーバック
+secondaryBackgroundColor = "#121a2d" # カード背景
+textColor = "#e6e9f2"
+font = "sans serif"
