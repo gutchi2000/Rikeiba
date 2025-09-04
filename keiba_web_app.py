@@ -137,7 +137,6 @@ styled = (
       }, na_rep="")
 )
 
-st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
 
 
 STYLES = ['逃げ','先行','差し','追込']
