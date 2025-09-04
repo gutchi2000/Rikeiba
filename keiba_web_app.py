@@ -1257,8 +1257,7 @@ def render_result_distribution(df, col="AR100"):
     st.pyplot(fig, use_container_width=True)
 
     st.caption(f"平均 {col}: {mean_v:.2f}")
-    st.pyplot(fig, use_container_width=True)
-    st.caption(f"平均 {col}: {mean_v:.2f}")  # ← 必ず関数の中に置く
+  
 
 # ↑ ここが render_result_distribution の最後の行
 
