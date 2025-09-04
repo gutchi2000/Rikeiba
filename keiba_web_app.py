@@ -96,9 +96,13 @@ st.markdown("""
 <style>
 #MainMenu, footer {visibility:hidden;}
 section[data-testid="stSidebar"] {width: 340px !important;}
-div.block-container {padding-top: .6rem; padding-bottom: .8rem; max-width: 1400px;}
+/* ← 見切れ対策で上の余白を広げる（重要） */
+div.block-container {padding-top: 2.4rem !important; padding-bottom: .8rem; max-width: 1400px;}
+/* UIキットのトップバーがある環境向けの保険（被さり防止） */
+.topbar{ position: static !important; }
 </style>
 """, unsafe_allow_html=True)
+
 
 STYLES = ['逃げ','先行','差し','追込']
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
@@ -1253,6 +1257,68 @@ def render_result_distribution(df, col="AR100"):
     st.pyplot(fig, use_container_width=True)
 
     st.caption(f"平均 {col}: {mean_v:.2f}")
+
+st.caption(f"平均 {col}: {mean_v:.2f}")
+# ↑ ここが render_result_distribution の最後の行
+
+# ▼▼▼ ここに追記：出走プレビュー用の小関数とレンダラ ▼▼▼
+def _pill(mark: str) -> str:
+    color = {'◎':'#4f46e5','〇':'#14b8a6','○':'#14b8a6','▲':'#3b82f6','△':'#94a3b8','×':'#ef4444'}.get(str(mark), '#94a3b8')
+    return (
+        f"<span style='display:inline-flex;align-items:center;gap:6px;padding:3px 10px;"
+        f"border-radius:999px;border:1px solid rgba(255,255,255,.12);"
+        f"background:rgba(255,255,255,.05);color:{color};font-weight:700;'>{mark}</span>"
+    )
+
+def _bar(v, max_v=100):
+    try:
+        pct = max(0.0, min(100.0, float(v)/float(max_v)*100.0))
+    except Exception:
+        pct = 0.0
+    return (
+        "<div style='height:10px;border-radius:999px;background:#0f1830;"
+        "border:1px solid rgba(255,255,255,.08);overflow:hidden'>"
+        f"<span style='display:block;height:100%;width:{pct:.1f}%;"
+        "background:linear-gradient(90deg,#4f46e5,#14b8a6)'></span></div>"
+    )
+
+def render_final_preview(df):
+    """df は df_disp を渡す想定（列：馬名・印・AR100・枠・番 など）"""
+    import pandas as pd, numpy as np
+    for _, r in df.iterrows():
+        name = str(r.get('馬名',''))
+        mark = str(r.get('印',''))
+        ar   = r.get('AR100', np.nan)
+        ar_s = f"{float(ar):.1f}" if pd.notna(ar) else "-"
+        info = []
+        if pd.notna(r.get('枠')): info.append(f"枠 {int(r['枠'])}")
+        if pd.notna(r.get('番')): info.append(f"馬番 {int(r['番'])}")
+        info = " / ".join(info)
+
+        st.markdown(
+            f"""
+<div style='background:#121a2d;border:1px solid rgba(255,255,255,.06);border-radius:18px;
+            padding:14px 16px;margin:8px 0;box-shadow:0 10px 25px rgba(0,0,0,.25)'>
+  <div style='display:flex;justify-content:space-between;align-items:center;gap:12px;'>
+    <div>
+      <div style='display:flex;align-items:center;gap:10px;'>
+        {_pill(mark)}
+        <strong style='font-size:16px'>{name}</strong>
+        <span style='color:#94a3b8;font-size:12px'>{info}</span>
+      </div>
+    </div>
+    <div style='min-width:240px;text-align:right'>
+      <div style='margin-bottom:6px'><span style='color:#94a3b8;font-size:12px'>AR100</span>
+        <span style='font-variant-numeric:tabular-nums;font-weight:700;'>{ar_s}</span>
+      </div>
+      {_bar(ar, 100)}
+    </div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+# ▲▲▲ ここまで追記 ▲▲▲
 
 st.subheader("本日の見立て")
 
