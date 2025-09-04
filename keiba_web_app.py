@@ -114,7 +114,7 @@ def _style_waku(s: pd.Series):
 
 # ── 表示用に「枠」「番」を整数化（小数点を消す）
 for c in ("枠", "番"):
-df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
+　　df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
 
 # Int64 に NA がある時に備えた整数フォーマッタ
 def _fmt_int(x):
