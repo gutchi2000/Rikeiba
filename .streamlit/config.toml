@@ -7,37 +7,3 @@ primaryColor = "#2563EB"             # アクセント（白字でもAA）
 font = "sans serif"
 
 
-st.markdown("""
-<style>
-:root{
-  --bg:#FFFFFF; --bg2:#F8FAFC; --text:#0B1220;
-  --muted:#475569; --border:#E5E7EB; --accent:#2563EB;
-}
-
-/* 面の明暗差（背景とカードで2段） */
-section.main{ background:var(--bg); }
-[data-testid="stSidebar"]{ background:var(--bg2); }
-
-/* カード：白面＋薄い枠＋柔らかい影（奥行き） */
-.block-container > div, .stCard{
-  background:#FFFFFF!important;
-  border:1px solid var(--border)!important;
-  box-shadow: 0 6px 20px rgba(2,6,23,.06), 0 2px 6px rgba(2,6,23,.04);
-  border-radius:14px; padding:16px;
-  color:var(--text)!important;
-}
-
-/* 見出しは濃く、補助はミュート色で階層化 */
-h1, h2, h3{ color:var(--text)!important; font-weight:800; letter-spacing:.2px; }
-small, .help, .stCaption, .st-emotion-cache-1y4p8pa{ color:var(--muted)!important; }
-
-/* プログレス：薄いトラック × 濃いバー（幅も太く） */
-div.stProgress > div{ background:#E5E7EB; height:12px; border-radius:999px; }
-div.stProgress > div > div{ background:var(--accent); }
-
-/* 入力類：枠線で区切り（色だけに頼らない） */
-input, select, textarea{
-  border:1px solid var(--border) !important; background:#FFF !important; color:var(--text)!important;
-}
-</style>
-""", unsafe_allow_html=True)
