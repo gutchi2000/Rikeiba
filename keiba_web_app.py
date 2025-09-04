@@ -9,7 +9,7 @@
 # + ★ 【置き換え】勝率は Plackett–Luce（softmax）で解析計算、Top3は軽量MC。等温回帰で確率校正（任意）。
 # + ★ 【削除予定】LightGBM学習UI/ロジック（後半で完全削除＆評価タブへ差し替え）
 # app.py（あなたの既存アプリ）
-　st.set_page_config(page_title="競馬予想アプリ", layout="wide")
+st.set_page_config(page_title="競馬予想アプリ", layout="wide")
 st.markdown("""
 <style>
 :root{
