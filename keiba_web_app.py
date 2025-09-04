@@ -9,6 +9,33 @@
 # + ★ 【置き換え】勝率は Plackett–Luce（softmax）で解析計算、Top3は軽量MC。等温回帰で確率校正（任意）。
 # + ★ 【削除予定】LightGBM学習UI/ロジック（後半で完全削除＆評価タブへ差し替え）
 # app.py（あなたの既存アプリ）
+　st.set_page_config(page_title="競馬予想アプリ", layout="wide")
+st.markdown("""
+<style>
+:root{
+  --accent:#166534; --border:#E5E7EB;
+}
+
+/* カード面を“薄グレー＋枠＋影”にして白との差を作る */
+.block-container > div{
+  background: var(--secondary-background-color, #F1F5F9) !important;
+  border:1px solid var(--border)!important;
+  box-shadow:0 6px 18px rgba(2,6,23,.06), 0 2px 6px rgba(2,6,23,.04);
+  border-radius:14px; padding:16px;
+}
+
+/* 見出しに芝ライン */
+h2::after{
+  content:""; display:block; height:4px; margin:.35rem 0 .8rem;
+  background: linear-gradient(90deg, var(--accent) 0 60%, #8B5E34 60% 100%);
+  border-radius:999px;
+}
+
+/* プログレスや区切りのコントラスト */
+div.stProgress>div{ background:#E5E7EB; height:12px; border-radius:999px; }
+div.stProgress>div>div{ background:var(--accent); }
+</style>
+""", unsafe_allow_html=True)
 
 import streamlit as st
 import pandas as pd
