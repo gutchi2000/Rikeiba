@@ -1,9 +1,18 @@
 [theme]
 base = "light"
-backgroundColor = "#FFFFFF"          # 白
-secondaryBackgroundColor = "#F6F7FB" # ごく薄いグレー（カード）
-textColor = "#0B1220"                # 濃い文字（AA達成）
-primaryColor = "#166534"             # ターフグリーン（ボタン/リンク）
-font = "sans serif"
 
+# 面の明暗
+backgroundColor = "#FFFFFF"            # ページ背景（白）
+secondaryBackgroundColor = "#F1F5F9"   # カード面（薄いグレーで段差を出す）
 
+# 文字とリンク
+textColor = "#0B1220"
+primaryColor = "#166534"               # 競馬ターフっぽい緑（ボタン/リンク）
+linkColor = "#166534"
+linkUnderline = true
+
+# 枠とデータ表示（←ここがポイント）
+borderColor = "#E5E7EB"
+dataframeBorderColor = "#E5E7EB"               # 表の外枠・グリッドを出す
+dataframeHeaderBackgroundColor = "#F8FAFC"     # 表ヘッダーを薄色にしてコントラスト付け
+showWidgetBorder = true                         # 入力系に枠線を出す（見分けやすく）
