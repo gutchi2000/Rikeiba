@@ -110,21 +110,6 @@ def _style_waku(s):
             out.append(f"background-color:{bg}; color:{fg}; font-weight:700;")
     return out
 
-# 本日の見立てテーブル直前をこれに置換
-show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
-             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
-
-styled = (df_disp[show_cols]
-          .style
-          .apply(_style_waku, subset=['枠'])
-          .format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
-                   'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'}))
-
-st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
-
-
-
-
 
 STYLES = ['逃げ','先行','差し','追込']
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
@@ -1367,13 +1352,20 @@ df_disp['印'] = df_disp['順位'].apply(lambda x: mark_syms[x-1] if 1 <= x <= l
 st.info(f"🕒 ペース見立て：**{pace_type}**")
 
 # 表（ダウンロード付き）
-show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band','勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
-st.dataframe(
-    df_disp[show_cols].style.format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'}),
-    use_container_width=True, height=H(df_disp, 560)
+show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
+             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
+
+styled = (
+    df_disp[show_cols]
+      .style
+      .apply(_style_waku, subset=['枠'])  # ← 枠セルに色を塗る
+      .format({
+          'AR100':'{:.1f}', '勝率%_PL':'{:.2f}', '複勝率%_PL':'{:.2f}',
+          'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'
+      })
 )
-csv = df_disp[show_cols].to_csv(index=False).encode('utf-8-sig')
-st.download_button("📥 本日の評価テーブルをCSVで保存", data=csv, file_name="race_view.csv", mime="text/csv")
+
+st.dataframe(styled, use_container_width=True, height=H(df_disp, 560))
 
 # ====================== タブ ======================
 tab_main, tab_vis, tab_eval, tab_calib, tab_bet = st.tabs(["🏁 本命","📊 可視化","📈 評価","📏 校正","💸 買い目"])
