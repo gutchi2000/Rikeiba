@@ -1,7 +1,7 @@
 [theme]
 base = "light"
-primaryColor = "#3B82F6"            # 明るめのブルー（アクセント）
-backgroundColor = "#F8FAFC"         # ほぼ白（ページ背景）
-secondaryBackgroundColor = "#FFFFFF" # 真っ白（カード/コンテナ）
-textColor = "#334155"               # スレート系の濃グレー（読みやすい）
+backgroundColor = "#FFFFFF"        # ページ背景（白）
+secondaryBackgroundColor = "#F8FAFC"  # カードやサイドの薄グレー
+textColor = "#111827"              # ほぼ黒（読みやすい）
+primaryColor = "#1D4ED8"           # ボタン/強調（青700：白文字でAA）
 font = "sans serif"
