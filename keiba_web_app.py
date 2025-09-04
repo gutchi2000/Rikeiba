@@ -111,34 +111,6 @@ def _style_waku(s: pd.Series):
             out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
     return out
 
-
-# ── 表示用に「枠」「番」を整数化（小数点を消す）
-for c in ("枠", "番"):
-　　df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
-
-# Int64 に NA がある時に備えた整数フォーマッタ
-def _fmt_int(x):
-    try:
-        return f"{int(x)}"
-    except Exception:
-        return ""
-
-show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
-             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
-
-styled = (
-    df_disp[show_cols]
-      .style
-      .apply(_style_waku, subset=['枠'])
-      .format({
-          '枠': _fmt_int, '番': _fmt_int,
-          'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
-          'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'
-      }, na_rep="")
-)
-
-
-
 STYLES = ['逃げ','先行','差し','追込']
 _fwid = str.maketrans('０１２３４５６７８９％','0123456789%')
 
