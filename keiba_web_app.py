@@ -627,27 +627,42 @@ if 'horses_df' in st.session_state and isinstance(st.session_state['horses_df'],
         attrs.drop(columns=drop_cols, inplace=True)
 
 st.subheader("馬一覧・脚質・斤量・当日馬体重入力")
-edited = st.data_editor(
-    attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']].copy(),
-    column_config={
-        '脚質': st.column_config.SelectboxColumn('脚質', options=STYLES),
-        '斤量': st.column_config.NumberColumn('斤量', min_value=45, max_value=65, step=0.5),
-        '馬体重': st.column_config.NumberColumn('馬体重', min_value=300, max_value=600, step=1)
-    },
-    use_container_width=True,
-    num_rows='static',
-    height=auto_table_height(len(attrs)) if st.session_state.get('FULL_TABLE_VIEW', True) else 420,
-    hide_index=True,
-    key="horses_editor",
-)
+
+with st.form("horses_form", clear_on_submit=False):
+    edited = st.data_editor(
+        attrs[['枠','番','馬名','性別','年齢','脚質','斤量','馬体重']].copy(),
+        column_config={
+            '脚質': st.column_config.SelectboxColumn('脚質', options=STYLES),
+            '斤量': st.column_config.NumberColumn('斤量', min_value=45, max_value=65, step=0.5),
+            '馬体重': st.column_config.NumberColumn('馬体重', min_value=300, max_value=600, step=1)
+        },
+        use_container_width=True,
+        num_rows='static',
+        height=auto_table_height(len(attrs)) if st.session_state.get('FULL_TABLE_VIEW', True) else 420,
+        hide_index=True,
+        key="horses_editor",
+    )
+
+    # 全頭埋まっているか確認（空文字・NaNを許さない）
+    need_cols = ['脚質']  # 斤量や馬体重も必須にするなら追加: '斤量','馬体重'
+    def _all_filled(df, cols):
+        ok = True
+        for c in cols:
+            s = df[c].astype(str).str.strip()
+            ok &= s.ne('').all()
+        return bool(ok)
+
+    submitted = st.form_submit_button("全頭入力完了 → 計算")
+
+if not submitted:
+    st.info("脚質を全頭入力して『全頭入力完了 → 計算』を押すと集計します。")
+    st.stop()
+
 horses = edited.copy()
-
-# ★ 入力直後に脚質の表記ゆれを正規化しておく
-if '脚質' in horses.columns:
-    horses['脚質'] = horses['脚質'].map(normalize_style)
-
-# ★ セッションへ保存（タブ移動やスライダー操作で消えない）
+# この後は従来どおり
+horses['脚質'] = horses['脚質'].map(normalize_style)
 st.session_state['horses_df'] = horses.copy()
+
 
 validate_inputs(df_score, horses)
 
