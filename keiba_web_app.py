@@ -1224,16 +1224,25 @@ else:
         df_agg[c] = np.nan
 
 # ===== 最終スコア（正規化は内部指標） =====
+# 距離×回りスコア（列が無ければ 0 の Series を返す）
+dist_turn = pd.to_numeric(
+    df_agg.get('DistTurnZ', pd.Series(0.0, index=df_agg.index)),  # ← 無ければ0列
+    errors='coerce'
+).fillna(0.0)
+
+# 係数（未定義でも0で進む）
+gain_dt = float(dist_turn_gain) if 'dist_turn_gain' in locals() else float(st.session_state.get('dist_turn_gain', 0.0))
+
+# FinalRaw を一括で計算（先に RecencyZ / StabZ / PacePts / TurnPrefPts が出来ている位置に置く）
 df_agg['FinalRaw'] = (
     df_agg['RecencyZ']
     + stab_weight * df_agg['StabZ']
-    + pace_gain * df_agg['PacePts']
-    + turn_gain * df_agg['TurnPrefPts']
+    + pace_gain   * df_agg['PacePts']
+    + turn_gain   * df_agg['TurnPrefPts']
+    + gain_dt     * dist_turn
 )
-# ← これを追加
-df_agg['FinalRaw'] = df_agg['FinalRaw'] + float(dist_turn_gain) * df_agg['DistTurnZ'].fillna(0.0)
 
-df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
+df_agg['FinalZ'] = z_score(df_agg['FinalRaw'])
 
 
 # ===== NEW: AR100（B中心化の線形キャリブレーション） =====
