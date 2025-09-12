@@ -1224,26 +1224,46 @@ else:
         df_agg[c] = np.nan
 
 # ===== 最終スコア（正規化は内部指標） =====
-# 距離×回りスコア（列が無ければ 0 の Series を返す）
-dist_turn = pd.to_numeric(
-    df_agg.get('DistTurnZ', pd.Series(0.0, index=df_agg.index)),  # ← 無ければ0列
-    errors='coerce'
-).fillna(0.0)
+# ここは RecencyZ / StabZ / PacePts / TurnPrefPts / DistTurnZ が揃う“後”に置く
 
-# 係数（未定義でも0で進む）
-gain_dt = float(dist_turn_gain) if 'dist_turn_gain' in locals() else float(st.session_state.get('dist_turn_gain', 0.0))
+# 1) 必要列の用意（未生成でも0で埋めて落ちないように）
+for c in ("PacePts", "TurnPrefPts", "DistTurnZ"):
+    if c not in df_agg.columns:
+        df_agg[c] = 0.0
+df_agg[["PacePts", "TurnPrefPts", "DistTurnZ"]] = df_agg[["PacePts", "TurnPrefPts", "DistTurnZ"]].fillna(0.0)
 
-# FinalRaw を一括で計算（先に RecencyZ / StabZ / PacePts / TurnPrefPts が出来ている位置に置く）
-df_agg['FinalRaw'] = (
-    df_agg['RecencyZ']
-    + stab_weight * df_agg['StabZ']
-    + pace_gain   * df_agg['PacePts']
-    + turn_gain   * df_agg['TurnPrefPts']
-    + gain_dt     * dist_turn
+# 2) RecencyZ / StabZ をここで生成
+#    - RecencyZ は WAvgZ（なければ AvgZ）をZ化
+base_for_recency = (
+    df_agg.get("WAvgZ", pd.Series(np.nan, index=df_agg.index))
+      .fillna(df_agg.get("AvgZ", pd.Series(0.0, index=df_agg.index)))
 )
+df_agg["RecencyZ"] = z_score(pd.to_numeric(base_for_recency, errors="coerce").fillna(0.0))
 
-df_agg['FinalZ'] = z_score(df_agg['FinalRaw'])
+#    - StabZ は「小さいほど◎」なので WStd にマイナスを掛けてZ化
+if "WStd" not in df_agg.columns:
+    df_agg["WStd"] = 6.0
+wstd_fill = pd.to_numeric(df_agg["WStd"], errors="coerce")
+if not np.isfinite(wstd_fill).any():
+    wstd_fill = pd.Series(6.0, index=df_agg.index)
+df_agg["StabZ"] = z_score(-(wstd_fill.fillna(wstd_fill.median())))
 
+# 3) 距離×回り 係数（スライダーが無い/未反映でも落ちないようフォールバック）
+_dist_gain_from_state = st.session_state.get("dist_turn_gain", None)
+if _dist_gain_from_state is None:
+    # ローカルに変数があるならそれを使う
+    _dist_gain_from_state = float(locals().get("dist_turn_gain", 0.0))
+dist_turn_gain_val = float(_dist_gain_from_state)
+
+# 4) 最終スコア
+df_agg["FinalRaw"] = (
+    df_agg["RecencyZ"]
+    + float(stab_weight) * df_agg["StabZ"]
+    + float(pace_gain)   * df_agg["PacePts"]
+    + float(turn_gain)   * df_agg["TurnPrefPts"]
+    + float(dist_turn_gain_val) * df_agg["DistTurnZ"]
+)
+df_agg["FinalZ"] = z_score(df_agg["FinalRaw"])
 
 # ===== NEW: AR100（B中心化の線形キャリブレーション） =====
 S = df_agg['FinalRaw'].to_numpy(dtype=float)
