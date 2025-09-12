@@ -1507,6 +1507,56 @@ show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
              'DistTurnZ','n_eff_turn','BestDist_turn'
 ]
 
+# === 表示用 df_disp 構築（show_cols 定義の直後に追加） ===
+
+def _fmt_int(x):
+    try:
+        return "" if pd.isna(x) else f"{int(x)}"
+    except Exception:
+        return ""
+
+# 下流で参照する列が欠けていても落ちないように作っておく
+for c in ['PacePts','TurnPref','RightZ','LeftZ','RecencyZ','StabZ','FinalRaw','FinalZ',
+          'AR100','Band','勝率%_PL','複勝率%_PL','DistTurnZ','n_eff_turn','BestDist_turn']:
+    if c not in df_agg.columns:
+        df_agg[c] = np.nan
+
+# 今日の枠・馬番・（手入力の）脚質をマージ
+df_disp = df_agg.merge(
+    horses[['馬名','枠','番','脚質']],
+    on='馬名', how='left', suffixes=('', '_today')
+)
+
+# もし df_agg 側にも脚質があるなら、手入力（today）を優先
+if '脚質_today' in df_disp.columns:
+    df_disp['脚質'] = df_disp['脚質_today'].where(
+        df_disp['脚質_today'].astype(str).str.strip().ne(''),
+        df_disp.get('脚質')
+    )
+    df_disp.drop(columns=['脚質_today'], inplace=True, errors='ignore')
+
+# 枠・番は数値化（表示時は _fmt_int で整形）
+for c in ['枠','番']:
+    df_disp[c] = pd.to_numeric(df_disp.get(c), errors='coerce')
+
+# 並べ替え（AR100 → 勝率）して順位を付与
+df_disp = df_disp.sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
+df_disp['順位'] = np.arange(1, len(df_disp)+1)
+
+# 印（◎○▲△）を付与：1位=◎、2位=○、3位=▲、4～6位=△
+def _assign_mark(rank: int) -> str:
+    if rank == 1: return '◎'
+    if rank == 2: return '〇'
+    if rank == 3: return '▲'
+    if 4 <= rank <= 6: return '△'
+    return ''
+df_disp['印'] = df_disp['順位'].apply(_assign_mark)
+
+# 下流の表示/可視化が想定する列順へ整形（存在しない列は上で補完済み）
+df_disp = df_disp[['順位','印','枠','番','馬名','脚質','PacePts','TurnPref','RightZ','LeftZ',
+                   'RecencyZ','StabZ','FinalRaw','FinalZ','AR100','Band','勝率%_PL','複勝率%_PL',
+                   'DistTurnZ','n_eff_turn','BestDist_turn']].copy()
+
 # 整形（フォーマット）にも追加
 styled = (
     df_disp[show_cols]
