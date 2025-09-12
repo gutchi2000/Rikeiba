@@ -187,6 +187,88 @@ def w_std_unbiased(x, w, ddof=1):
     if ddof and n_eff > ddof:
         var *= n_eff / (n_eff - ddof)
     return float(np.sqrt(max(var, 0.0)))
+# --- 距離×回り 近傍化の補助 ---
+def _kish_neff(w: np.ndarray) -> float:
+    w = np.asarray(w, float)
+    sw = w.sum()
+    s2 = np.sum(w ** 2)
+    return float((sw * sw) / s2) if s2 > 0 else 0.0
+
+def _nw_mean(x, y, w, h):
+    # Nadaraya–Watson (Gaussian kernel)
+    x = np.asarray(x, float); y = np.asarray(y, float); w = np.asarray(w, float)
+    if len(x) == 0: return np.nan
+    K = np.exp(-0.5 * (x / max(1e-9, h)) ** 2) * w
+    sK = K.sum()
+    return float((K * y).sum() / sK) if sK > 0 else np.nan
+
+def _dist_turn_profile_for_horse(
+    name: str, df_hist: pd.DataFrame, target_distance: int, target_turn: str, surface: str,
+    h_m: float, opp_turn_w: float, prior_mode: str, tau: float,
+    grid_step: int, grid_span_m: int, df_agg_for_prior: pd.DataFrame
+):
+    g = df_hist[df_hist['馬名'].astype(str).str.strip() == str(name)].copy()
+    # 距離/回り/馬場の前処理
+    g['距離'] = pd.to_numeric(g['距離'], errors='coerce')
+    g = g[g['距離'].notna() & (g['距離'] > 0)]
+    if '馬場' in g.columns:
+        g = g[g['馬場'].astype(str) == str(surface)]
+    if '回り' not in g.columns or g.empty:
+        return {'DistTurnZ': np.nan, 'n_eff_turn': 0.0, 'BestDist_turn': np.nan, 'DistTurnZ_best': np.nan}
+
+    # 基本重み：時間減衰（_w）× 回り係数 × 1
+    w_time = pd.to_numeric(g.get('_w', 1.0), errors='coerce').fillna(1.0).to_numpy(float)
+    w_turn = np.where(g['回り'].astype(str) == str(target_turn), 1.0, float(opp_turn_w))
+    w0 = w_time * w_turn
+
+    x_dist = g['距離'].to_numpy(float)
+    y_z    = pd.to_numeric(g['score_norm'], errors='coerce').to_numpy(float)
+    msk    = np.isfinite(x_dist) & np.isfinite(y_z) & np.isfinite(w0)
+    x_dist, y_z, w0 = x_dist[msk], y_z[msk], w0[msk]
+    if x_dist.size == 0:
+        return {'DistTurnZ': np.nan, 'n_eff_turn': 0.0, 'BestDist_turn': np.nan, 'DistTurnZ_best': np.nan}
+
+    # 事前平均 μ0
+    mu0 = np.nan
+    if prior_mode == "WAvgZベース":
+        mu0 = float(df_agg_for_prior.set_index('馬名').get('WAvgZ', pd.Series()).get(name, np.nan))
+    elif prior_mode == "Right/LeftZベース":
+        if str(target_turn) == '右':
+            mu0 = float(df_agg_for_prior.set_index('馬名').get('RightZ', pd.Series()).get(name, np.nan))
+        else:
+            mu0 = float(df_agg_for_prior.set_index('馬名').get('LeftZ', pd.Series()).get(name, np.nan))
+        if not np.isfinite(mu0):
+            mu0 = float(df_agg_for_prior.set_index('馬名').get('WAvgZ', pd.Series()).get(name, np.nan))
+
+    # ターゲット距離での後平均（擬似ベイズ: τ で事前を混合）
+    z_hat_t = _nw_mean(x_dist - float(target_distance), y_z, w0, h_m)
+    w_eff_t = _kish_neff(np.exp(-0.5 * ((x_dist - float(target_distance))/max(1e-9, h_m))**2) * w0)
+
+    if np.isfinite(mu0) and tau > 0:
+        if np.isfinite(z_hat_t):
+            z_hat_t = (w_eff_t * z_hat_t + tau * mu0) / max(1e-9, (w_eff_t + tau))
+        else:
+            z_hat_t = mu0
+
+    # プロファイル走査（ベスト距離の参考用）
+    ds = np.arange(int(target_distance - grid_span_m),
+                   int(target_distance + grid_span_m) + 1, int(grid_step))
+    best_d, best_val = np.nan, -1e18
+    for d0 in ds:
+        z = _nw_mean(x_dist - float(d0), y_z, w0, h_m)
+        if np.isfinite(mu0) and tau > 0:
+            # ベイズ混合（有効本数を疑似サンプルとして加算）
+            we = _kish_neff(np.exp(-0.5 * ((x_dist - float(d0))/max(1e-9, h_m))**2) * w0)
+            z = (we * z + tau * mu0) / max(1e-9, (we + tau)) if np.isfinite(z) else mu0
+        if np.isfinite(z) and z > best_val:
+            best_val, best_d = float(z), int(d0)
+
+    return {
+        'DistTurnZ': float(z_hat_t) if np.isfinite(z_hat_t) else np.nan,
+        'n_eff_turn': float(w_eff_t),
+        'BestDist_turn': float(best_d) if np.isfinite(best_d) else np.nan,
+        'DistTurnZ_best': float(best_val) if np.isfinite(best_val) else np.nan
+    }
 
 @st.cache_data(show_spinner=False)
 def load_excel_bytes(content: bytes):
@@ -369,6 +451,19 @@ with st.sidebar.expander("🔄 回り（右/左）", expanded=False):
     turn_gap_thr= st.slider("得意判定の閾値（RightZ−LeftZ の最小差）", 0.0, 10.0, 1.0, 0.1)
     use_default_venue_map = st.checkbox("JRA標準の『場名→回り』で補完する", True)
     st.caption("※ 場名既定表＋競走名から自動推定。")
+
+# === NEW: 距離×回り（精密） ===
+with st.sidebar.expander("🎯 距離×回り（精密）", expanded=False):
+    USE_DIST_TURN     = st.checkbox("有効化（距離×右左で近傍化）", True)
+    dist_bw_m         = st.slider("距離帯の幅 [m]", 50, 600, 200, 25)
+    opp_turn_discount = st.slider("逆回りの重み係数", 0.0, 1.0, 0.5, 0.05)
+    dist_prior_mode   = st.selectbox("距離適性の事前分布",
+                                     ["無し","WAvgZベース","Right/LeftZベース"], index=1)
+    dist_tau          = st.slider("事前重み τ（小=事後重視）", 0.0, 5.0, 1.0, 0.1)
+    dist_turn_gain    = st.slider("距離×回り 係数（FinalRawへ）", 0.0, 3.0, 1.0, 0.1)
+    grid_step         = st.slider("プロファイル距離刻み [m]", 50, 400, 100, 50)
+    grid_span_m       = st.slider("プロファイルの±範囲 [m]", 200, 1200, 600, 50)
+    st.caption("近傍化: Nadaraya–Watson（ガウス核） / 有効本数: Kish の式")
 
 # === バンド校正（B中心化） ===
 with st.sidebar.expander("🏷 バンド校正（B中心化）", expanded=True):
@@ -1107,16 +1202,39 @@ else:
     df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
 df_agg['TurnPrefPts'] = df_agg['TurnPrefPts'].fillna(0.0)
 
+# ===== 距離×回り（精密）を df_agg に付与 =====
+if USE_DIST_TURN and {'距離','回り','score_norm','_w'}.issubset(df_score.columns):
+    rows = []
+    for nm in df_agg['馬名'].astype(str):
+        prof = _dist_turn_profile_for_horse(
+            name=nm, df_hist=df_score,
+            target_distance=int(TARGET_DISTANCE),
+            target_turn=str(TARGET_TURN),
+            surface=str(TARGET_SURFACE),
+            h_m=float(dist_bw_m), opp_turn_w=float(opp_turn_discount),
+            prior_mode=str(dist_prior_mode), tau=float(dist_tau),
+            grid_step=int(grid_step), grid_span_m=int(grid_span_m),
+            df_agg_for_prior=df_agg
+        )
+        rows.append({'馬名': nm, **prof})
+    _disttbl = pd.DataFrame(rows)
+    df_agg = df_agg.merge(_disttbl, on='馬名', how='left')
+else:
+    for c in ['DistTurnZ','n_eff_turn','BestDist_turn','DistTurnZ_best']:
+        df_agg[c] = np.nan
+
 # ===== 最終スコア（正規化は内部指標） =====
-df_agg['RecencyZ'] = z_score(df_agg['WAvgZ'])
-df_agg['StabZ']    = z_score(-df_agg['WStd'])
 df_agg['FinalRaw'] = (
     df_agg['RecencyZ']
     + stab_weight * df_agg['StabZ']
     + pace_gain * df_agg['PacePts']
     + turn_gain * df_agg['TurnPrefPts']
 )
+# ← これを追加
+df_agg['FinalRaw'] = df_agg['FinalRaw'] + float(dist_turn_gain) * df_agg['DistTurnZ'].fillna(0.0)
+
 df_agg['FinalZ']   = z_score(df_agg['FinalRaw'])
+
 
 # ===== NEW: AR100（B中心化の線形キャリブレーション） =====
 S = df_agg['FinalRaw'].to_numpy(dtype=float)
@@ -1345,50 +1463,32 @@ def render_final_preview(df):
 st.subheader("本日の見立て")
 
 # 表示用テーブル作成
+# 表示用カラム
 disp_cols = ['枠','番','馬名','脚質','PacePts','TurnPref','RightZ','LeftZ',
-             'RecencyZ','StabZ','FinalRaw','FinalZ','AR100','Band','勝率%_PL','複勝率%_PL']
-df_disp = df_agg.copy()
-for c in disp_cols:
-    if c not in df_disp.columns:
-        df_disp[c] = np.nan
+             'RecencyZ','StabZ','FinalRaw','FinalZ','AR100','Band','勝率%_PL','複勝率%_PL',
+             # 追加
+             'DistTurnZ','n_eff_turn','BestDist_turn'
+]
 
-df_disp = df_disp.merge(horses[['馬名','枠','番','脚質']], on='馬名', how='left', suffixes=('','_h'))
-df_disp['枠'] = df_disp['枠_h'].fillna(df_disp['枠'])
-df_disp['番'] = df_disp['番_h'].fillna(df_disp['番'])
-df_disp['脚質'] = df_disp['脚質_h'].fillna(df_disp['脚質'])
-df_disp.drop(columns=[c for c in ['枠_h','番_h','脚質_h'] if c in df_disp], inplace=True)
+# ...（中略）...
 
-df_disp.sort_values(['AR100','勝率%_PL','FinalZ'], ascending=[False, False, False], inplace=True)
-df_disp.insert(0, '順位', np.arange(1, len(df_disp)+1))
-mark_syms = ['◎','〇','▲','△']
-df_disp['印'] = df_disp['順位'].apply(lambda x: mark_syms[x-1] if 1 <= x <= len(mark_syms) else '')
-
-# ペース見立て
-st.info(f"🕒 ペース見立て：**{pace_type}**")
-
-# 表（ダウンロード付き）
 show_cols = ['順位','印','枠','番','馬名','脚質','AR100','Band',
-             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ']
+             '勝率%_PL','複勝率%_PL','TurnPref','PacePts','RightZ','LeftZ','FinalZ',
+             # 追加
+             'DistTurnZ','n_eff_turn','BestDist_turn'
+]
 
-# 枠・番は「nullable 整数(Int64)」で保持 → 欠損も扱え、小数点が出ない
-for c in ("枠", "番"):
-    df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce").astype("Int64")
-
-# Int64（欠損あり整数）を安全に文字列化するフォーマッタ
-def _fmt_int(x):
-    try:
-        return f"{int(x)}"
-    except Exception:
-        return ""
-
+# 整形（フォーマット）にも追加
 styled = (
     df_disp[show_cols]
       .style
-      .apply(_style_waku, subset=['枠'])                 # ← 1枠=黒文字／他=白文字
-      .format({                                          # ← 小数点いらない列の整形
+      .apply(_style_waku, subset=['枠'])
+      .format({
           '枠': _fmt_int, '番': _fmt_int,
           'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}',
-          'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}'
+          'FinalZ':'{:.2f}','RightZ':'{:.1f}','LeftZ':'{:.1f}','PacePts':'{:.2f}',
+          # 追加
+          'DistTurnZ':'{:.2f}','n_eff_turn':'{:.1f}','BestDist_turn': _fmt_int
       }, na_rep="")
 )
 
