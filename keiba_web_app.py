@@ -207,16 +207,30 @@ def _dist_turn_profile_for_horse(
     h_m: float, opp_turn_w: float, prior_mode: str, tau: float,
     grid_step: int, grid_span_m: int, df_agg_for_prior: pd.DataFrame
 ):
+    # 指定馬の過去走
     g = df_hist[df_hist['馬名'].astype(str).str.strip() == str(name)].copy()
-    # 距離/回り/馬場の前処理
+
+    # 距離の数値化と妥当チェック
     g['距離'] = pd.to_numeric(g['距離'], errors='coerce')
     g = g[g['距離'].notna() & (g['距離'] > 0)]
-    if '馬場' in g.columns:
-        g = g[g['馬場'].astype(str) == str(surface)]
+
+    # ★ コース種別（芝/ダ）でフィルタ：E列『芝・ダ』を優先的に使う
+    #    値は「芝」「ダ」を想定。先頭1文字で判定（安全）。
+    surf_col = None
+    for c in g.columns:
+        cc = str(c).strip()
+        if cc in ('芝・ダ', '芝ダ', 'コース', '馬場種別', 'Surface'):
+            surf_col = c
+            break
+    if surf_col is not None:
+        g = g[g[surf_col].astype(str).str.strip().str[0] == str(surface)]
+    # ※ 「馬場（R列）」は良/稍/重/不などの馬場状態なので、ここでは使わない。
+
+    # 回り情報が無ければ打ち切り
     if '回り' not in g.columns or g.empty:
         return {'DistTurnZ': np.nan, 'n_eff_turn': 0.0, 'BestDist_turn': np.nan, 'DistTurnZ_best': np.nan}
 
-    # 基本重み：時間減衰（_w）× 回り係数 × 1
+    # 基本重み：時間減衰（_w）× 回り係数
     w_time = pd.to_numeric(g.get('_w', 1.0), errors='coerce').fillna(1.0).to_numpy(float)
     w_turn = np.where(g['回り'].astype(str) == str(target_turn), 1.0, float(opp_turn_w))
     w0 = w_time * w_turn
@@ -228,36 +242,45 @@ def _dist_turn_profile_for_horse(
     if x_dist.size == 0:
         return {'DistTurnZ': np.nan, 'n_eff_turn': 0.0, 'BestDist_turn': np.nan, 'DistTurnZ_best': np.nan}
 
-    # 事前平均 μ0
+    # 事前平均 μ0（WAvgZ or Right/LeftZ）
     mu0 = np.nan
     if prior_mode == "WAvgZベース":
-        mu0 = float(df_agg_for_prior.set_index('馬名').get('WAvgZ', pd.Series()).get(name, np.nan))
-    elif prior_mode == "Right/LeftZベース":
-        if str(target_turn) == '右':
-            mu0 = float(df_agg_for_prior.set_index('馬名').get('RightZ', pd.Series()).get(name, np.nan))
-        else:
-            mu0 = float(df_agg_for_prior.set_index('馬名').get('LeftZ', pd.Series()).get(name, np.nan))
-        if not np.isfinite(mu0):
+        try:
             mu0 = float(df_agg_for_prior.set_index('馬名').get('WAvgZ', pd.Series()).get(name, np.nan))
+        except Exception:
+            mu0 = np.nan
+    elif prior_mode == "Right/LeftZベース":
+        try:
+            if str(target_turn) == '右':
+                mu0 = float(df_agg_for_prior.set_index('馬名').get('RightZ', pd.Series()).get(name, np.nan))
+            else:
+                mu0 = float(df_agg_for_prior.set_index('馬名').get('LeftZ', pd.Series()).get(name, np.nan))
+        except Exception:
+            mu0 = np.nan
+        if not np.isfinite(mu0):
+            try:
+                mu0 = float(df_agg_for_prior.set_index('馬名').get('WAvgZ', pd.Series()).get(name, np.nan))
+            except Exception:
+                mu0 = np.nan
 
-    # ターゲット距離での後平均（擬似ベイズ: τ で事前を混合）
+    # ターゲット距離での推定値（NW: ガウス核）
     z_hat_t = _nw_mean(x_dist - float(target_distance), y_z, w0, h_m)
     w_eff_t = _kish_neff(np.exp(-0.5 * ((x_dist - float(target_distance))/max(1e-9, h_m))**2) * w0)
 
+    # 事前混合（疑似ベイズ）
     if np.isfinite(mu0) and tau > 0:
         if np.isfinite(z_hat_t):
             z_hat_t = (w_eff_t * z_hat_t + tau * mu0) / max(1e-9, (w_eff_t + tau))
         else:
             z_hat_t = mu0
 
-    # プロファイル走査（ベスト距離の参考用）
+    # 距離プロフィール走査（ベスト距離参考）
     ds = np.arange(int(target_distance - grid_span_m),
                    int(target_distance + grid_span_m) + 1, int(grid_step))
     best_d, best_val = np.nan, -1e18
     for d0 in ds:
         z = _nw_mean(x_dist - float(d0), y_z, w0, h_m)
         if np.isfinite(mu0) and tau > 0:
-            # ベイズ混合（有効本数を疑似サンプルとして加算）
             we = _kish_neff(np.exp(-0.5 * ((x_dist - float(d0))/max(1e-9, h_m))**2) * w0)
             z = (we * z + tau * mu0) / max(1e-9, (we + tau)) if np.isfinite(z) else mu0
         if np.isfinite(z) and z > best_val:
@@ -269,6 +292,7 @@ def _dist_turn_profile_for_horse(
         'BestDist_turn': float(best_d) if np.isfinite(best_d) else np.nan,
         'DistTurnZ_best': float(best_val) if np.isfinite(best_val) else np.nan
     }
+
 
 @st.cache_data(show_spinner=False)
 def load_excel_bytes(content: bytes):
@@ -619,6 +643,7 @@ def _interactive_map(df, patterns, required_keys, title, state_key, show_ui=Fals
     return {k: (None if v=='<未選択>' else v) for k, v in mapping.items()}
 
 # パターン
+# --- sheet0（過去走） 列マッピングパターン（差し替え） ---
 PAT_S0 = {
     '馬名'         : [r'馬名|名前|出走馬'],
     'レース日'     : [r'レース日|日付(?!S)|年月日|施行日|開催日'],
@@ -637,9 +662,17 @@ PAT_S0 = {
     '年齢'         : [r'年齢|馬齢'],
     '走破タイム秒' : [r'走破タイム.*秒|走破タイム|タイム$'],
     '距離'         : [r'距離'],
+
+    # ★ 追加：コース種別（芝/ダート）→ E列想定『芝・ダ』
+    '芝・ダ'       : [r'芝.?・.?ダ|芝ダ|コース|馬場種別|Surface'],
+
+    # 馬場状態（良/稍/重/不など）→ R列想定『馬場』
     '馬場'         : [r'馬場(?!.*指数)|馬場状態'],
+
+    # 開催場（右左推定の補助）
     '場名'         : [r'場名|場所|競馬場|開催(地|場|場所)'],
 }
+
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
 MAP_S0 = _interactive_map(sheet0, PAT_S0, REQ_S0, "sheet0（過去走）", "s0", show_ui=False)
 
