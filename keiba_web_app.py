@@ -1155,6 +1155,64 @@ styled = (
       .format({'枠':_fmt_int,'番':_fmt_int,'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','RecencyZ':'{:.2f}','StabZ':'{:.2f}','PacePts':'{:.2f}','TurnPrefPts':'{:.2f}','DistTurnZ':'{:.2f}'}, na_rep="")
 )
 
+# ▼ 追加（表示名マップ）
+JP = {
+    '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
+    'AR100':'AR100','Band':'評価帯',
+    '勝率%_PL':'勝率%（PL）','複勝率%_PL':'複勝率%（PL）',
+    '勝率%_TIME':'勝率%（タイム）','複勝率%_TIME':'複勝率%（タイム）','期待着順_TIME':'期待着順（タイム）',
+    'PredTime_s':'予測タイム中央値[s]',
+    'PredTime_p20':'20%速い側[s]',
+    'PredTime_p80':'80%遅い側[s]',
+    'PredSigma_s':'タイム分散σ[s]',
+    'RecencyZ':'近走Z','StabZ':'安定性Z',
+    'PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ'
+}
+
+# ▼ 表示用DFにだけ適用
+_dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
+
+# ▼ フォーマットのキーも日本語名に合わせる
+fmt = {
+    JP.get('AR100'):'{:.1f}',
+    JP.get('勝率%_PL'):'{:.2f}',
+    JP.get('複勝率%_PL'):'{:.2f}',
+    JP.get('RecencyZ'):'{:.2f}',
+    JP.get('StabZ'):'{:.2f}',
+    JP.get('PacePts'):'{:.2f}',
+    JP.get('TurnPrefPts'):'{:.2f}',
+    JP.get('DistTurnZ'):'{:.2f}',
+    JP.get('PredTime_s'):'{:.3f}',
+    JP.get('PredTime_p20'):'{:.3f}',
+    JP.get('PredTime_p80'):'{:.3f}',
+    JP.get('PredSigma_s'):'{:.3f}'
+}
+
+styled = (
+    _dfdisp_view
+      .style
+      .apply(_style_waku, subset=[JP['枠']])
+      .format(fmt, na_rep="")
+)
+
+st.markdown("### 本命リスト（AUTO統合）")
+st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
+
+# 上位ハイライトも同様に rename
+head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts']
+head_view = _dfdisp[head_cols].rename(columns=JP)
+st.dataframe(
+    head_view.style.format({
+        JP.get('AR100'):'{:.1f}',
+        JP.get('勝率%_PL'):'{:.2f}',
+        JP.get('複勝率%_PL'):'{:.2f}',
+        JP.get('PacePts'):'{:.2f}',
+        JP.get('PredTime_s'):'{:.3f}',
+        JP.get('PredSigma_s'):'{:.3f}',
+    }),
+    use_container_width=True, height=H(len(head_view))
+)
+
 st.markdown("### 本命リスト（AUTO統合）")
 st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp)))
 
