@@ -1235,32 +1235,6 @@ st.dataframe(
     use_container_width=True, height=H(len(head_view))
 )
 
-# 上位抜粋（6頭）
-# _dfdisp が未定義でも動くようにフォールバック
-if '_dfdisp' in globals():
-    base = _dfdisp.rename(columns=JP)   # 英名→日本語に変換
-else:
-    base = _dfdisp_view                 # 既に日本語列
-
-# head_cols は英名の並びなので、日本語名にマップして抽出
-cols_jp = [JP[c] if c in JP else c for c in head_cols]
-head_view = base[cols_jp].head(6).copy()
-
-st.markdown("#### 上位抜粋")
-st.dataframe(
-    head_view.style.format({
-        JP['枠']: _fmt_int,
-        JP['番']: _fmt_int,
-        JP['AR100']:'{:.1f}',
-        JP['勝率%_PL']:'{:.2f}',
-        JP['勝率%_TIME']:'{:.2f}',
-        JP['PacePts']:'{:.2f}',
-        JP['PredTime_s']:'{:.3f}',
-        JP['PredSigma_s']:'{:.3f}',
-    }),
-    use_container_width=True, height=H(len(head_view))
-)
-
 
 # 見送り目安
 if not (_dfdisp['AR100']>=70).any():
