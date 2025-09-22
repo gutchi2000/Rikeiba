@@ -245,10 +245,10 @@ def _map_ui(df, patterns, required, title, key_prefix):
             options=['<未選択>']+cols
             default=auto.get(k) if auto.get(k) in cols else '<未選択>'
             mapping[k]=st.selectbox(k, options, index=options.index(default), key=f"map:{key_prefix}:{k}")
-    for k in required:
-        if mapping.get(k,'<未選択>')=='<未選選択>':
-            st.error(f"{title} 必須列が未選択: {k}")
-            st.stop()
+  for k in required:
+    if mapping.get(k, '<未選択>') == '<未選択>':
+        st.error(f"{title} 必須列が未選択: {k}")
+        st.stop()
     return {k:(v if v!='<未選択>' else None) for k,v in mapping.items()}
 
 PAT_S0 = {
@@ -693,13 +693,9 @@ dist_gain = 1.0
 df_agg['PacePts']=0.0  # 後でMCから
 
 # FinalRaw (一部は後段で加算)
-df_agg['FinalRaw'] = (
-    df_agg['RecencyZ']
-    + stab_weight*df_agg['StabZ']
-    + pace_gain*df_agg['PacePts']
-    + turn_gain*df_agg['TurnPrefPts']
-    + dist_gain*df_agg['DistTurnZ'].fillna(0.0)
-)
+# PacePts だけを後乗せ（BT 等、これまで足した項を保持する）
+df_agg['FinalRaw'] += pace_gain * df_agg['PacePts']
+
 
 # BTを加点（自己学習係数）
 if 'ベストタイム秒' in s1.columns:
@@ -782,22 +778,33 @@ ex = np.exp(x)
 p_win = ex / np.sum(ex)
 
 # 校正（Isotonicのみ）
-calibrator=None
+# 校正（Isotonicのみ）
+calibrator = None
 if do_calib and SK_ISO:
-    dfh=_df.dropna(subset=['score_adj','確定着順']).copy()
-    dfh['rid']=_make_race_id_for_hist(dfh)
-    X=[]; Y=[]
+    dfh = _df.dropna(subset=['score_adj','確定着順']).copy()
+    dfh['rid'] = _make_race_id_for_hist(dfh)
+    X, Y = [], []
     for _, g in dfh.groupby('rid'):
-        xs=g['score_adj'].astype(float).to_numpy()
-        y=(pd.to_numeric(g['確定着順'], errors='coerce')==1).astype(int).to_numpy()
-        if len(xs)>=2:
-            p=np.exp(beta_pl*(xs-xs.max())); p/=p.sum()
-            X.append(p); Y.append(y)
+        xs = g['score_adj'].astype(float).to_numpy()
+        y  = (pd.to_numeric(g['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
+        if len(xs) >= 2 and np.unique(y).size >= 2:
+            p = np.exp(beta_pl * (xs - xs.max()))
+            s = p.sum()
+            if np.isfinite(s) and s > 0:
+                p /= s
+                X.append(p); Y.append(y)
     if X:
-        ir=IsotonicRegression(out_of_bounds='clip')
-        ir.fit(np.concatenate(X), np.concatenate(Y))
-        calibrator=ir
-        p_win = np.clip(ir.predict(p_win), 1e-6, 1-1e-6)
+        calibrator = IsotonicRegression(out_of_bounds='clip').fit(np.concatenate(X), np.concatenate(Y))
+
+# NaN/Inf 防御
+p_win = np.asarray(p_win, dtype=float)
+p_win = np.nan_to_num(p_win, nan=(1.0/len(p_win) if len(p_win) else 0.5), neginf=1e-6, posinf=1-1e-6)
+p_win = np.clip(p_win, 1e-6, 1-1e-6)
+
+# 校正適用（安全関数＋総和=1に正規化）
+if calibrator is not None:
+    p_win = safe_iso_predict(calibrator, p_win)
+
 
 df_agg['勝率%_PL']=(100*p_win).round(2)
 
