@@ -185,6 +185,20 @@ def ndcg_by_race(frame: pd.DataFrame, scores, k: int=3) -> float:
         vals.append(dcg/idcg if idcg>0 else 0.0)
     return float(np.mean(vals)) if vals else float('nan')
 
+# === 安全な等温回帰適用 ===
+def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
+    x = np.asarray(p_vec, float)
+    x = np.nan_to_num(x, nan=1.0 / max(len(x), 1), posinf=1 - 1e-6, neginf=1e-6)
+    x = np.clip(x, 1e-6, 1 - 1e-6)
+    try:
+        y = ir.predict(x)
+        y = np.nan_to_num(y, nan=x.mean(), posinf=1 - 1e-6, neginf=1e-6)
+        y = np.clip(y, 1e-6, 1 - 1e-6)
+        s = y.sum()
+        return (y / s) if s > 0 else x
+    except Exception:
+        return x
+
 # ===== サイドバー =====
 st.sidebar.title("⚙️ パラメタ設定（AUTO統合）")
 MODE = st.sidebar.radio("モード", ["AUTO（推奨）","手動（上級者）"], index=0, horizontal=True)
@@ -262,14 +276,12 @@ def _map_ui(df, patterns, required, title, key_prefix):
             options = ['<未選択>'] + cols
             default = auto.get(k) if auto.get(k) in cols else '<未選択>'
             mapping[k] = st.selectbox(k, options, index=options.index(default), key=f"map:{key_prefix}:{k}")
-
-    # 必須列の未選択チェック（タイポ修正済み）
     for k in required:
         if mapping.get(k, '<未選択>') == '<未選択>':
-            st.error(f"{title} 必須列が未選選択: {k}")
+            st.error(f"{title} 必須列が未選択: {k}")
             st.stop()
-
     return {k: (v if v != '<未選択>' else None) for k, v in mapping.items()}
+
 
 PAT_S0 = {
     '馬名':[r'馬名|名前|出走馬'],
@@ -312,6 +324,13 @@ for c in ['頭数','確定着順','枠','番','斤量','馬体重','上3F順位'
     if c in s0: s0[c]=pd.to_numeric(s0[c], errors='coerce')
 if '走破タイム秒' in s0: s0['走破タイム秒']=s0['走破タイム秒'].apply(_parse_time_to_sec)
 if '上がり3Fタイム' in s0: s0['上がり3Fタイム']=s0['上がり3Fタイム'].apply(_parse_time_to_sec)
+# === タイム/指標の厳密数値化 ===
+for col in ['PCI', 'PCI3', 'Ave-3F']:
+    if col in s0.columns:
+        s0[col] = pd.to_numeric(s0[col], errors='coerce')
+
+if '距離' in s0.columns:
+    s0['距離'] = pd.to_numeric(s0['距離'], errors='coerce')
 
 # シート1
 PAT_S1={
@@ -565,6 +584,168 @@ def tune_beta(df_hist: pd.DataFrame, betas=np.linspace(0.6, 2.4, 19)) -> float:
         return tot/max(n,1)
     return float(min(betas, key=logloss))
 
+# === タイム分位回帰（GBR） + 加重CV ===
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import GroupKFold
+
+def _recent_weight_from_dates(dates: pd.Series, half_life_days: float) -> np.ndarray:
+    days = (pd.Timestamp.today() - pd.to_datetime(dates, errors='coerce')).dt.days
+    days = days.clip(lower=0).fillna(9999)
+    H = max(1.0, float(half_life_days))
+    return (0.5 ** (days / H)).to_numpy(float)
+
+def _weighted_mu_sigma(X: np.ndarray, w: np.ndarray):
+    w = w / max(w.sum(), 1e-12)
+    mu = (w[:, None] * X).sum(axis=0)
+    sd = np.sqrt(np.maximum((w[:, None] * (X - mu) ** 2).sum(axis=0), 1e-12))
+    return mu, sd
+
+def _standardize_with_mu_sigma(X: np.ndarray, mu: np.ndarray, sd: np.ndarray):
+    return (X - mu) / sd
+
+def _build_time_features(df_hist: pd.DataFrame, dist_turn_df: pd.DataFrame | None = None):
+    need = {'走破タイム秒', '距離', '斤量', '芝・ダ', 'レース日', '馬名'}
+    if not need.issubset(df_hist.columns):
+        return None
+
+    d = df_hist.copy()
+    d = d.dropna(subset=list(need))
+    if d.empty:
+        return None
+
+    feats = ['距離', '斤量', 'is_dirt']
+    d['is_dirt'] = d['芝・ダ'].astype(str).str.contains('ダ').astype(int)
+
+    for c in ['PCI', 'PCI3', 'Ave-3F', '上がり3Fタイム']:
+        if c in d.columns:
+            feats.append(c)
+
+    if 'PCI' in d.columns:
+        d['距離xPCI'] = d['距離'] * d['PCI']; feats.append('距離xPCI')
+    if 'PCI3' in d.columns and 'PCI' in d.columns:
+        d['PCIgap'] = d['PCI3'] - d['PCI']; feats.append('PCIgap')
+
+    if dist_turn_df is not None and 'DistTurnZ' in dist_turn_df.columns:
+        dt = dist_turn_df[['馬名', 'DistTurnZ']].drop_duplicates()
+        d = d.merge(dt, on='馬名', how='left')
+        feats.append('DistTurnZ')
+
+    X = d[feats].astype(float).to_numpy()
+    y = pd.to_numeric(d['走破タイム秒'], errors='coerce').to_numpy(float)
+    groups = d['馬名'].astype(str).to_numpy()
+    dates = pd.to_datetime(d['レース日'], errors='coerce')
+
+    col_means = np.nanmean(X, axis=0)
+    X = np.where(np.isfinite(X), X, col_means)
+
+    return {'frame': d, 'X': X, 'y': y, 'feats': feats, 'groups': groups, 'dates': dates, 'col_means': col_means}
+
+def fit_time_quantile_model(df_hist: pd.DataFrame, dist_turn_today_df: pd.DataFrame,
+                            half_life_days: float, q_list=(0.2, 0.5, 0.8),
+                            param_grid=(80, 120, 160), random_state=42):
+    built = _build_time_features(df_hist, dist_turn_today_df)
+    if built is None:
+        return None
+
+    X = built['X']; y = built['y']; groups = built['groups']; dates = built['dates']
+    feats = built['feats']; col_means = built['col_means']
+
+    w = _recent_weight_from_dates(dates, half_life_days=max(1.0, float(half_life_days)))
+    mu, sd = _weighted_mu_sigma(X, w)
+    Xs = _standardize_with_mu_sigma(X, mu, sd)
+
+    gkf = GroupKFold(n_splits=min(5, len(np.unique(groups))))
+    best_param, best_rmse = None, 1e18
+    for n_est in param_grid:
+        rmse_fold = []
+        for tr, va in gkf.split(Xs, y, groups=groups):
+            Xt, Xv = Xs[tr], Xs[va]
+            yt, yv = y[tr], y[va]
+            wt, wv = w[tr], w[va]
+            med = GradientBoostingRegressor(loss='quantile', alpha=0.5, n_estimators=n_est,
+                                            max_depth=3, random_state=random_state)
+            med.fit(Xt, yt, sample_weight=wt)
+            pred = med.predict(Xv)
+            rmse = np.sqrt(np.average((yv - pred) ** 2, weights=wv))
+            rmse_fold.append(rmse)
+        score = float(np.mean(rmse_fold)) if rmse_fold else 1e18
+        if score < best_rmse:
+            best_rmse, best_param = score, n_est
+
+    models = {}
+    for q in q_list:
+        m = GradientBoostingRegressor(loss='quantile', alpha=q, n_estimators=best_param,
+                                      max_depth=3, random_state=random_state)
+        m.fit(Xs, y, sample_weight=w)
+        models[q] = m
+
+    resid = y - models[0.5].predict(Xs)
+    sigma_hat = float(np.sqrt(np.maximum(np.average(resid ** 2, weights=w), 1e-6)))
+
+    return {'feats': feats, 'mu': mu, 'sd': sd, 'col_means': col_means,
+            'models': models, 'n_estimators': int(best_param), 'sigma_hat': sigma_hat}
+
+def _field_pci_from_pace(pace_type: str) -> float:
+    return {'ハイペース': 46.0, 'ミドルペース': 50.0, 'ややスローペース': 53.0, 'スローペース': 56.0}.get(str(pace_type), 50.0)
+
+def build_today_design(horses_today: pd.DataFrame, s0_hist: pd.DataFrame,
+                       target_distance: int, target_surface: str,
+                       dist_turn_today_df: pd.DataFrame, feats: list[str]):
+    rec_w = None
+    if not s0_hist.empty and 'レース日' in s0_hist:
+        rec_w = 0.5 ** ((pd.Timestamp.today() - pd.to_datetime(s0_hist['レース日'], errors='coerce')).dt.days.clip(lower=0) / 180.0)
+
+    def _wmean(s, w):
+        s = pd.to_numeric(s, errors='coerce')
+        w = pd.to_numeric(w, errors='coerce')
+        m = np.nansum(s * w); sw = np.nansum(w)
+        return float(m / sw) if sw > 0 else np.nan
+
+    pci_wmean, pci3_wmean, ave3_wmean, a3_wmedian = {}, {}, {}, {}
+    if 'PCI' in s0_hist.columns:
+        pci_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['PCI'], g['_w'])).to_dict()
+    if 'PCI3' in s0_hist.columns:
+        pci3_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['PCI3'], g['_w'])).to_dict()
+    if 'Ave-3F' in s0_hist.columns:
+        ave3_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['Ave-3F'], g['_w'])).to_dict()
+    if '上がり3Fタイム' in s0_hist.columns:
+        a3_wmedian = s0_hist.groupby('馬名')['上がり3Fタイム'].median().to_dict()
+
+    dtt = dist_turn_today_df[['馬名', 'DistTurnZ']].drop_duplicates() if ('DistTurnZ' in dist_turn_today_df.columns) \
+        else pd.DataFrame({'馬名': horses_today['馬名'], 'DistTurnZ': np.nan})
+    H = horses_today.merge(dtt, on='馬名', how='left')
+
+    rows = []
+    for _, r in H.iterrows():
+        name = str(r['馬名'])
+        x = {}
+        x['距離'] = float(target_distance)
+        x['斤量'] = float(r.get('斤量', np.nan))
+        x['is_dirt'] = 1.0 if str(target_surface).startswith('ダ') else 0.0
+
+        pci_field = _field_pci_from_pace(globals().get('pace_type', 'ミドルペース'))
+        if 'PCI' in feats:
+            x['PCI'] = float(pci_wmean.get(name, np.nan))
+            if not np.isfinite(x['PCI']):
+                x['PCI'] = pci_field
+        if 'PCI3' in feats:
+            x['PCI3'] = float(pci3_wmean.get(name, np.nan))
+            if not np.isfinite(x['PCI3']):
+                x['PCI3'] = (x.get('PCI', pci_field) + 1.0)
+        if 'Ave-3F' in feats:
+            x['Ave-3F'] = float(ave3_wmean.get(name, np.nan))
+        if '上がり3Fタイム' in feats:
+            x['上がり3Fタイム'] = float(a3_wmedian.get(name, np.nan))
+        if '距離xPCI' in feats:
+            x['距離xPCI'] = x['距離'] * x.get('PCI', pci_field)
+        if 'PCIgap' in feats:
+            x['PCIgap'] = x.get('PCI3', x.get('PCI', pci_field) + 1.0) - x.get('PCI', pci_field)
+        if 'DistTurnZ' in feats:
+            x['DistTurnZ'] = float(r.get('DistTurnZ', np.nan))
+
+        rows.append({'馬名': name, **x})
+    return pd.DataFrame(rows)
+
 # ===== E) 距離バンド幅 自動 =====
 
 def auto_h_m(x_all: np.ndarray) -> float:
@@ -782,6 +963,88 @@ for _ in range(draws//2):
 df_agg['PacePts']=sum_pts/max(1,draws)
 pace_type=max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else 'ミドルペース'
 
+# === タイム分布 → 着順MC ===
+half_life_days = int(half_life_m * 30.4375) if half_life_m > 0 else 99999
+
+time_model_pkg = fit_time_quantile_model(
+    df_hist=_df.copy(),
+    dist_turn_today_df=_dfturn.copy(),
+    half_life_days=half_life_days,
+    q_list=(0.2, 0.5, 0.8),
+    param_grid=(80, 120, 160),
+    random_state=24601
+)
+
+if time_model_pkg is not None:
+    feats = time_model_pkg['feats']
+    mu, sd = time_model_pkg['mu'], time_model_pkg['sd']
+    models = time_model_pkg['models']
+
+    todayX = build_today_design(
+        horses_today=horses,
+        s0_hist=s0,
+        target_distance=int(TARGET_DISTANCE),
+        target_surface=str(TARGET_SURFACE),
+        dist_turn_today_df=_dfturn,
+        feats=feats
+    )
+
+    v = todayX[feats].astype(float).to_numpy()
+    v = np.where(np.isfinite(v), v, time_model_pkg['col_means'])
+    vs = (v - mu) / sd
+
+    Q20 = models[0.2].predict(vs)
+    Q50 = models[0.5].predict(vs)
+    Q80 = models[0.8].predict(vs)
+
+    z08 = 0.8416212335729143
+    sigma_from_span = (Q80 - Q20) / (2.0 * z08)
+    sigma_raw = np.maximum(sigma_from_span, 0.25)
+
+    sigma_hat = time_model_pkg['sigma_hat']
+    sigma = np.sqrt(0.5 * sigma_raw ** 2 + 0.5 * sigma_hat ** 2)
+
+    pred_time = pd.DataFrame({
+        '馬名': todayX['馬名'],
+        'PredTime_s': Q50,
+        'PredTime_p20': Q20,
+        'PredTime_p80': Q80,
+        'PredSigma_s': sigma
+    })
+
+    draws_mc = 12000
+    rng_t = np.random.default_rng(13579)
+    names = pred_time['馬名'].tolist()
+    mu_vec = pred_time['PredTime_s'].to_numpy(float)
+    sig_vec = pred_time['PredSigma_s'].to_numpy(float)
+    n = len(mu_vec)
+
+    tau = 0.30 * float(np.nanmedian(sig_vec))
+    E_id = rng_t.normal(size=(draws_mc, n)) * sig_vec[None, :]
+    E_cm = rng_t.normal(size=(draws_mc, 1)) * tau
+    T = mu_vec[None, :] + E_id + E_cm
+
+    rk = np.argsort(T, axis=1)
+    win = np.bincount(rk[:, 0], minlength=n)
+    top3 = np.zeros(n, int)
+    for k in range(3):
+        top3 += np.bincount(rk[:, k], minlength=n)
+    exp_rank = (rk.argsort(axis=1) + 1).mean(axis=0)
+
+    pred_time['勝率%_TIME'] = (100.0 * win / draws_mc).round(2)
+    pred_time['複勝率%_TIME'] = (100.0 * top3 / draws_mc).round(2)
+    pred_time['期待着順_TIME'] = np.round(exp_rank, 3)
+
+    df_agg = df_agg.merge(pred_time, on='馬名', how='left')
+else:
+    df_agg['PredTime_s'] = np.nan
+    df_agg['PredTime_p20'] = np.nan
+    df_agg['PredTime_p80'] = np.nan
+    df_agg['PredSigma_s'] = np.nan
+    df_agg['勝率%_TIME'] = np.nan
+    df_agg['複勝率%_TIME'] = np.nan
+    df_agg['期待着順_TIME'] = np.nan
+
 # PacePts反映
 # Pace を後乗せ（基礎＋BTを保持したまま）
 df_agg['FinalRaw'] += float(pace_gain) * df_agg['PacePts']
@@ -872,7 +1135,14 @@ def _fmt_int(x):
     try: return '' if pd.isna(x) else f"{int(x)}"
     except: return ''
 
-show_cols = ['順位','枠','番','馬名','脚質','AR100','Band','勝率%_PL','複勝率%_PL','RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ']
+show_cols = [
+    '順位','枠','番','馬名','脚質',
+    'AR100','Band',
+    '勝率%_PL','複勝率%_PL',
+    '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
+    'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
+    'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ'
+]
 
 styled = (
     _dfdisp[show_cols]
@@ -886,7 +1156,7 @@ st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp)))
 
 # 上位ハイライト
 st.markdown("#### 上位抜粋")
-head_cols=['順位','枠','番','馬名','AR100','Band','勝率%_PL','複勝率%_PL','PacePts']
+head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts']
 head=_dfdisp[head_cols].head(6).copy()
 st.dataframe(head.style.format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','PacePts':'{:.2f}'}), use_container_width=True, height=H(len(head)))
 
