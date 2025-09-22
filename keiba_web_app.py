@@ -142,22 +142,6 @@ def w_std_unbiased(x, w, ddof=1):
     if ddof and n_eff>ddof: var*= n_eff/(n_eff-ddof)
     return float(np.sqrt(max(var,0.0)))
 
-# Isotonic の安全予測（NaN/Inf防御＋[0,1]クリップ＋総和=1正規化）
-def safe_iso_predict(ir, p: np.ndarray) -> np.ndarray:
-    p = np.asarray(p, dtype=float).ravel()
-    if p.size == 0:
-        return p
-    p = np.nan_to_num(p, nan=1.0 / p.size, neginf=1e-6, posinf=1 - 1e-6)
-    p = np.clip(p, 1e-6, 1 - 1e-6)
-    try:
-        q = ir.predict(p)
-    except Exception:
-        return p  # 校正器が不正なら素の確率を返す
-    q = np.nan_to_num(q, nan=1.0 / p.size, neginf=1e-6, posinf=1 - 1e-6)
-    q = np.clip(q, 1e-6, 1 - 1e-6)
-    s = q.sum()
-    return (q / s) if np.isfinite(s) and s > 0 else p
-
 # NDCG@k（安全）
 
 
@@ -654,8 +638,14 @@ def fit_time_quantile_model(df_hist: pd.DataFrame, dist_turn_today_df: pd.DataFr
     mu, sd = _weighted_mu_sigma(X, w)
     Xs = _standardize_with_mu_sigma(X, mu, sd)
 
-    gkf = GroupKFold(n_splits=min(5, len(np.unique(groups))))
-    best_param, best_rmse = None, 1e18
+   # 分割数を安全に決定（最低2、最大5）
+n_groups = int(len(np.unique(groups)))
+n_splits = max(2, min(5, n_groups))
+
+best_param, best_rmse = None, 1e18
+
+if n_groups >= 2 and Xs.shape[0] >= 20:
+    gkf = GroupKFold(n_splits=n_splits)
     for n_est in param_grid:
         rmse_fold = []
         for tr, va in gkf.split(Xs, y, groups=groups):
@@ -671,6 +661,10 @@ def fit_time_quantile_model(df_hist: pd.DataFrame, dist_turn_today_df: pd.DataFr
         score = float(np.mean(rmse_fold)) if rmse_fold else 1e18
         if score < best_rmse:
             best_rmse, best_param = score, n_est
+else:
+    # データが少ない/グループが1種のときは既定本数を採用
+    best_param = sorted(param_grid)[len(param_grid)//2]
+
 
     models = {}
     for q in q_list:
