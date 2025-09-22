@@ -634,50 +634,60 @@ def fit_time_quantile_model(df_hist: pd.DataFrame, dist_turn_today_df: pd.DataFr
     X = built['X']; y = built['y']; groups = built['groups']; dates = built['dates']
     feats = built['feats']; col_means = built['col_means']
 
+    # 時系列重み & 標準化
     w = _recent_weight_from_dates(dates, half_life_days=max(1.0, float(half_life_days)))
     mu, sd = _weighted_mu_sigma(X, w)
     Xs = _standardize_with_mu_sigma(X, mu, sd)
 
-   # 分割数を安全に決定（最低2、最大5）
-n_groups = int(len(np.unique(groups)))
-n_splits = max(2, min(5, n_groups))
+    # ===== ここからが安全CVブロック（すべて関数内にインデント） =====
+    n_groups = int(len(np.unique(groups)))
+    n_splits = max(2, min(5, n_groups))
+    best_param, best_rmse = None, 1e18
 
-best_param, best_rmse = None, 1e18
+    if n_groups >= 2 and Xs.shape[0] >= 20:
+        gkf = GroupKFold(n_splits=n_splits)
+        for n_est in param_grid:
+            rmse_fold = []
+            for tr, va in gkf.split(Xs, y, groups=groups):
+                Xt, Xv = Xs[tr], Xs[va]
+                yt, yv = y[tr], y[va]
+                wt, wv = w[tr], w[va]
+                med = GradientBoostingRegressor(loss='quantile', alpha=0.5,
+                                                n_estimators=n_est, max_depth=3,
+                                                random_state=random_state)
+                med.fit(Xt, yt, sample_weight=wt)
+                pred = med.predict(Xv)
+                rmse = np.sqrt(np.average((yv - pred) ** 2, weights=wv))
+                rmse_fold.append(rmse)
+            score = float(np.mean(rmse_fold)) if rmse_fold else 1e18
+            if score < best_rmse:
+                best_rmse, best_param = score, n_est
+    else:
+        # データが少ない/グループが1種のときは既定本数にフォールバック
+        best_param = sorted(param_grid)[len(param_grid)//2]
 
-if n_groups >= 2 and Xs.shape[0] >= 20:
-    gkf = GroupKFold(n_splits=n_splits)
-    for n_est in param_grid:
-        rmse_fold = []
-        for tr, va in gkf.split(Xs, y, groups=groups):
-            Xt, Xv = Xs[tr], Xs[va]
-            yt, yv = y[tr], y[va]
-            wt, wv = w[tr], w[va]
-            med = GradientBoostingRegressor(loss='quantile', alpha=0.5, n_estimators=n_est,
-                                            max_depth=3, random_state=random_state)
-            med.fit(Xt, yt, sample_weight=wt)
-            pred = med.predict(Xv)
-            rmse = np.sqrt(np.average((yv - pred) ** 2, weights=wv))
-            rmse_fold.append(rmse)
-        score = float(np.mean(rmse_fold)) if rmse_fold else 1e18
-        if score < best_rmse:
-            best_rmse, best_param = score, n_est
-else:
-    # データが少ない/グループが1種のときは既定本数を採用
-    best_param = sorted(param_grid)[len(param_grid)//2]
+    # 念のための二重フォールバック
+    if best_param is None:
+        best_param = sorted(param_grid)[len(param_grid)//2]
 
-
+    # 学習（分位 q ごと）
     models = {}
     for q in q_list:
-        m = GradientBoostingRegressor(loss='quantile', alpha=q, n_estimators=best_param,
-                                      max_depth=3, random_state=random_state)
+        m = GradientBoostingRegressor(loss='quantile', alpha=q,
+                                      n_estimators=best_param, max_depth=3,
+                                      random_state=random_state)
         m.fit(Xs, y, sample_weight=w)
         models[q] = m
 
+    # 残差分散の推定（メディアン予測基準）
     resid = y - models[0.5].predict(Xs)
     sigma_hat = float(np.sqrt(np.maximum(np.average(resid ** 2, weights=w), 1e-6)))
 
-    return {'feats': feats, 'mu': mu, 'sd': sd, 'col_means': col_means,
-            'models': models, 'n_estimators': int(best_param), 'sigma_hat': sigma_hat}
+    return {
+        'feats': feats, 'mu': mu, 'sd': sd, 'col_means': col_means,
+        'models': models, 'n_estimators': int(best_param), 'sigma_hat': sigma_hat
+    }
+
 
 def _field_pci_from_pace(pace_type: str) -> float:
     return {'ハイペース': 46.0, 'ミドルペース': 50.0, 'ややスローペース': 53.0, 'スローペース': 56.0}.get(str(pace_type), 50.0)
