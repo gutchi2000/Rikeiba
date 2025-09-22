@@ -921,30 +921,6 @@ for nm in df_agg['馬名'].astype(str):
 _dfturn = pd.DataFrame(rows)
 df_agg = df_agg.merge(_dfturn, on='馬名', how='left')
 
-# === 新規: 特性Pts を作成（性別・脚質・年齢・枠） ===
-# 性別ポイント
-sex_map = {'牡': SEX_MALE, '牝': SEX_FEMA, 'セ': SEX_GELD, '騙': SEX_GELD, 'せん': SEX_GELD}
-df_agg['SexPts'] = df_agg.get('性別', '').map(lambda x: sex_map.get(str(x), 0.0)).astype(float).fillna(0.0)
-
-# 脚質ポイント
-style_map = {'逃げ': STL_NIGE, '先行': STL_SENKO, '差し': STL_SASHI, '追込': STL_OIKOMI}
-df_agg['StylePts'] = df_agg.get('脚質', '').map(lambda x: style_map.get(str(x), 0.0)).astype(float).fillna(0.0)
-
-# 年齢ポイント（ピーク年齢からの距離で台形減衰：peak は±0、離れるほどマイナス）
-age_series = pd.to_numeric(df_agg.get('年齢', np.nan), errors='coerce')
-df_agg['AgePts'] = (-float(AGE_SLOPE) * (age_series - int(AGE_PEAK)).abs()).fillna(0.0)
-
-# 枠ポイント（1〜8を [-1,1] に線形マップして内外有利に変換）
-w = pd.to_numeric(df_agg.get('枠', np.nan), errors='coerce')
-centered = (4.5 - w) / 3.5   # 枠1=+1, 枠8=-1（内側が正）
-if WAKU_DIR == "内有利":
-    waku_raw = centered
-elif WAKU_DIR == "外有利":
-    waku_raw = -centered
-else:
-    waku_raw = 0.0
-df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
-
 # RecencyZ / StabZ
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
 df_agg['RecencyZ']=z_score(pd.to_numeric(base_for_recency, errors='coerce').fillna(0.0))
