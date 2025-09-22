@@ -895,6 +895,13 @@ pace_gain = float(pace_gain)
 stab_weight = float(stab_weight)
 dist_gain = 1.0
 
+
+# === 欠損クレンジング（FinalRawの直前で一度だけ） ===
+df_agg['RecencyZ']    = pd.to_numeric(df_agg['RecencyZ'], errors='coerce').fillna(df_agg['RecencyZ'].median())
+df_agg['StabZ']       = pd.to_numeric(df_agg['StabZ'],    errors='coerce').fillna(df_agg['StabZ'].median())
+df_agg['TurnPrefPts'] = pd.to_numeric(df_agg['TurnPrefPts'], errors='coerce').fillna(0.0)
+df_agg['DistTurnZ']   = pd.to_numeric(df_agg['DistTurnZ'],   errors='coerce').fillna(0.0)
+
 df_agg['PacePts']=0.0  # 後でMCから
 # FinalRaw（基礎：Recency/Stab/Turn/Dist を合算。BT・Paceは後で加点）
 df_agg['FinalRaw'] = (
@@ -1051,18 +1058,12 @@ else:
 
 # PacePts反映
 # Pace を後乗せ（基礎＋BTを保持したまま）
+df_agg['PacePts'] = pd.to_numeric(df_agg['PacePts'], errors='coerce').fillna(0.0)
+
 df_agg['FinalRaw'] += float(pace_gain) * df_agg['PacePts']
 
 # ===== 勝率（PL解析解）＆ Top3（Gumbel反対称） =====
-abilities = df_agg['FinalRaw'].to_numpy(float)
-m = np.nanmean(abilities); s = np.nanstd(abilities) + 1e-9
-abilities = (abilities - m) / s
-x = beta_pl * (abilities - np.max(abilities))
-ex = np.exp(x)
-p_win = ex / np.sum(ex)
-
-# 校正（Isotonicのみ）
-# 校正（Isotonicのみ）
+# -- 校正器の学習（履歴から） --
 calibrator = None
 if do_calib and SK_ISO:
     dfh = _df.dropna(subset=['score_adj','確定着順']).copy()
@@ -1075,52 +1076,63 @@ if do_calib and SK_ISO:
             p = np.exp(beta_pl * (xs - xs.max()))
             s = p.sum()
             if np.isfinite(s) and s > 0:
-                p /= s
+                p = np.clip(p / s, 1e-6, 1-1e-6)
                 X.append(p); Y.append(y)
     if X:
         calibrator = IsotonicRegression(out_of_bounds='clip').fit(np.concatenate(X), np.concatenate(Y))
 
-# NaN/Inf 防御
-p_win = np.asarray(p_win, dtype=float)
-p_win = np.nan_to_num(p_win, nan=(1.0/len(p_win) if len(p_win) else 0.5), neginf=1e-6, posinf=1-1e-6)
-p_win = np.clip(p_win, 1e-6, 1-1e-6)
+# -- PL勝率（NaNセーフ） --
+S = pd.to_numeric(df_agg['FinalRaw'], errors='coerce')
+finite = np.isfinite(S)
 
-# 校正適用（安全関数＋総和=1に正規化）
+p_win = np.zeros(len(S), float)
+if finite.any():
+    A = S[finite].to_numpy(float)
+    m = A.mean(); s = A.std() + 1e-9
+    z = (A - m) / s
+    x = beta_pl * (z - z.max())
+    ex = np.exp(x)
+    p = ex / ex.sum()
+    p_win[finite] = p
+    if (~finite).any():
+        p_win[~finite] = 1e-6
+        p_win = p_win / p_win.sum()
+else:
+    p_win[:] = 1.0 / max(len(S), 1)
+
 if calibrator is not None:
     p_win = safe_iso_predict(calibrator, p_win)
 
+df_agg['勝率%_PL'] = (100 * p_win).round(2)
 
-df_agg['勝率%_PL']=(100*p_win).round(2)
-
-# Top3 近似（Gumbel + 反対称）
-draws_top3=8000
-rng3=np.random.default_rng(13579)
-G=rng3.gumbel(size=(draws_top3//2, len(abilities)))
-U = np.vstack([beta_pl*abilities[None,:] + G, beta_pl*abilities[None,:] - G])
-rank_idx=np.argsort(-U, axis=1)
-counts=np.zeros(len(abilities), float)
-for k in range(3):
-    counts+=np.bincount(rank_idx[:,k], minlength=len(abilities)).astype(float)
-
-df_agg['複勝率%_PL']=(100*(counts/ (draws_top3))).round(2)
-
-# ===== H) AR100: 分位写像 =====
-S = df_agg['FinalRaw'].to_numpy(float)
-if np.all(~np.isfinite(S)) or len(S)==0:
-    df_agg['AR100']=50.0
+# -- Top3近似（Gumbel反対称、NaNセーフ） --
+#   abilities は PLと同じ標準化スコアを全頭に作る（欠損は0）
+if finite.any():
+    A = S.copy()
+    A[~finite] = A[finite].mean()
+    m = A.mean(); s = A.std() + 1e-9
+    abilities = ((A - m) / s).to_numpy(float)
 else:
-    # 経験CDF
-    ranks = pd.Series(S).rank(method='average', pct=True).to_numpy()
-    # 目標分布：B厚め（手作り分位→値）
-    #   0.10:45, 0.25:55, 0.50:65, 0.75:72, 0.90:80, 0.97:90, 1.00:98
-    qx=np.array([0.00,0.10,0.25,0.50,0.75,0.90,0.97,1.00])
-    qy=np.array([40 , 45 , 55 , 65 , 72 , 80 , 90 , 98 ])
-    df_agg['AR100']=np.interp(ranks, qx, qy)
+    abilities = np.zeros(len(S), float)
 
-# バンド
+draws_top3 = 8000
+rng3 = np.random.default_rng(13579)
+G = rng3.gumbel(size=(draws_top3//2, len(abilities)))
+U = np.vstack([beta_pl*abilities[None,:] + G, beta_pl*abilities[None,:] - G])
+rank_idx = np.argsort(-U, axis=1)
+counts = np.zeros(len(abilities), float)
+for k in range(3):
+    counts += np.bincount(rank_idx[:,k], minlength=len(abilities)).astype(float)
+df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
+
+# ===== H) AR100: 分位写像（NaN→中央値扱い） =====
+ranks = S.rank(method='average', pct=True).fillna(0.5)
+qx = np.array([0.00,0.10,0.25,0.50,0.75,0.90,0.97,1.00])
+qy = np.array([40 , 45 , 55 , 65 , 72 , 80 , 90 , 98 ])
+df_agg['AR100'] = np.interp(ranks.to_numpy(float), qx, qy)
 
 def to_band(v):
-    if not np.isfinite(v): return ''
+    if not np.isfinite(v): return 'E'
     if v>=90: return 'SS'
     if v>=80: return 'S'
     if v>=70: return 'A'
@@ -1128,16 +1140,17 @@ def to_band(v):
     if v>=50: return 'C'
     return 'E'
 
-df_agg['Band']=df_agg['AR100'].map(to_band)
+df_agg['Band'] = df_agg['AR100'].map(to_band)
 
-# ===== テーブル整形 =====
-_dfdisp = df_agg.copy()
-_dfdisp = _dfdisp.sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
-_dfdisp['順位']=np.arange(1, len(_dfdisp)+1)
+# ===== テーブル整形（日本語ラベル付き） =====
+_dfdisp = df_agg.copy().sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
+_dfdisp['順位'] = np.arange(1, len(_dfdisp)+1)
 
 def _fmt_int(x):
-    try: return '' if pd.isna(x) else f"{int(x)}"
-    except: return ''
+    try:
+        return '' if pd.isna(x) else f"{int(x)}"
+    except:
+        return ''
 
 show_cols = [
     '順位','枠','番','馬名','脚質',
@@ -1148,44 +1161,30 @@ show_cols = [
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ'
 ]
 
-styled = (
-    _dfdisp[show_cols]
-      .style
-      .apply(_style_waku, subset=['枠'])
-      .format({'枠':_fmt_int,'番':_fmt_int,'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','RecencyZ':'{:.2f}','StabZ':'{:.2f}','PacePts':'{:.2f}','TurnPrefPts':'{:.2f}','DistTurnZ':'{:.2f}'}, na_rep="")
-)
-
-# ▼ 追加（表示名マップ）
 JP = {
     '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
     'AR100':'AR100','Band':'評価帯',
     '勝率%_PL':'勝率%（PL）','複勝率%_PL':'複勝率%（PL）',
     '勝率%_TIME':'勝率%（タイム）','複勝率%_TIME':'複勝率%（タイム）','期待着順_TIME':'期待着順（タイム）',
-    'PredTime_s':'予測タイム中央値[s]',
-    'PredTime_p20':'20%速い側[s]',
-    'PredTime_p80':'80%遅い側[s]',
-    'PredSigma_s':'タイム分散σ[s]',
-    'RecencyZ':'近走Z','StabZ':'安定性Z',
-    'PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ'
+    'PredTime_s':'予測タイム中央値[s]','PredTime_p20':'20%速い側[s]','PredTime_p80':'80%遅い側[s]','PredSigma_s':'タイム分散σ[s]',
+    'RecencyZ':'近走Z','StabZ':'安定性Z','PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ'
 }
 
-# ▼ 表示用DFにだけ適用
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
 
-# ▼ フォーマットのキーも日本語名に合わせる
 fmt = {
-    JP.get('AR100'):'{:.1f}',
-    JP.get('勝率%_PL'):'{:.2f}',
-    JP.get('複勝率%_PL'):'{:.2f}',
-    JP.get('RecencyZ'):'{:.2f}',
-    JP.get('StabZ'):'{:.2f}',
-    JP.get('PacePts'):'{:.2f}',
-    JP.get('TurnPrefPts'):'{:.2f}',
-    JP.get('DistTurnZ'):'{:.2f}',
-    JP.get('PredTime_s'):'{:.3f}',
-    JP.get('PredTime_p20'):'{:.3f}',
-    JP.get('PredTime_p80'):'{:.3f}',
-    JP.get('PredSigma_s'):'{:.3f}'
+    JP['AR100']:'{:.1f}',
+    JP['勝率%（PL）']:'{:.2f}',
+    JP['複勝率%（PL）']:'{:.2f}',
+    JP['近走Z']:'{:.2f}',
+    JP['安定性Z']:'{:.2f}',
+    JP['ペースPts']:'{:.2f}',
+    JP['回り加点']:'{:.2f}',
+    JP['距離×回りZ']:'{:.2f}',
+    JP['予測タイム中央値[s]']:'{:.3f}',
+    JP['20%速い側[s]']:'{:.3f}',
+    JP['80%遅い側[s]']:'{:.3f}',
+    JP['タイム分散σ[s]']:'{:.3f}',
 }
 
 styled = (
@@ -1198,37 +1197,29 @@ styled = (
 st.markdown("### 本命リスト（AUTO統合）")
 st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
 
-# 上位ハイライトも同様に rename
+# 上位抜粋（6頭）
 head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts']
-head_view = _dfdisp[head_cols].rename(columns=JP)
+head_view = _dfdisp[head_cols].rename(columns=JP).head(6).copy()
+st.markdown("#### 上位抜粋")
 st.dataframe(
     head_view.style.format({
-        JP.get('AR100'):'{:.1f}',
-        JP.get('勝率%_PL'):'{:.2f}',
-        JP.get('複勝率%_PL'):'{:.2f}',
-        JP.get('PacePts'):'{:.2f}',
-        JP.get('PredTime_s'):'{:.3f}',
-        JP.get('PredSigma_s'):'{:.3f}',
+        JP['AR100']:'{:.1f}',
+        JP['勝率%（PL）']:'{:.2f}',
+        JP['勝率%（タイム）']:'{:.2f}',
+        JP['ペースPts']:'{:.2f}',
+        JP['予測タイム中央値[s]']:'{:.3f}',
+        JP['タイム分散σ[s]']:'{:.3f}',
     }),
     use_container_width=True, height=H(len(head_view))
 )
-
-st.markdown("### 本命リスト（AUTO統合）")
-st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp)))
-
-# 上位ハイライト
-st.markdown("#### 上位抜粋")
-head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts']
-head=_dfdisp[head_cols].head(6).copy()
-st.dataframe(head.style.format({'AR100':'{:.1f}','勝率%_PL':'{:.2f}','複勝率%_PL':'{:.2f}','PacePts':'{:.2f}'}), use_container_width=True, height=H(len(head)))
 
 # 見送り目安
 if not (_dfdisp['AR100']>=70).any():
     st.warning('今回のレースは「見送り」：A以上（AR100≥70）が不在。')
 else:
-    lead=head.iloc[0] if len(head)>0 else None
-    if lead is not None:
-        st.info(f"本命候補：**{int(lead['枠'])}-{int(lead['番'])} {lead['馬名']}** / 勝率{lead['勝率%_PL']:.2f}% / AR100 {lead['AR100']:.1f}")
+    lead = _dfdisp.iloc[0]
+    st.info(f"本命候補：**{int(lead['枠'])}-{int(lead['番'])} {lead['馬名']}** / 勝率{lead['勝率%_PL']:.2f}% / AR100 {lead['AR100']:.1f}")
+
 
 # 4角図（任意）
 if SHOW_CORNER:
