@@ -142,7 +142,24 @@ def w_std_unbiased(x, w, ddof=1):
     if ddof and n_eff>ddof: var*= n_eff/(n_eff-ddof)
     return float(np.sqrt(max(var,0.0)))
 
+# Isotonic の安全予測（NaN/Inf防御＋[0,1]クリップ＋総和=1正規化）
+def safe_iso_predict(ir, p: np.ndarray) -> np.ndarray:
+    p = np.asarray(p, dtype=float).ravel()
+    if p.size == 0:
+        return p
+    p = np.nan_to_num(p, nan=1.0 / p.size, neginf=1e-6, posinf=1 - 1e-6)
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    try:
+        q = ir.predict(p)
+    except Exception:
+        return p  # 校正器が不正なら素の確率を返す
+    q = np.nan_to_num(q, nan=1.0 / p.size, neginf=1e-6, posinf=1 - 1e-6)
+    q = np.clip(q, 1e-6, 1 - 1e-6)
+    s = q.sum()
+    return (q / s) if np.isfinite(s) and s > 0 else p
+
 # NDCG@k（安全）
+
 
 def ndcg_by_race(frame: pd.DataFrame, scores, k: int=3) -> float:
     f = frame[['race_id','y']].copy().reset_index(drop=True)
@@ -237,19 +254,22 @@ def _auto_pick(df, pats):
     return None
 
 def _map_ui(df, patterns, required, title, key_prefix):
-    cols=list(df.columns)
-    auto={k: _auto_pick(df, pats) for k, pats in patterns.items()}
+    cols = list(df.columns)
+    auto = {k: _auto_pick(df, pats) for k, pats in patterns.items()}
     with st.expander(f"列マッピング：{title}", expanded=False):
-        mapping={}
+        mapping = {}
         for k, _ in patterns.items():
-            options=['<未選択>']+cols
-            default=auto.get(k) if auto.get(k) in cols else '<未選択>'
-            mapping[k]=st.selectbox(k, options, index=options.index(default), key=f"map:{key_prefix}:{k}")
-  for k in required:
-    if mapping.get(k, '<未選択>') == '<未選択>':
-        st.error(f"{title} 必須列が未選択: {k}")
-        st.stop()
-    return {k:(v if v!='<未選択>' else None) for k,v in mapping.items()}
+            options = ['<未選択>'] + cols
+            default = auto.get(k) if auto.get(k) in cols else '<未選択>'
+            mapping[k] = st.selectbox(k, options, index=options.index(default), key=f"map:{key_prefix}:{k}")
+
+    # 必須列の未選択チェック（タイポ修正済み）
+    for k in required:
+        if mapping.get(k, '<未選択>') == '<未選択>':
+            st.error(f"{title} 必須列が未選選択: {k}")
+            st.stop()
+
+    return {k: (v if v != '<未選択>' else None) for k, v in mapping.items()}
 
 PAT_S0 = {
     '馬名':[r'馬名|名前|出走馬'],
@@ -691,10 +711,13 @@ stab_weight = float(stab_weight)
 dist_gain = 1.0
 
 df_agg['PacePts']=0.0  # 後でMCから
-
-# FinalRaw (一部は後段で加算)
-# PacePts だけを後乗せ（BT 等、これまで足した項を保持する）
-df_agg['FinalRaw'] += pace_gain * df_agg['PacePts']
+# FinalRaw（基礎：Recency/Stab/Turn/Dist を合算。BT・Paceは後で加点）
+df_agg['FinalRaw'] = (
+    df_agg['RecencyZ']
+    + float(stab_weight) * df_agg['StabZ']
+    + 1.0 * df_agg['TurnPrefPts']
+    + 1.0 * df_agg['DistTurnZ'].fillna(0.0)
+)
 
 
 # BTを加点（自己学習係数）
@@ -760,14 +783,8 @@ df_agg['PacePts']=sum_pts/max(1,draws)
 pace_type=max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else 'ミドルペース'
 
 # PacePts反映
-df_agg['FinalRaw'] = (
-    df_agg['RecencyZ']
-    + stab_weight*df_agg['StabZ']
-    + pace_gain*df_agg['PacePts']
-    + turn_gain*df_agg['TurnPrefPts']
-    + dist_gain*df_agg['DistTurnZ'].fillna(0.0)
-    + (w_bt * 0)  # すでに足しているのでダミー
-)
+# Pace を後乗せ（基礎＋BTを保持したまま）
+df_agg['FinalRaw'] += float(pace_gain) * df_agg['PacePts']
 
 # ===== 勝率（PL解析解）＆ Top3（Gumbel反対称） =====
 abilities = df_agg['FinalRaw'].to_numpy(float)
