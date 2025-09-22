@@ -1172,46 +1172,57 @@ JP = {
 
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
 
+# JPは「英名→日本語名」の辞書。参照は英名キーで統一して値（日本語名）を使う
 fmt = {
     JP['AR100']:'{:.1f}',
-    JP['勝率%（PL）']:'{:.2f}',
-    JP['複勝率%（PL）']:'{:.2f}',
-    JP['近走Z']:'{:.2f}',
-    JP['安定性Z']:'{:.2f}',
-    JP['ペースPts']:'{:.2f}',
-    JP['回り加点']:'{:.2f}',
-    JP['距離×回りZ']:'{:.2f}',
-    JP['予測タイム中央値[s]']:'{:.3f}',
-    JP['20%速い側[s]']:'{:.3f}',
-    JP['80%遅い側[s]']:'{:.3f}',
-    JP['タイム分散σ[s]']:'{:.3f}',
+    JP['勝率%_PL']:'{:.2f}',
+    JP['複勝率%_PL']:'{:.2f}',
+    JP['RecencyZ']:'{:.2f}',
+    JP['StabZ']:'{:.2f}',
+    JP['PacePts']:'{:.2f}',
+    JP['TurnPrefPts']:'{:.2f}',
+    JP['DistTurnZ']:'{:.2f}',
+    JP['PredTime_s']:'{:.3f}',
+    JP['PredTime_p20']:'{:.3f}',
+    JP['PredTime_p80']:'{:.3f}',
+    JP['PredSigma_s']:'{:.3f}',
 }
+
+# 枠・馬番は整数表示に
+num_fmt = {
+    JP['枠']: _fmt_int,
+    JP['番']: _fmt_int,   # ← リネーム後は「馬番」
+}
+num_fmt.update(fmt)
 
 styled = (
     _dfdisp_view
       .style
       .apply(_style_waku, subset=[JP['枠']])
-      .format(fmt, na_rep="")
+      .format(num_fmt, na_rep="")
 )
+
 
 st.markdown("### 本命リスト（AUTO統合）")
 st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
 
 # 上位抜粋（6頭）
-head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts']
 head_view = _dfdisp[head_cols].rename(columns=JP).head(6).copy()
 st.markdown("#### 上位抜粋")
 st.dataframe(
     head_view.style.format({
+        JP['枠']: _fmt_int,
+        JP['番']: _fmt_int,
         JP['AR100']:'{:.1f}',
-        JP['勝率%（PL）']:'{:.2f}',
-        JP['勝率%（タイム）']:'{:.2f}',
-        JP['ペースPts']:'{:.2f}',
-        JP['予測タイム中央値[s]']:'{:.3f}',
-        JP['タイム分散σ[s]']:'{:.3f}',
+        JP['勝率%_PL']:'{:.2f}',
+        JP['勝率%_TIME']:'{:.2f}',
+        JP['PacePts']:'{:.2f}',
+        JP['PredTime_s']:'{:.3f}',
+        JP['PredSigma_s']:'{:.3f}',
     }),
     use_container_width=True, height=H(len(head_view))
 )
+
 
 # 見送り目安
 if not (_dfdisp['AR100']>=70).any():
