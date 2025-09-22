@@ -205,6 +205,27 @@ with st.sidebar.expander("🛠 安定化/補正", expanded=True):
     stab_weight  = st.slider("安定性(小さいほど◎)の係数", 0.0, 2.0, 0.7, 0.1)
     pace_gain    = st.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1)
     weight_coeff = st.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1)
+    
+with st.sidebar.expander("🧩 特性重み（任意）", expanded=False):
+    # 性別（牡・牝・セン に任意の加点を与える）
+    SEX_MALE  = st.slider("性別: 牡の加点", -5.0, 5.0, 0.0, 0.5)
+    SEX_FEMA  = st.slider("性別: 牝の加点", -5.0, 5.0, 0.0, 0.5)
+    SEX_GELD  = st.slider("性別: センの加点", -5.0, 5.0, 0.0, 0.5)
+
+    # 脚質（逃げ/先行/差し/追込 に任意の加点）
+    STL_NIGE   = st.slider("脚質: 逃げの加点",  -5.0, 5.0, 0.0, 0.5)
+    STL_SENKO  = st.slider("脚質: 先行の加点",  -5.0, 5.0, 0.0, 0.5)
+    STL_SASHI  = st.slider("脚質: 差しの加点",  -5.0, 5.0, 0.0, 0.5)
+    STL_OIKOMI = st.slider("脚質: 追込の加点",  -5.0, 5.0, 0.0, 0.5)
+
+    # 年齢（ピーク年齢からの距離に応じて減点/加点）
+    AGE_PEAK   = st.slider("年齢のピーク（±で減衰）", 2, 8, 4)
+    AGE_SLOPE  = st.slider("年齢の減衰強さ", 0.0, 3.0, 0.5, 0.1)
+
+    # 枠（内有利/外有利の強さ）
+    WAKU_DIR   = st.radio("枠バイアス方向", ["なし","内有利","外有利"], index=0, horizontal=True)
+    WAKU_STR   = st.slider("枠バイアス強さ", 0.0, 3.0, 1.0, 0.1)
+
 
 with st.sidebar.expander("📏 確率校正", expanded=False):
     do_calib = st.checkbox("等温回帰で勝率を校正", value=False)
@@ -870,6 +891,30 @@ for nm in df_agg['馬名'].astype(str):
 _dfturn = pd.DataFrame(rows)
 df_agg = df_agg.merge(_dfturn, on='馬名', how='left')
 
+# === 新規: 特性Pts を作成（性別・脚質・年齢・枠） ===
+# 性別ポイント
+sex_map = {'牡': SEX_MALE, '牝': SEX_FEMA, 'セ': SEX_GELD, '騙': SEX_GELD, 'せん': SEX_GELD}
+df_agg['SexPts'] = df_agg.get('性別', '').map(lambda x: sex_map.get(str(x), 0.0)).astype(float).fillna(0.0)
+
+# 脚質ポイント
+style_map = {'逃げ': STL_NIGE, '先行': STL_SENKO, '差し': STL_SASHI, '追込': STL_OIKOMI}
+df_agg['StylePts'] = df_agg.get('脚質', '').map(lambda x: style_map.get(str(x), 0.0)).astype(float).fillna(0.0)
+
+# 年齢ポイント（ピーク年齢からの距離で台形減衰：peak は±0、離れるほどマイナス）
+age_series = pd.to_numeric(df_agg.get('年齢', np.nan), errors='coerce')
+df_agg['AgePts'] = (-float(AGE_SLOPE) * (age_series - int(AGE_PEAK)).abs()).fillna(0.0)
+
+# 枠ポイント（1〜8を [-1,1] に線形マップして内外有利に変換）
+w = pd.to_numeric(df_agg.get('枠', np.nan), errors='coerce')
+centered = (4.5 - w) / 3.5   # 枠1=+1, 枠8=-1（内側が正）
+if WAKU_DIR == "内有利":
+    waku_raw = centered
+elif WAKU_DIR == "外有利":
+    waku_raw = -centered
+else:
+    waku_raw = 0.0
+df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
+
 # RecencyZ / StabZ
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
 df_agg['RecencyZ']=z_score(pd.to_numeric(base_for_recency, errors='coerce').fillna(0.0))
@@ -909,7 +954,13 @@ df_agg['FinalRaw'] = (
     + float(stab_weight) * df_agg['StabZ']
     + 1.0 * df_agg['TurnPrefPts']
     + 1.0 * df_agg['DistTurnZ'].fillna(0.0)
+    # ▼ ここから新規：特性Pts
+    + df_agg['SexPts']
+    + df_agg['StylePts']
+    + df_agg['AgePts']
+    + df_agg['WakuPts']
 )
+
 
 
 # BTを加点（自己学習係数）
