@@ -854,7 +854,37 @@ for df_ in [df_agg, horses]:
 
 if '脚質' in horses.columns: horses['脚質']=horses['脚質'].map(normalize_style)
 
-df_agg = df_agg.merge(horses[['馬名','枠','番','脚質']], on='馬名', how='left')
+cols_to_merge = ['馬名','枠','番','脚質','性別','年齢']
+cols_to_merge = [c for c in cols_to_merge if c in horses.columns]
+df_agg = df_agg.merge(horses[cols_to_merge], on='馬名', how='left')
+
+# === 新規: 特性Pts（性別・脚質・年齢・枠） ===
+idx = df_agg.index
+
+# 性別
+sex_map = {'牡': SEX_MALE, '牝': SEX_FEMA, 'セ': SEX_GELD, '騙': SEX_GELD, 'せん': SEX_GELD}
+sex_series = df_agg['性別'] if '性別' in df_agg.columns else pd.Series(['']*len(idx), index=idx)
+df_agg['SexPts'] = sex_series.astype(str).map(sex_map).fillna(0.0).astype(float)
+
+# 脚質
+style_map = {'逃げ': STL_NIGE, '先行': STL_SENKO, '差し': STL_SASHI, '追込': STL_OIKOMI}
+style_series = df_agg['脚質'] if '脚質' in df_agg.columns else pd.Series(['']*len(idx), index=idx)
+df_agg['StylePts'] = style_series.astype(str).map(style_map).fillna(0.0).astype(float)
+
+# 年齢（ピークからの距離で減点）
+age_series = pd.to_numeric(df_agg['年齢'] if '年齢' in df_agg.columns else pd.Series([np.nan]*len(idx), index=idx), errors='coerce')
+df_agg['AgePts'] = (-float(AGE_SLOPE) * (age_series - int(AGE_PEAK)).abs()).fillna(0.0)
+
+# 枠（内外バイアス）
+w = pd.to_numeric(df_agg['枠'] if '枠' in df_agg.columns else pd.Series([np.nan]*len(idx), index=idx), errors='coerce')
+centered = (4.5 - w) / 3.5   # 枠1=+1, 枠8=-1（内が正）
+if WAKU_DIR == "内有利":
+    waku_raw = centered
+elif WAKU_DIR == "外有利":
+    waku_raw = -centered
+else:
+    waku_raw = pd.Series(0.0, index=idx)
+df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
 
 # 右/左集計（score_adjの重み平均）
 turn_base = _df[['馬名','回り','score_adj','_w']].dropna()
