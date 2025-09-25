@@ -1090,6 +1090,13 @@ else:
 df_spec['SpecGate_templ'] = templ_info.get('Gate', 1)
 
 df_agg = df_agg.merge(df_spec, on='馬名', how='left')
+# 数値ゲート(0/1/2) → ラベルへ
+_gate_label = {0: '持久', 1: '中庸', 2: '瞬発'}
+df_agg['SpecGate_horse']  = pd.to_numeric(df_agg['SpecGate_horse'], errors='coerce')  # 念のため
+df_agg['SpecGate_templ']  = pd.to_numeric(df_agg['SpecGate_templ'], errors='coerce')
+
+df_agg['SpecGate_horse_lbl'] = df_agg['SpecGate_horse'].map(_gate_label)
+df_agg['SpecGate_templ_lbl'] = df_agg['SpecGate_templ'].map(_gate_label)
 
 
 # ===== RecencyZ / StabZ =====
@@ -1379,8 +1386,9 @@ show_cols = [
     '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
-    'SpecFitZ','SpecGate_horse','SpecGate_templ'  # ← ここを修正
+    'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl'  # ← ラベル列を表示
 ]
+
 
 JP = {
     '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
@@ -1393,6 +1401,10 @@ JP = {
     'SpecGate_horse':'走法型(0=持久,1=中庸,2=瞬発)',      # ← 追加
     'SpecGate_templ':'想定レース型(テンプレ)'             # ← 追加
 }
+JP.update({
+    'SpecGate_horse_lbl': '走法型',
+    'SpecGate_templ_lbl': '想定レース型(テンプレ)'
+})
 
 
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
