@@ -35,7 +35,7 @@ plt.rcParams['font.sans-serif'] = [
     'IPAexGothic','IPAGothic','Noto Sans CJK JP','Yu Gothic UI','Meiryo','Hiragino Sans','MS Gothic'
 ]
 
-st.set_page_config(page_title="競馬予想アプリ（AUTO版）", layout="wide")
+st.set_page_config(page_title="スペクトル解析論", layout="wide")
 
 # ===== 小ユーティリティ =====
 STYLES = ['逃げ','先行','差し','追込']
