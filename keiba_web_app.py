@@ -357,40 +357,64 @@ if '馬体重' not in s1.columns: s1['馬体重']=np.nan
 st.subheader("馬一覧（必要なら脚質/斤量/体重を調整）")
 
 def auto_style_from_history(df: pd.DataFrame, n_recent=5, hl_days=180):
-    need={'馬名','レース日','頭数','通過4角'}
+    # 必須列がなければ空で返す（落ちないように）
+    need = {'馬名','レース日','頭数','通過4角'}
     if not need.issubset(df.columns):
-        return pd.DataFrame({'馬名':[],'推定脚質':[]})
-    t=df[['馬名','レース日','頭数','通過4角','上3F順位']].dropna(subset=['馬名','レース日','頭数','通過4角']).copy()
-    t=t.sort_values(['馬名','レース日'], ascending=[True, False])
-    t['_rn']=t.groupby('馬名').cumcount()+1
-    t=t[t['_rn']<=n_recent].copy()
-    today=pd.Timestamp.today()
-    t['_days']=(today-pd.to_datetime(t['レース日'], errors='coerce')).dt.days.clip(lower=0).fillna(9999)
-    t['_w']=0.5 ** (t['_days']/float(hl_days))
-    denom=(pd.to_numeric(t['頭数'], errors='coerce')-1).replace(0,np.nan)
-    pos_ratio=(pd.to_numeric(t['通過4角'], errors='coerce')-1)/denom
-    pos_ratio=pos_ratio.clip(0,1).fillna(0.5)
+        return pd.DataFrame({'馬名': [], '推定脚質': []})
+
+    # 任意列（上3F順位）は存在チェックしてから選ぶ
+    base_cols = ['馬名','レース日','頭数','通過4角']
+    if '上3F順位' in df.columns:
+        base_cols.append('上3F順位')
+
+    t = (
+        df[base_cols]
+        .dropna(subset=['馬名','レース日','頭数','通過4角'])
+        .copy()
+    )
+
+    # 並べ替えと最近n件
+    t = t.sort_values(['馬名','レース日'], ascending=[True, False])
+    t['_rn'] = t.groupby('馬名').cumcount() + 1
+    t = t[t['_rn'] <= n_recent].copy()
+
+    today = pd.Timestamp.today()
+    t['_days'] = (today - pd.to_datetime(t['レース日'], errors='coerce')).dt.days.clip(lower=0).fillna(9999)
+    t['_w'] = 0.5 ** (t['_days'] / float(hl_days))
+
+    # 4角位置→先行度（0〜1）
+    denom = (pd.to_numeric(t['頭数'], errors='coerce') - 1).replace(0, np.nan)
+    pos_ratio = (pd.to_numeric(t['通過4角'], errors='coerce') - 1) / denom
+    pos_ratio = pos_ratio.clip(0, 1).fillna(0.5)
+
+    # 上がり順位があれば終い脚寄与、なければ0
     if '上3F順位' in t.columns:
-        ag=pd.to_numeric(t['上3F順位'], errors='coerce')
-        close=((3.5-ag)/3.5).clip(0,1).fillna(0.0)
+        ag = pd.to_numeric(t['上3F順位'], errors='coerce')
+        close = ((3.5 - ag) / 3.5).clip(0, 1).fillna(0.0)
     else:
-        close=pd.Series(0.0, index=t.index)
-    b={'逃げ':-1.2,'先行':0.6,'差し':0.3,'追込':-0.7}
-    t['L_逃げ']= b['逃げ'] + 1.6*(1-pos_ratio) - 1.2*close
-    t['L_先行']= b['先行']+ 1.1*(1-pos_ratio) - 0.1*close
-    t['L_差し']= b['差し']+ 1.1*(pos_ratio)   + 0.9*close
-    t['L_追込']= b['追込']+ 1.6*(pos_ratio)   + 0.5*close
-    rows=[]
-    for name,g in t.groupby('馬名'):
-        w=g['_w'].to_numpy(); sw=w.sum()
-        if sw<=0: continue
-        vec=np.array([
+        close = pd.Series(0.0, index=t.index)
+
+    # ロジット
+    b = {'逃げ': -1.2, '先行': 0.6, '差し': 0.3, '追込': -0.7}
+    t['L_逃げ'] = b['逃げ'] + 1.6*(1 - pos_ratio) - 1.2*close
+    t['L_先行'] = b['先行'] + 1.1*(1 - pos_ratio) - 0.1*close
+    t['L_差し'] = b['差し'] + 1.1*(pos_ratio)     + 0.9*close
+    t['L_追込'] = b['追込'] + 1.6*(pos_ratio)     + 0.5*close
+
+    # 馬ごと重み平均 → softmax → 最頻脚質
+    rows = []
+    for name, g in t.groupby('馬名'):
+        w = g['_w'].to_numpy(); sw = w.sum()
+        if sw <= 0: 
+            continue
+        vec = np.array([
             float((g['L_逃げ']*w).sum()/sw),
             float((g['L_先行']*w).sum()/sw),
             float((g['L_差し']*w).sum()/sw),
-            float((g['L_追込']*w).sum()/sw)
+            float((g['L_追込']*w).sum()/sw),
         ])
-        vec=vec-vec.max(); p=np.exp(vec); p/=p.sum()
+        vec = vec - vec.max()
+        p = np.exp(vec); p /= p.sum()
         rows.append([name, STYLES[int(np.argmax(p))]])
     return pd.DataFrame(rows, columns=['馬名','推定脚質'])
 
@@ -469,20 +493,34 @@ if 'レース日' not in df.columns:
     st.error('レース日が見つかりません。'); st.stop()
 
 _df = df.copy()
-_df['score_raw'] = _df.apply(class_points, axis=1) * (_df['頭数'] + 1 - _df['確定着順']) + 0
-_df['score_raw'] += 0  # 余白（軽ボーナスは下で個別付与）
-# 軽ボーナス
-def _extra(r):
-    grade_point = 5 if (normalize_grade_text(r.get('クラス名')) or normalize_grade_text(r.get('競走名'))) in ['G1','G2','G3'] else 0
+
+def calc_score(r):
+    gpt = class_points(r)
+    # 基本：着順逆転ポイント + 出走ボーナスλ
+    base = gpt * (pd.to_numeric(r['頭数'], errors='coerce') + 1 - pd.to_numeric(r['確定着順'], errors='coerce'))
+    base = float(base) if np.isfinite(base) else 0.0
+    base += float(lambda_part) * gpt
+
+    # 重賞ボーナス（スライダー連動）
+    gtxt = normalize_grade_text(r.get('クラス名')) or normalize_grade_text(r.get('競走名'))
+    bonus_grade = int(grade_bonus) if gtxt in ['G1','G2','G3'] else 0
+
+    # 上がりボーナス（スライダー連動）
     ao = pd.to_numeric(r.get('上3F順位', np.nan), errors='coerce')
-    ag = 3 if ao==1 else (2 if ao==2 else (1 if ao==3 else 0))
-    return grade_point + ag
-_df['score_raw'] += _df.apply(_extra, axis=1)
+    if ao == 1:    bonus_agari = int(agari1_bonus)
+    elif ao == 2:  bonus_agari = int(agari2_bonus)
+    elif ao == 3:  bonus_agari = int(agari3_bonus)
+    else:          bonus_agari = 0
+
+    return base + bonus_grade + bonus_agari
+
+_df['score_raw'] = _df.apply(calc_score, axis=1)
 
 if _df['score_raw'].max()==_df['score_raw'].min():
     _df['score_norm']=50.0
 else:
     _df['score_norm'] = (_df['score_raw'] - _df['score_raw'].min()) / (_df['score_raw'].max()-_df['score_raw'].min())*100
+
 
 now = pd.Timestamp.today()
 half_life_m_default = 6.0
@@ -572,6 +610,129 @@ def _build_time_features(df_hist: pd.DataFrame, dist_turn_df: pd.DataFrame | Non
     X = np.where(np.isfinite(X), X, col_means)
     return {'frame': d, 'X': X, 'y': y, 'feats': feats, 'groups': groups, 'dates': dates, 'col_means': col_means}
 
+def fit_time_quantile_model(df_hist: pd.DataFrame, dist_turn_today_df: pd.DataFrame,
+                            half_life_days: float, q_list=(0.2, 0.5, 0.8),
+                            param_grid=(80, 120, 160), random_state=42):
+    built = _build_time_features(df_hist, dist_turn_today_df)
+    if built is None:
+        return None
+
+    X = built['X']; y = built['y']; groups = built['groups']; dates = built['dates']
+    feats = built['feats']; col_means = built['col_means']
+
+    # 時系列重み & 標準化
+    w = _recent_weight_from_dates(dates, half_life_days=max(1.0, float(half_life_days)))
+    mu, sd = _weighted_mu_sigma(X, w)
+    Xs = _standardize_with_mu_sigma(X, mu, sd)
+
+    # GroupKFold で木本数選定
+    n_groups = int(len(np.unique(groups)))
+    n_splits = max(2, min(5, n_groups))
+    best_param, best_rmse = None, 1e18
+
+    if n_groups >= 2 and Xs.shape[0] >= 20:
+        gkf = GroupKFold(n_splits=n_splits)
+        for n_est in param_grid:
+            rmse_fold = []
+            for tr, va in gkf.split(Xs, y, groups=groups):
+                Xt, Xv = Xs[tr], Xs[va]
+                yt, yv = y[tr], y[va]
+                wt, wv = w[tr], w[va]
+                med = GradientBoostingRegressor(loss='quantile', alpha=0.5,
+                                                n_estimators=n_est, max_depth=3,
+                                                random_state=random_state)
+                med.fit(Xt, yt, sample_weight=wt)
+                pred = med.predict(Xv)
+                rmse = np.sqrt(np.average((yv - pred) ** 2, weights=wv))
+                rmse_fold.append(rmse)
+            score = float(np.mean(rmse_fold)) if rmse_fold else 1e18
+            if score < best_rmse:
+                best_rmse, best_param = score, n_est
+    else:
+        best_param = sorted(param_grid)[len(param_grid)//2]
+
+    if best_param is None:
+        best_param = sorted(param_grid)[len(param_grid)//2]
+
+    models = {}
+    for q in q_list:
+        m = GradientBoostingRegressor(loss='quantile', alpha=q,
+                                      n_estimators=best_param, max_depth=3,
+                                      random_state=random_state)
+        m.fit(Xs, y, sample_weight=w)
+        models[q] = m
+
+    resid = y - models[0.5].predict(Xs)
+    sigma_hat = float(np.sqrt(np.maximum(np.average(resid ** 2, weights=w), 1e-6)))
+
+    return {
+        'feats': feats, 'mu': mu, 'sd': sd, 'col_means': col_means,
+        'models': models, 'n_estimators': int(best_param), 'sigma_hat': sigma_hat
+    }
+
+def _field_pci_from_pace(pace_type: str) -> float:
+    return {'ハイペース': 46.0, 'ミドルペース': 50.0, 'ややスローペース': 53.0, 'スローペース': 56.0}.get(str(pace_type), 50.0)
+
+def build_today_design(horses_today: pd.DataFrame, s0_hist: pd.DataFrame,
+                       target_distance: int, target_surface: str,
+                       dist_turn_today_df: pd.DataFrame, feats: list[str]):
+    # 過去の指数の時間減衰平均を作る
+    rec_w = None
+    if not s0_hist.empty and 'レース日' in s0_hist:
+        rec_w = 0.5 ** ((pd.Timestamp.today() - pd.to_datetime(s0_hist['レース日'], errors='coerce')).dt.days.clip(lower=0) / 180.0)
+
+    def _wmean(s, w):
+        s = pd.to_numeric(s, errors='coerce')
+        w = pd.to_numeric(w, errors='coerce')
+        m = np.nansum(s * w); sw = np.nansum(w)
+        return float(m / sw) if sw > 0 else np.nan
+
+    pci_wmean, pci3_wmean, ave3_wmean, a3_wmedian = {}, {}, {}, {}
+    if 'PCI' in s0_hist.columns:
+        pci_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['PCI'], g['_w'])).to_dict()
+    if 'PCI3' in s0_hist.columns:
+        pci3_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['PCI3'], g['_w'])).to_dict()
+    if 'Ave-3F' in s0_hist.columns:
+        ave3_wmean = s0_hist.assign(_w=rec_w).groupby('馬名').apply(lambda g: _wmean(g['Ave-3F'], g['_w'])).to_dict()
+    if '上がり3Fタイム' in s0_hist.columns:
+        a3_wmedian = s0_hist.groupby('馬名')['上がり3Fタイム'].median().to_dict()
+
+    dtt = dist_turn_today_df[['馬名', 'DistTurnZ']].drop_duplicates() if ('DistTurnZ' in dist_turn_today_df.columns) \
+        else pd.DataFrame({'馬名': horses_today['馬名'], 'DistTurnZ': np.nan})
+    H = horses_today.merge(dtt, on='馬名', how='left')
+
+    rows = []
+    for _, r in H.iterrows():
+        name = str(r['馬名'])
+        x = {}
+        x['距離'] = float(target_distance)
+        x['斤量'] = float(r.get('斤量', np.nan))
+        x['is_dirt'] = 1.0 if str(target_surface).startswith('ダ') else 0.0
+
+        pci_field = _field_pci_from_pace(globals().get('pace_type', 'ミドルペース'))
+        if 'PCI' in feats:
+            x['PCI'] = float(pci_wmean.get(name, np.nan))
+            if not np.isfinite(x['PCI']):
+                x['PCI'] = pci_field
+        if 'PCI3' in feats:
+            x['PCI3'] = float(pci3_wmean.get(name, np.nan))
+            if not np.isfinite(x['PCI3']):
+                x['PCI3'] = (x.get('PCI', pci_field) + 1.0)
+        if 'Ave-3F' in feats:
+            x['Ave-3F'] = float(ave3_wmean.get(name, np.nan))
+        if '上がり3Fタイム' in feats:
+            x['上がり3Fタイム'] = float(a3_wmedian.get(name, np.nan))
+        if '距離xPCI' in feats:
+            x['距離xPCI'] = x['距離'] * x.get('PCI', pci_field)
+        if 'PCIgap' in feats:
+            x['PCIgap'] = x.get('PCI3', x.get('PCI', pci_field) + 1.0) - x.get('PCI', pci_field)
+        if 'DistTurnZ' in feats:
+            x['DistTurnZ'] = float(r.get('DistTurnZ', np.nan))
+
+        rows.append({'馬名': name, **x})
+    return pd.DataFrame(rows)
+
+
 # ===== E) 距離バンド幅 自動 =====
 
 def auto_h_m(x_all: np.ndarray) -> float:
@@ -627,6 +788,126 @@ def dist_turn_profile(name: str, df_hist: pd.DataFrame, target_d: int, target_tu
         'BestDist_turn': float(best_d) if np.isfinite(best_d) else np.nan,
         'DistTurnZ_best': float(best_val) if np.isfinite(best_val) else np.nan
     }
+
+# ===== スペクトル: 曲線生成 / DTW / テンプレ構築 =====
+def pseudo_curve(dist_m: float, time_s: float, a3_s: float, pci: float, pci3: float, rpci: float, pos_ratio: float,
+                 n_points: int = 128) -> np.ndarray:
+    """
+    距離・総タイム・上がり3Fなどから擬似速度曲線（正規化）を合成。
+    - 距離: m, タイム: s
+    - pos_ratio: 先行度（1=先行、0=後方）
+    """
+    # フォールバック
+    if not np.isfinite(dist_m) or not np.isfinite(time_s) or time_s <= 0:
+        return np.full(n_points, np.nan)
+
+    # ベース速度（平均）
+    v_avg = dist_m / time_s
+
+    # PCI 系の形状寄与
+    pci = np.clip(pci if np.isfinite(pci) else 50.0, 35.0, 65.0)
+    pci3 = pci3 if np.isfinite(pci3) else (pci + 1.0)
+    rpci = rpci if np.isfinite(rpci) else 0.0  # 任意列
+
+    x = np.linspace(0, 1, n_points)
+
+    # 先行/差しによる序盤/終盤ウェイト
+    lead = np.clip(pos_ratio if np.isfinite(pos_ratio) else 0.5, 0.0, 1.0)
+    w_front = 0.8 + 0.6*(lead - 0.5)    # 先行ほど序盤↑
+    w_back  = 0.8 - 0.6*(lead - 0.5)
+
+    # PCI→中盤の「緩み/締まり」をガウス形で付与
+    mid_center = 0.55
+    mid_width  = 0.20
+    mid_bump   = (50.0 - pci) / 25.0  # ハイペース(PCI低)だと中盤落ち込み
+    shape_mid  = 1.0 - mid_bump * np.exp(-0.5*((x - mid_center)/mid_width)**2)
+
+    # 上がり3F（終盤）による末脚寄与
+    if np.isfinite(a3_s) and a3_s > 0:
+        # コース全体速度に対する終盤速度比（粗い近似）
+        last_600 = 600.0
+        if dist_m > last_600:
+            v_last = last_600 / a3_s
+            ratio  = np.clip(v_last / v_avg, 0.5, 1.5)
+        else:
+            ratio = 1.0
+    else:
+        ratio = 1.0 + 0.10*((pci3 - pci)/5.0)  # PCI3>PCI なら末上げ
+
+    # 周波数ドメインの軽い起伏（FFT相当の特徴を少し持たせる）
+    low = 0.04*np.sin(2*np.pi*1*x)
+    mid = 0.03*np.sin(2*np.pi*2*x + 1.3)
+    high= 0.02*np.sin(2*np.pi*4*x + 0.7)
+    wav = 1.0 + low + mid + high
+
+    # 合成
+    base = v_avg * (w_front*(1 - x) + w_back*x)   # 直線補間の勾配
+    v = base * shape_mid * (1.0 + (ratio - 1.0)*x**1.2) * wav
+
+    # 正規化（面積=1に近づける）
+    v = np.maximum(v, 1e-8)
+    v = v / np.trapz(v, x)
+    return v
+
+def dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """シンプルDTW（O(N^2)、NaNは大きい罰則）"""
+    if not (isinstance(a, np.ndarray) and isinstance(b, np.ndarray)):
+        return np.inf
+    if len(a)==0 or len(b)==0 or np.isnan(a).all() or np.isnan(b).all():
+        return np.inf
+    A = np.nan_to_num(a, nan=1e6)
+    B = np.nan_to_num(b, nan=1e6)
+    n, m = len(A), len(B)
+    D = np.full((n+1, m+1), np.inf)
+    D[0,0] = 0.0
+    for i in range(1, n+1):
+        ai = A[i-1]
+        for j in range(1, m+1):
+            cost = abs(ai - B[j-1])
+            D[i,j] = cost + min(D[i-1,j], D[i,j-1], D[i-1,j-1])
+    return float(D[n,m])
+
+def build_template_curves(df_curves: pd.DataFrame, target_dist: int, target_surface: str,
+                          tol: int = 100, n_points: int = 128):
+    """
+    同距離帯(±tol) & 同Surface の '_curve' を集めて中央値テンプレを作る。
+    ついでにFFT帯域からレース型 Gate を推定（0=持久,1=中庸,2=瞬発）。
+    """
+    if df_curves.empty or '_curve' not in df_curves.columns:
+        return np.full(n_points, 1.0/n_points), {'Gate': 1}
+
+    dd = df_curves.copy()
+    dd['距離'] = pd.to_numeric(dd['距離'], errors='coerce')
+    dd = dd[dd['距離'].between(target_dist - tol, target_dist + tol, inclusive='both')]
+    dd = dd[dd['芝・ダ'].astype(str).str.startswith(str(target_surface))]
+
+    curves = [c for c in dd['_curve'].values if isinstance(c, np.ndarray)]
+    if not curves:
+        return np.full(n_points, 1.0/n_points), {'Gate': 1}
+
+    # 長さを合わせて中央値
+    L = min(min(len(c) for c in curves), n_points)
+    mat = np.vstack([np.interp(np.linspace(0,1,L), np.linspace(0,1,len(c)), c) for c in curves])
+    templ = np.median(mat, axis=0)
+
+    # FFT帯域比から Gate を簡易判定
+    f = np.fft.rfft(templ - templ.mean())
+    pow_spec = np.abs(f)**2
+    # 低/中/高の簡易帯域比
+    n = len(pow_spec)
+    low = pow_spec[:max(2, n//6)].sum()
+    mid = pow_spec[max(2, n//6):max(4, n//3)].sum()
+    high= pow_spec[max(4, n//3):].sum()
+
+    # 高周波(瞬発)が強ければ2、低周波(持久)が強ければ0、その他1
+    if high > max(low, mid) * 1.15:
+        gate = 2
+    elif low > max(mid, high) * 1.15:
+        gate = 0
+    else:
+        gate = 1
+
+    return templ, {'Gate': gate}
 
 # ===== 馬ごと集計 =====
 agg=[]
@@ -822,6 +1103,12 @@ df_agg['FinalRaw'] = (
     + 1.0 * df_agg['DistTurnZ'].fillna(0.0)
     + df_agg['SexPts'] + df_agg['StylePts'] + df_agg['AgePts'] + df_agg['WakuPts']
 )
+
+# 斤量ペナルティ（中央値基準）
+if '斤量' in df_agg.columns and pd.to_numeric(df_agg['斤量'], errors='coerce').notna().any():
+    kg = pd.to_numeric(df_agg['斤量'], errors='coerce')
+    kg_med = float(np.nanmedian(kg))
+    df_agg['FinalRaw'] -= float(weight_coeff) * (kg - kg_med).fillna(0.0)
 
 # BTを加点
 if 'ベストタイム秒' in s1.columns:
