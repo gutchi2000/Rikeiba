@@ -1379,7 +1379,7 @@ show_cols = [
     '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
-    'SpecFitZ','SpecGate'   # ← 追加
+    'SpecFitZ','SpecGate_horse','SpecGate_templ'  # ← ここを修正
 ]
 
 JP = {
@@ -1389,8 +1389,11 @@ JP = {
     '勝率%_TIME':'勝率%（タイム）','複勝率%_TIME':'複勝率%（タイム）','期待着順_TIME':'期待着順（タイム）',
     'PredTime_s':'予測タイム中央値[s]','PredTime_p20':'20%速い側[s]','PredTime_p80':'80%遅い側[s]','PredSigma_s':'タイム分散σ[s]',
     'RecencyZ':'近走Z','StabZ':'安定性Z','PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ',
-    'SpecFitZ':'スペクトル適合Z','SpecGate':'レース型(0=持久,1=中庸,2=瞬発)'
+    'SpecFitZ':'スペクトル適合Z',
+    'SpecGate_horse':'走法型(0=持久,1=中庸,2=瞬発)',      # ← 追加
+    'SpecGate_templ':'想定レース型(テンプレ)'             # ← 追加
 }
+
 
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
 
