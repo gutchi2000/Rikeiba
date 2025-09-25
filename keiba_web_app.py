@@ -1383,7 +1383,7 @@ fmt = {
 
 num_fmt = {
     JP['枠']: _fmt_int,
-    JP['馬番']: _fmt_int,
+    JP['番']: _fmt_int,
 }
 num_fmt.update(fmt)
 
@@ -1407,7 +1407,7 @@ st.markdown("#### 上位抜粋")
 st.dataframe(
     head_view.style.format({
         JP['枠']: _fmt_int,
-        JP['馬番']: _fmt_int,
+        JP['番']: _fmt_int,
         JP['AR100']:'{:.1f}',
         JP['勝率%_PL']:'{:.2f}',
         JP['勝率%_TIME']:'{:.2f}',
