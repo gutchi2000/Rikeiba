@@ -913,6 +913,27 @@ def build_template_curves(df_curves: pd.DataFrame, target_dist: int, target_surf
 
     return templ, {'Gate': gate}
 
+def infer_gate_from_curve(curve: np.ndarray, n_points: int = 128):
+    """1本の速度曲線から 0=持久 / 1=中庸 / 2=瞬発 をFFT帯域比で推定"""
+    if not isinstance(curve, np.ndarray) or curve.size == 0 or np.isnan(curve).all():
+        return np.nan
+    L = min(len(curve), n_points)
+    x = np.interp(np.linspace(0,1,L), np.linspace(0,1,len(curve)), curve)
+    x = x - np.nanmean(x)
+    x = np.nan_to_num(x, nan=0.0)
+    f = np.fft.rfft(x)
+    ps = np.abs(f)**2
+    n = len(ps)
+    low  = ps[:max(2, n//6)].sum()
+    mid  = ps[max(2, n//6):max(4, n//3)].sum()
+    high = ps[max(4, n//3):].sum()
+    if high > max(low, mid) * 1.15:
+        return 2  # 瞬発
+    elif low > max(mid, high) * 1.15:
+        return 0  # 持久
+    else:
+        return 1  # 中庸
+
 # ===== 馬ごと集計 =====
 agg=[]
 for name, g in _df.groupby('馬名'):
@@ -1047,25 +1068,29 @@ templ_curve, templ_info = build_template_curves(
 # 各馬のDTW最小距離→Z化（大きいほど適合良）
 rows=[]
 for name, g in s0_spec.groupby('馬名'):
-    dists=[]
+    dists=[]; gates=[]
     for v in g['_curve'].values:
         if isinstance(v, np.ndarray):
             dists.append(dtw_distance(v, templ_curve))
-    if len(dists)==0:
-        rows.append({'馬名':name, 'DTWmin':np.nan})
-    else:
-        rows.append({'馬名':name, 'DTWmin':float(np.nanmin(dists))})
+            gates.append(infer_gate_from_curve(v))
+    DTWmin = float(np.nanmin(dists)) if dists else np.nan
+    gate_hat = float(np.nanmedian([x for x in gates if np.isfinite(x)])) if gates else np.nan
+    rows.append({'馬名':name, 'DTWmin':DTWmin, 'SpecGate_horse': gate_hat})
 df_spec = pd.DataFrame(rows)
+
 if not df_spec.empty:
     mu = float(df_spec['DTWmin'].mean(skipna=True))
     sd = float(df_spec['DTWmin'].std(ddof=0, skipna=True))
     if not np.isfinite(sd) or sd==0.0: sd=1.0
-    df_spec['SpecFitZ'] = -(df_spec['DTWmin'] - mu) / sd  # 反転Z
-    df_spec['SpecGate'] = templ_info.get('Gate', 1)
+    df_spec['SpecFitZ'] = -(df_spec['DTWmin'] - mu) / sd
 else:
-    df_spec = pd.DataFrame({'馬名': df_agg['馬名'], 'SpecFitZ': np.nan, 'SpecGate': 1})
+    df_spec = pd.DataFrame({'馬名': df_agg['馬名'], 'SpecFitZ': np.nan, 'SpecGate_horse': np.nan})
+
+# テンプレ（レース全体）の型は全員同じ値として列を持たせる
+df_spec['SpecGate_templ'] = templ_info.get('Gate', 1)
 
 df_agg = df_agg.merge(df_spec, on='馬名', how='left')
+
 
 # ===== RecencyZ / StabZ =====
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
