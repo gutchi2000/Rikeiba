@@ -222,7 +222,7 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
 
 # ===== ファイルアップロード =====
-st.title("競馬予想アプリ（AUTO版）")
+st.title("スペクトル解析論")
 st.subheader("Excelアップロード（sheet0=過去走 / sheet1=出走表）")
 excel_file = st.file_uploader("Excel（.xlsx）", type=['xlsx'], key="excel_up")
 if excel_file is None:
