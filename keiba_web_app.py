@@ -1464,11 +1464,37 @@ st.dataframe(
 )
 
 # 見送り目安
-if not (_dfdisp['AR100']>=70).any():
+if not (_dfdisp['AR100'] >= 70).any():
     st.warning('今回のレースは「見送り」：A以上（AR100≥70）が不在。')
 else:
     lead = _dfdisp.iloc[0]
-    st.info(f"本命候補：**{int(lead['枠'])}-{int(lead['番'])} {lead['馬名']}** / 勝率{lead['勝率%_PL']:.2f}% / AR100 {lead['AR100']:.1f}")
+
+    def _fmt_int_str(x):
+        import pandas as pd, numpy as np
+        try:
+            v = pd.to_numeric(x)
+            return "" if pd.isna(v) else f"{int(v)}"
+        except Exception:
+            return ""
+
+    def _fmt_float(x, n):
+        import pandas as pd
+        try:
+            v = float(x)
+            return f"{v:.{n}f}"
+        except Exception:
+            return "—"
+
+    waku   = _fmt_int_str(lead.get('枠'))
+    umaban = _fmt_int_str(lead.get('番'))
+    win    = _fmt_float(lead.get('勝率%_PL'), 2)
+    ar100  = _fmt_float(lead.get('AR100'), 1)
+
+    # どちらか番号が空ならハイフン省略
+    num_part = f"{waku}-{umaban}".strip("-")
+    title = f"**{num_part} {lead.get('馬名','')}**" if num_part else f"**{lead.get('馬名','')}**"
+
+    st.info(f"本命候補：{title} / 勝率{win}% / AR100 {ar100}")
 
 # 4角図（任意）
 if SHOW_CORNER:
