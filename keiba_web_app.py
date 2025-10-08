@@ -1191,31 +1191,60 @@ else:
 df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
 
 # 右/左集計（score_adjの重み平均）
-turn_base = _df[['馬名','回り','score_adj','_w']].dropna()
-if not turn_base.empty:
-    right = (turn_base[turn_base['回り'].astype(str)=='右']
-         .groupby('馬名').apply(lambda s: np.average(s['score_adj'], weights=s['_w']) if s['_w'].sum()>0 else np.nan)
-         .rename('RightZ'))
-    left  = (turn_base[turn_base['回り'].astype(str)=='左']
-             .groupby('馬名').apply(lambda s: np.average(s['score_adj'], weights=s['_w']) if s['_w'].sum()>0 else np.nan)
-             .rename('LeftZ'))
-    counts = (turn_base.pivot_table(index='馬名', columns='回り', values='score_adj', aggfunc='count')
-              .rename(columns={'右':'nR','左':'nL'}))
-    turn_pref = pd.concat([right,left,counts], axis=1).reset_index()
-else:
-    turn_pref = pd.DataFrame({'馬名':df_agg['馬名']})
+def _wavg_score(g: pd.DataFrame) -> float:
+    w = pd.to_numeric(g['_w'], errors='coerce').to_numpy(float)
+    x = pd.to_numeric(g['score_adj'], errors='coerce').to_numpy(float)
+    msk = np.isfinite(w) & np.isfinite(x)
+    w = w[msk]; x = x[msk]
+    sw = w.sum()
+    return float(np.sum(w * x) / sw) if sw > 0 else np.nan
 
+turn_base = _df[['馬名','回り','score_adj','_w']].dropna(subset=['馬名','score_adj','_w']).copy()
+
+# 右回り
+right = (
+    turn_base[turn_base['回り'].astype(str) == '右']
+    .groupby('馬名').apply(_wavg_score)
+    .reset_index(name='RightZ')
+)
+
+# 左回り
+left = (
+    turn_base[turn_base['回り'].astype(str) == '左']
+    .groupby('馬名').apply(_wavg_score)
+    .reset_index(name='LeftZ')
+)
+
+# 出現数（参考）
+counts = (
+    turn_base.assign(_one=1)
+    .pivot_table(index='馬名', columns='回り', values='_one', aggfunc='sum', fill_value=0)
+    .rename(columns={'右':'nR','左':'nL'})
+    .reset_index()
+)
+
+# マージして欠損を用意
+turn_pref = (
+    df_agg[['馬名']].drop_duplicates()
+    .merge(right, on='馬名', how='left')
+    .merge(left,  on='馬名', how='left')
+    .merge(counts, on='馬名', how='left')
+)
 for c in ['RightZ','LeftZ','nR','nL']:
-    if c not in turn_pref.columns: turn_pref[c]=np.nan
+    if c not in turn_pref.columns:
+        turn_pref[c] = np.nan
 
-# C) 連続TurnPrefPts：gap×有効本数ゲート
+# 指標作成
 turn_pref['TurnGap'] = (turn_pref['RightZ'].fillna(0) - turn_pref['LeftZ'].fillna(0))
-# 有効本数の近似：nR/nLの合算をKish風に（単純）
 turn_pref['n_eff_turn'] = (turn_pref['nR'].fillna(0) + turn_pref['nL'].fillna(0)).clip(lower=0)
 conf = np.clip(turn_pref['n_eff_turn'] / 3.0, 0.0, 1.0)
 turn_pref['TurnPrefPts'] = np.clip(turn_pref['TurnGap']/1.5, -1.0, 1.0) * conf
 
-df_agg = df_agg.merge(turn_pref[['馬名','RightZ','LeftZ','TurnGap','n_eff_turn','TurnPrefPts']], on='馬名', how='left')
+df_agg = df_agg.merge(
+    turn_pref[['馬名','RightZ','LeftZ','TurnGap','n_eff_turn','TurnPrefPts']],
+    on='馬名', how='left'
+)
+
 
 # 距離×回り（自動h）
 rows=[]
