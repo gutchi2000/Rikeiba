@@ -1400,7 +1400,8 @@ if df_phys.empty:
     })
 
 df_agg = df_agg.merge(df_phys, on='馬名', how='left')
-
+for c in ['PhysicsZ', 'PeakWkg', 'EAP']:
+    df_agg[c] = pd.to_numeric(df_agg.get(c), errors='coerce')
 
 # ===== RecencyZ / StabZ =====
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
