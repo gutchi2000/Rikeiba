@@ -814,9 +814,15 @@ _df['score_adj'] = _df['score_norm'] - med
 # ===== 右/左回り（推定） =====
 DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
 def infer_turn_row(row):
-    name=str(row.get('競走名',''))
-    for v,t in DEFAULT_VENUE_TURN.items():
-        if v in name: return t
+    # まず場名で判定
+    venue = str(row.get('場名','')).strip()
+    if venue in DEFAULT_VENUE_TURN:
+        return DEFAULT_VENUE_TURN[venue]
+    # 次に競走名から推定（従来互換）
+    name = str(row.get('競走名',''))
+    for v, t in DEFAULT_VENUE_TURN.items():
+        if v in name:
+            return t
     return np.nan
 if '回り' not in _df.columns:
     _df['回り'] = _df.apply(infer_turn_row, axis=1)
@@ -951,7 +957,8 @@ def _field_pci_from_pace(pace_type: str) -> float:
 
 def build_today_design(horses_today: pd.DataFrame, s0_hist: pd.DataFrame,
                        target_distance: int, target_surface: str,
-                       dist_turn_today_df: pd.DataFrame, feats: list[str]):
+                       dist_turn_today_df: pd.DataFrame, feats: list[str],
+                       pace_type: str):
     # 過去の指数の時間減衰平均を作る
     rec_w = None
     if not s0_hist.empty and 'レース日' in s0_hist:
@@ -978,6 +985,8 @@ def build_today_design(horses_today: pd.DataFrame, s0_hist: pd.DataFrame,
     H = horses_today.merge(dtt, on='馬名', how='left')
 
     rows = []
+    pci_field = _field_pci_from_pace(pace_type)  # ★ 明示引数で受け取る
+
     for _, r in H.iterrows():
         name = str(r['馬名'])
         x = {}
@@ -985,15 +994,12 @@ def build_today_design(horses_today: pd.DataFrame, s0_hist: pd.DataFrame,
         x['斤量'] = float(r.get('斤量', np.nan))
         x['is_dirt'] = 1.0 if str(target_surface).startswith('ダ') else 0.0
 
-        pci_field = _field_pci_from_pace(globals().get('pace_type', 'ミドルペース'))
         if 'PCI' in feats:
             x['PCI'] = float(pci_wmean.get(name, np.nan))
-            if not np.isfinite(x['PCI']):
-                x['PCI'] = pci_field
+            if not np.isfinite(x['PCI']): x['PCI'] = pci_field
         if 'PCI3' in feats:
             x['PCI3'] = float(pci3_wmean.get(name, np.nan))
-            if not np.isfinite(x['PCI3']):
-                x['PCI3'] = (x.get('PCI', pci_field) + 1.0)
+            if not np.isfinite(x['PCI3']): x['PCI3'] = (x.get('PCI', pci_field) + 1.0)
         if 'Ave-3F' in feats:
             x['Ave-3F'] = float(ave3_wmean.get(name, np.nan))
         if '上がり3Fタイム' in feats:
@@ -1346,15 +1352,25 @@ df_agg = df_agg.merge(_dfturn, on='馬名', how='left')
 
 # ===== ここから スペクトル解析（FFT+DTW）を本線に統合 =====
 with st.sidebar.expander("📡 スペクトル設定", expanded=True):
-    spectral_weight = st.slider("スペクトル適合係数", 0.0, 3.0, 1.0, 0.1)
+    spectral_weight_ui = st.slider("スペクトル適合係数", 0.0, 3.0, 1.0, 0.1)
+    templ_tol_m = st.slider("テンプレ距離許容幅(±m)", 50, 400, 100, 25)
 
 # ===== 物理（調教）ブロック =====
 with st.sidebar.expander("🏇 物理（調教）", expanded=True):
     USE_PHYSICS = st.checkbox("物理ブロックを使う（調教×力学）", True)
-    # スペクトル:物理の配分（デフォ 0.6 : 0.4）
+    # スペクトル : 物理 の比率（合成の“配分”）
     spec_phys_ratio = st.slider("スペクトル : 物理 の比率", 0.0, 1.0, 0.6, 0.05)
-    spectral_weight = spec_phys_ratio
-    physics_weight  = 1.0 - spec_phys_ratio
+    spec_ratio = float(spec_phys_ratio)
+    phys_ratio = 1.0 - spec_ratio
+
+    # 任意の初期値（効きが良い実戦値）
+    Crr_wood = st.number_input("Crr（転がり抵抗）: ウッド", 0.0, 0.06, 0.020, 0.001, help="推奨: 0.020")
+    Crr_hill = st.number_input("Crr（転がり抵抗）: 坂路", 0.0, 0.06, 0.014, 0.001, help="推奨: 0.014")
+    CdA      = st.number_input("CdA（空力フロント[m²]）", 0.2, 1.6, 0.80, 0.05, help="推奨: 0.8")
+    rho_air  = st.number_input("空気密度 ρ[kg/m³]", 0.8, 1.5, 1.20, 0.01)
+    Pmax_wkg = st.number_input("最大発揮出力 Pmax[W/kg]", 10.0, 30.0, 20.0, 0.5)
+    Emax_jkg = st.number_input("可用エネルギー Emax[J/kg/800m]", 600.0, 4000.0, 1800.0, 50.0)
+    half_life_train_days = st.slider("調教寄与の半減期（日）", 3, 60, 18, 1)
 
     # 任意の初期値（効きが良い実戦値）
     Crr_wood = st.number_input("Crr（転がり抵抗）: ウッド", 0.0, 0.06, 0.020, 0.001, help="推奨: 0.020")
@@ -1397,8 +1413,10 @@ s0_spec['_curve'] = s0_spec.apply(
 templ_curve, templ_info = build_template_curves(
     s0_spec[['馬名','距離','芝・ダ','_curve']].copy(),
     int(TARGET_DISTANCE),
-    str(TARGET_SURFACE)
+    str(TARGET_SURFACE),
+    tol=int(templ_tol_m)
 )
+
 
 # 各馬のDTW最小距離→Z化（大きいほど適合良）
 rows=[]
@@ -1433,7 +1451,6 @@ df_agg['SpecGate_templ']  = pd.to_numeric(df_agg['SpecGate_templ'], errors='coer
 df_agg['SpecGate_horse_lbl'] = df_agg['SpecGate_horse'].map(_gate_label)
 df_agg['SpecGate_templ_lbl'] = df_agg['SpecGate_templ'].map(_gate_label)
 
-# ===== 調教（物理）→ PhysicsZ を作る =====
 # ===== 調教（物理）→ PhysicsZ を作る =====
 df_phys = pd.DataFrame()
 
@@ -1581,7 +1598,14 @@ if 'ベストタイム秒' in s1.columns:
         df_agg['FinalRaw'] += w_bt * BT_norm
 
 # ★ スペクトル寄与を最後に合成
-df_agg['FinalRaw'] += float(spectral_weight) * df_agg['SpecFitZ'].fillna(0.0)
+# ★ スペクトル寄与（ユーザーの係数 × 配分）
+df_agg['SpecFitZ'] = pd.to_numeric(df_agg['SpecFitZ'], errors='coerce')
+df_agg['FinalRaw'] += spec_ratio * float(spectral_weight_ui) * df_agg['SpecFitZ'].fillna(0.0)
+
+# ★ 物理寄与（Z=50を0基準, 10刻みで他Zとスケール合わせ）× 配分
+df_agg['PhysicsZ'] = pd.to_numeric(df_agg['PhysicsZ'], errors='coerce')
+df_agg['FinalRaw'] += phys_ratio * ((df_agg['PhysicsZ'] - 50.0) / 10.0).fillna(0.0)
+
 
 # 物理解釈の合成（Z=50を0点化、10で他Zとスケール合わせ）
 df_agg['FinalRaw'] += float(physics_weight) * (
@@ -1651,13 +1675,15 @@ if time_model_pkg is not None:
     models = time_model_pkg['models']
 
     todayX = build_today_design(
-        horses_today=horses,
-        s0_hist=s0,
-        target_distance=int(TARGET_DISTANCE),
-        target_surface=str(TARGET_SURFACE),
-        dist_turn_today_df=_dfturn,
-        feats=feats
-    )
+    horses_today=horses,
+    s0_hist=s0,
+    target_distance=int(TARGET_DISTANCE),
+    target_surface=str(TARGET_SURFACE),
+    dist_turn_today_df=_dfturn,
+    feats=feats,
+    pace_type=pace_type  # ← 明示渡し
+)
+
 
     v = todayX[feats].astype(float).to_numpy()
     v = np.where(np.isfinite(v), v, time_model_pkg['col_means'])
