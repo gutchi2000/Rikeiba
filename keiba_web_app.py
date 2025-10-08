@@ -1199,53 +1199,67 @@ def _wavg_score(g: pd.DataFrame) -> float:
     sw = w.sum()
     return float(np.sum(w * x) / sw) if sw > 0 else np.nan
 
-turn_base = _df[['馬名','回り','score_adj','_w']].dropna(subset=['馬名','score_adj','_w']).copy()
+# === 右/左集計（score_adjの重み平均） ===
+turn_base = (
+    _df[['馬名','回り','score_adj','_w']]
+    .dropna(subset=['馬名','回り','score_adj','_w'])
+    .copy()
+)
+
+def _wavg_score(g: pd.DataFrame) -> float:
+    w = pd.to_numeric(g['_w'], errors='coerce').to_numpy(float)
+    x = pd.to_numeric(g['score_adj'], errors='coerce').to_numpy(float)
+    sw = np.nansum(w)
+    return float(np.nansum(w * x) / sw) if sw > 0 else np.nan
 
 # 右回り
 right = (
     turn_base[turn_base['回り'].astype(str) == '右']
-    .groupby('馬名')
+    .groupby('馬名', as_index=False)
     .apply(lambda g: pd.Series({'RightZ': _wavg_score(g)}))
-    .reset_index()
-
+    .reset_index(drop=True)
+)
 
 # 左回り
 left = (
     turn_base[turn_base['回り'].astype(str) == '左']
-    .groupby('馬名')
+    .groupby('馬名', as_index=False)
     .apply(lambda g: pd.Series({'LeftZ': _wavg_score(g)}))
-    .reset_index()
+    .reset_index(drop=True)
 )
 
-# 出現数（参考）
+# 出走本数カウント
 counts = (
     turn_base.assign(_one=1)
     .pivot_table(index='馬名', columns='回り', values='_one', aggfunc='sum', fill_value=0)
-    .rename(columns={'右':'nR','左':'nL'})
+    .rename(columns={'右': 'nR', '左': 'nL'})
     .reset_index()
 )
 
-# マージして欠損を用意
+# まとめて結合
 turn_pref = (
-    df_agg[['馬名']].drop_duplicates()
-    .merge(right, on='馬名', how='left')
-    .merge(left,  on='馬名', how='left')
+    pd.merge(right, left, on='馬名', how='outer')
     .merge(counts, on='馬名', how='left')
+    .fillna({'nR': 0, 'nL': 0})
 )
+
+# 欠損保険
 for c in ['RightZ','LeftZ','nR','nL']:
     if c not in turn_pref.columns:
-        turn_pref[c] = np.nan
+        turn_pref[c] = np.nan if c in ['RightZ','LeftZ'] else 0
 
-# 指標作成
+# 以降は元の計算のまま
 turn_pref['TurnGap'] = (turn_pref['RightZ'].fillna(0) - turn_pref['LeftZ'].fillna(0))
 turn_pref['n_eff_turn'] = (turn_pref['nR'].fillna(0) + turn_pref['nL'].fillna(0)).clip(lower=0)
 conf = np.clip(turn_pref['n_eff_turn'] / 3.0, 0.0, 1.0)
-turn_pref['TurnPrefPts'] = np.clip(turn_pref['TurnGap']/1.5, -1.0, 1.0) * conf
+turn_pref['TurnPrefPts'] = np.clip(turn_pref['TurnGap'] / 1.5, -1.0, 1.0) * conf
 
 df_agg = df_agg.merge(
     turn_pref[['馬名','RightZ','LeftZ','TurnGap','n_eff_turn','TurnPrefPts']],
-    on='馬名', how='left'
+    on='馬名',
+    how='left'
 )
+
 
 
 # 距離×回り（自動h）
