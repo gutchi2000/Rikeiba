@@ -247,10 +247,11 @@ sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
 def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     """
     kind='wood' or 'hill'
-    受け付ける列例：
-      - 区間ラップ:  L1..L4 / Lap1..Lap4 / Time1..Time4（各200mの“区間”）
-      - 累計ラップ:  4F,3F,2F,1F（4F=800m, 3F=後半600m, 1F=ラスト200m）→ 差分で区間に展開
-      - 文字列:      '12.4-12.1-...'（4分割）
+    受け付け形式：
+      - 区間ラップ: Lap1..Lap4 / L1..L4 / Time1..Time4（各200mの区間）
+      - 累計ラップ: 4F/３Ｆ/4ｆ/４Ｆ、または 800m/600m/400m/200m（4F=800m,3F=後半600m）
+         → 区間に差分展開 [4F-3F, 3F-2F, 2F-1F, 1F]
+      - 文字列: '12.4-12.1-...'
       - 任意: 強弱（馬なり/強め/一杯/仕掛け など）
     """
     import numpy as np, pandas as pd, io, re
@@ -258,95 +259,128 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     if file is None:
         return pd.DataFrame()
 
+    # まず素直に読む
     try:
         xls = pd.ExcelFile(io.BytesIO(file.getvalue()))
-        df = pd.read_excel(xls, sheet_name=0)
+        df0 = pd.read_excel(xls, sheet_name=0, header=0)
     except Exception:
         return pd.DataFrame()
 
-    df = df.rename(columns=lambda c: str(c).strip())
+    def _try_headers(df_first):
+        # 見出し行がずれているファイル用に、先頭5行を候補ヘッダとして再読込を試す
+        for h in range(0, 5):
+            try:
+                xls2 = pd.ExcelFile(io.BytesIO(file.getvalue()))
+                df = pd.read_excel(xls2, sheet_name=0, header=h)
+                if df.shape[1] >= 3:  # それなりに列がある
+                    yield df
+            except Exception:
+                pass
 
-    # 馬名/日付
-    name_col = next((c for c in df.columns if re.search(r'馬名|名前|出走馬', c)), None)
-    date_col = next((c for c in df.columns if re.search(r'日付|調教日|日時', c)), None)
-    if name_col is None or date_col is None:
-        return pd.DataFrame()
-    df['馬名'] = df[name_col].astype(str).str.replace('\u3000',' ').str.strip()
-    df['日付'] = pd.to_datetime(df[date_col], errors='coerce')
+    # 正規化
+    def _norm_cols(d):
+        d = d.rename(columns=lambda c: str(c).strip())
+        return d
 
-    # 数値化ユーティリティ
-    def _to_num(s):
-        return pd.to_numeric(s, errors='coerce')
+    # 馬名/日付の候補パターンを広く
+    name_pat = r'馬名|名前|出走馬|馬$|馬\s*名|horse|Horse'
+    date_pat = r'日付|調教日|日時|実施日|測定日|計測日|記録日|date|Date'
 
-    # 1) まず文字列 “12.5-12.1-…” 形式を探す
-    str_col = next((c for c in df.columns if re.search(r'ラップ|区間|時計|タイム', c)
-                    and df[c].astype(str).str.contains('-').any()), None)
+    # ラップ検出ユーティリティ
+    def _to_num(s): return pd.to_numeric(s, errors='coerce')
 
-    # 2) 区間ラップ（Lap1..Lap4 / L1..L4 / Time1..Time4）を探す
-    seg_cands = []
-    for i in range(1,5):
-        seg_cands.append([c for c in df.columns if re.search(fr'(^|\b)(Lap|Time|L){i}(\b|$)', str(c), flags=re.I)])
-    has_segment = all(len(x)>0 for x in seg_cands)
+    def _parse_df(df_in):
+        df = _norm_cols(df_in.copy())
 
-    # 3) 累計（4F,3F,2F,1F）を探す
-    cum_cols = []
-    for pat in [r'(^|\b)4F(\b|$)', r'(^|\b)3F(\b|$)', r'(^|\b)2F(\b|$)', r'(^|\b)1F(\b|$)']:
-        cand = [c for c in df.columns if re.search(pat, str(c), flags=re.I)]
-        cum_cols.append(cand[0] if cand else None)
-    has_cumulative = any(cum_cols) and sum(x is not None for x in cum_cols) >= 2  # 2列以上あれば採用価値
+        # 馬名・日付列
+        name_col = next((c for c in df.columns if re.search(name_pat, str(c), flags=re.I)), None)
+        date_col = next((c for c in df.columns if re.search(date_pat, str(c), flags=re.I)), None)
+        if name_col is None or date_col is None:
+            return pd.DataFrame()
 
-    # ---- Lap 配列を作る（順番：最初の200m→…→ラスト200m）----
-    laps = np.full((len(df), 4), np.nan, float)
+        df['馬名'] = df[name_col].astype(str).str.replace('\u3000',' ').str.strip()
+        df['日付'] = pd.to_datetime(df[date_col], errors='coerce')
 
-    if has_segment:
-        # 直接、各区間の秒を読む
-        for i in range(4):
-            c = seg_cands[i][0]
-            laps[:, i] = _to_num(df[c]).to_numpy(float)
-    elif has_cumulative:
-        # 累計 → 区間に差分展開
-        t4 = _to_num(df[cum_cols[0]]) if cum_cols[0] else np.nan
-        t3 = _to_num(df[cum_cols[1]]) if cum_cols[1] else np.nan
-        t2 = _to_num(df[cum_cols[2]]) if cum_cols[2] else np.nan
-        t1 = _to_num(df[cum_cols[3]]) if cum_cols[3] else np.nan
-        # 4F=800m, 3F=後半600m, 2F=後半400m, 1F=後半200m
-        # 区間： [最初200]=4F-3F, [次]=3F-2F, [次]=2F-1F, [最後]=1F
-        t4 = t4.to_numpy(float) if isinstance(t4, pd.Series) else np.array(t4, float)
-        t3 = t3.to_numpy(float) if isinstance(t3, pd.Series) else np.array(t3, float)
-        t2 = t2.to_numpy(float) if isinstance(t2, pd.Series) else np.array(t2, float)
-        t1 = t1.to_numpy(float) if isinstance(t1, pd.Series) else np.array(t1, float)
-        laps[:, 0] = t4 - t3
-        laps[:, 1] = t3 - t2
-        laps[:, 2] = t2 - t1
-        laps[:, 3] = t1
-    elif str_col:
-        # 文字列を分割
-        def parse_seq(s):
-            xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
-            xs = [float(x) for x in xs[:4]]
-            while len(xs) < 4: xs.insert(0, np.nan)
-            return xs[-4:]
-        arr = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
-        laps[:, :] = arr
-    else:
-        # 何も取れない
-        return pd.DataFrame()
+        # 1) 文字列 “12.5-12.1-…” 形式
+        str_col = next((c for c in df.columns
+                        if re.search(r'ラップ|区間|時計|タイム', str(c))
+                        and df[c].astype(str).str.contains('-').any()), None)
 
-    # 強弱（任意）
-    st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け', c)), None)
-    intensity = df[st_col].astype(str) if st_col else ""
+        # 2) 区間ラップ: Lap1..Lap4 / L1..L4 / Time1..Time4
+        seg_cands = []
+        for i in range(1,5):
+            seg_cands.append([c for c in df.columns
+                              if re.search(fr'(^|\b)(Lap|Time|L){i}(\b|$)', str(c), flags=re.I)])
+        has_segment = all(len(x)>0 for x in seg_cands)
 
-    out = pd.DataFrame({
-        '馬名': df['馬名'],
-        '日付': df['日付'],
-        '_kind': kind,
-        '_intensity': intensity
-    })
-    out['_lap_sec'] = list(laps)
-    # 妥当性：4区間とも数値の行だけ残す
-    mask = np.isfinite(laps).all(axis=1)
-    out = out[mask].dropna(subset=['馬名','日付'])
-    return out
+        # 3) 累計ラップ: 4F/3F/2F/1F, ４Ｆ/３Ｆ, 4ｆ/3ｆ, 800m/600m/400m/200m
+        def _find_first(pats):
+            for p in pats:
+                cand = [c for c in df.columns if re.search(p, str(c), flags=re.I)]
+                if cand: return cand[0]
+            return None
+
+        c4 = _find_first([r'(^|\b)4\s*[fＦｆ](\b|$)', r'800\s*m'])
+        c3 = _find_first([r'(^|\b)3\s*[fＦｆ](\b|$)', r'600\s*m'])
+        c2 = _find_first([r'(^|\b)2\s*[fＦｆ](\b|$)', r'400\s*m'])
+        c1 = _find_first([r'(^|\b)1\s*[fＦｆ](\b|$)', r'200\s*m'])
+        has_cumulative = any([c4, c3, c2, c1]) and sum(x is not None for x in [c4,c3,c2,c1]) >= 2
+
+        laps = np.full((len(df), 4), np.nan, float)
+
+        if has_segment:
+            for i in range(4):
+                c = seg_cands[i][0]
+                laps[:, i] = _to_num(df[c]).to_numpy(float)
+        elif has_cumulative:
+            t4 = _to_num(df[c4]) if c4 else np.nan
+            t3 = _to_num(df[c3]) if c3 else np.nan
+            t2 = _to_num(df[c2]) if c2 else np.nan
+            t1 = _to_num(df[c1]) if c1 else np.nan
+            t4 = t4.to_numpy(float) if isinstance(t4, pd.Series) else np.array(t4, float)
+            t3 = t3.to_numpy(float) if isinstance(t3, pd.Series) else np.array(t3, float)
+            t2 = t2.to_numpy(float) if isinstance(t2, pd.Series) else np.array(t2, float)
+            t1 = t1.to_numpy(float) if isinstance(t1, pd.Series) else np.array(t1, float)
+            laps[:, 0] = t4 - t3
+            laps[:, 1] = t3 - t2
+            laps[:, 2] = t2 - t1
+            laps[:, 3] = t1
+        elif str_col:
+            def parse_seq(s):
+                xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
+                xs = [float(x) for x in xs[:4]]
+                while len(xs) < 4: xs.insert(0, np.nan)
+                return xs[-4:]
+            arr = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
+            laps[:, :] = arr
+        else:
+            return pd.DataFrame()
+
+        # 強弱（任意）
+        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け', str(c))), None)
+        intensity = df[st_col].astype(str) if st_col else ""
+
+        out = pd.DataFrame({
+            '馬名': df['馬名'],
+            '日付': df['日付'],
+            '_kind': kind,
+            '_intensity': intensity
+        })
+        out['_lap_sec'] = list(laps)
+        mask = np.isfinite(laps).all(axis=1)
+        out = out[mask].dropna(subset=['馬名','日付'])
+        return out
+
+    # ヘッダ候補を順に試す
+    for cand in _try_headers(df0):
+        parsed = _parse_df(cand)
+        if not parsed.empty:
+            return parsed
+
+    # 最後に元のヘッダでもう一度
+    parsed = _parse_df(df0)
+    return parsed if not parsed.empty else pd.DataFrame()
+
 
 
 # ===== コース断面（坂路の傾斜プロファイル） =====
@@ -1431,6 +1465,34 @@ if USE_PHYSICS:
                     Pmax_wkg=Pmax_wkg, Emax_jkg=Emax_jkg,
                     half_life_days=int(half_life_train_days)
                 )
+with st.expander("調教パース状況", expanded=False):
+    st.write("woodファイル: ", wood_file.name if wood_file else None,
+             " / hillファイル: ", hill_file.name if hill_file else None)
+    # 生データ件数
+    if wood_file or hill_file:
+        try:
+            trains_dbg = []
+            if wood_file: trains_dbg.append(_read_train_xlsx(wood_file, 'wood'))
+            if hill_file: trains_dbg.append(_read_train_xlsx(hill_file, 'hill'))
+            T_dbg = pd.concat(trains_dbg, ignore_index=True) if trains_dbg else pd.DataFrame()
+            st.write("抽出行数(調教):", len(T_dbg))
+            if not T_dbg.empty:
+                st.dataframe(T_dbg.head(10))
+                st.write("列:", list(T_dbg.columns))
+                # マージできる名前の突合
+                base_names = set(df_agg['馬名'].astype(str))
+                phys_names = set(T_dbg['馬名'].astype(str))
+                inter = sorted(base_names & phys_names)
+                miss  = sorted(base_names - phys_names)
+                st.write("出走表∩調教 交差:", len(inter))
+                if miss:
+                    st.write("未マッチ（出走表にあるが調教に無い）例:", miss[:10])
+        except Exception as e:
+            st.write("デバッグ中に例外:", e)
+
+    st.write("df_phys 行数:", 0 if df_phys.empty else len(df_phys))
+    if not df_phys.empty:
+        st.dataframe(df_phys.head(10))
 
 # 物理DFが空ならダミー列を用意（以降の merge でコケないように）
 if df_phys.empty:
@@ -1438,6 +1500,23 @@ if df_phys.empty:
         '馬名': df_agg['馬名'],
         'EAP': np.nan, 'PeakWkg': np.nan, 'EffReserve': np.nan, 'PhysicsZ': np.nan
     })
+# ゆるい結合（difflib）で救済：交差が少ないときだけ
+try:
+    base_names = df_agg['馬名'].astype(str).tolist()
+    phys_names = df_phys['馬名'].astype(str).tolist()
+    inter = set(base_names) & set(phys_names)
+    if len(inter) <= max(2, len(base_names)//4):
+        import difflib
+        # 調教側 → 出走側 へ置換マップを作る
+        rep = {}
+        for pn in phys_names:
+            m = difflib.get_close_matches(pn, base_names, n=1, cutoff=0.90)
+            if m:
+                rep[pn] = m[0]
+        if rep:
+            df_phys = df_phys.assign(__join=df_phys['馬名'].replace(rep)).drop(columns=['馬名']).rename(columns={'__join':'馬名'})
+except Exception:
+    pass
 
 df_agg = df_agg.merge(df_phys, on='馬名', how='left')
 for c in ['PhysicsZ', 'PeakWkg', 'EAP']:
