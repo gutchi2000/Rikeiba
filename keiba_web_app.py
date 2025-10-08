@@ -1194,8 +1194,8 @@ df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
 turn_base = _df[['馬名','回り','score_adj','_w']].dropna()
 if not turn_base.empty:
     right = (turn_base[turn_base['回り'].astype(str)=='右']
-             .groupby('馬名').apply(lambda s: np.average(s['score_adj'], weights=s['_w']) if s['_w'].sum()>0 else np.nan)
-             .rename('RightZ'))
+         .groupby('馬名').apply(lambda s: np.average(s['score_adj'], weights=s['_w']) if s['_w'].sum()>0 else np.nan)
+         .rename('RightZ'))
     left  = (turn_base[turn_base['回り'].astype(str)=='左']
              .groupby('馬名').apply(lambda s: np.average(s['score_adj'], weights=s['_w']) if s['_w'].sum()>0 else np.nan)
              .rename('LeftZ'))
