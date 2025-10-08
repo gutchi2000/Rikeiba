@@ -1204,15 +1204,17 @@ turn_base = _df[['馬名','回り','score_adj','_w']].dropna(subset=['馬名','s
 # 右回り
 right = (
     turn_base[turn_base['回り'].astype(str) == '右']
-    .groupby('馬名').apply(_wavg_score)
-    .reset_index(name='RightZ')
-)
+    .groupby('馬名')
+    .apply(lambda g: pd.Series({'RightZ': _wavg_score(g)}))
+    .reset_index()
+
 
 # 左回り
 left = (
     turn_base[turn_base['回り'].astype(str) == '左']
-    .groupby('馬名').apply(_wavg_score)
-    .reset_index(name='LeftZ')
+    .groupby('馬名')
+    .apply(lambda g: pd.Series({'LeftZ': _wavg_score(g)}))
+    .reset_index()
 )
 
 # 出現数（参考）
