@@ -1270,15 +1270,6 @@ else:
     waku_raw = pd.Series(0.0, index=idx)
 df_agg['WakuPts'] = (float(WAKU_STR) * pd.to_numeric(waku_raw)).fillna(0.0)
 
-# 右/左集計（score_adjの重み平均）
-def _wavg_score(g: pd.DataFrame) -> float:
-    w = pd.to_numeric(g['_w'], errors='coerce').to_numpy(float)
-    x = pd.to_numeric(g['score_adj'], errors='coerce').to_numpy(float)
-    msk = np.isfinite(w) & np.isfinite(x)
-    w = w[msk]; x = x[msk]
-    sw = w.sum()
-    return float(np.sum(w * x) / sw) if sw > 0 else np.nan
-
 # === 右/左集計（score_adjの重み平均） ===
 turn_base = (
     _df[['馬名','回り','score_adj','_w']]
