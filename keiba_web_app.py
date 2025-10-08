@@ -1372,15 +1372,6 @@ with st.sidebar.expander("🏇 物理（調教）", expanded=True):
     Emax_jkg = st.number_input("可用エネルギー Emax[J/kg/800m]", 600.0, 4000.0, 1800.0, 50.0)
     half_life_train_days = st.slider("調教寄与の半減期（日）", 3, 60, 18, 1)
 
-    # 任意の初期値（効きが良い実戦値）
-    Crr_wood = st.number_input("Crr（転がり抵抗）: ウッド", 0.0, 0.06, 0.020, 0.001, help="推奨: 0.020")
-    Crr_hill = st.number_input("Crr（転がり抵抗）: 坂路", 0.0, 0.06, 0.014, 0.001, help="推奨: 0.014")
-    CdA      = st.number_input("CdA（空力フロント[m²]）", 0.2, 1.6, 0.80, 0.05, help="推奨: 0.8")
-    rho_air  = st.number_input("空気密度 ρ[kg/m³]", 0.8, 1.5, 1.20, 0.01)
-    Pmax_wkg = st.number_input("最大発揮出力 Pmax[W/kg]", 10.0, 30.0, 20.0, 0.5)
-    Emax_jkg = st.number_input("可用エネルギー Emax[J/kg/800m]", 600.0, 4000.0, 1800.0, 50.0)
-    half_life_train_days = st.slider("調教寄与の半減期（日）", 3, 60, 18, 1)
-
 
 # 過去走ごとに速度曲線を構築（前半で定義した pseudo_curve を使用）
 s0_spec = s0.copy()
@@ -1605,12 +1596,6 @@ df_agg['FinalRaw'] += spec_ratio * float(spectral_weight_ui) * df_agg['SpecFitZ'
 # ★ 物理寄与（Z=50を0基準, 10刻みで他Zとスケール合わせ）× 配分
 df_agg['PhysicsZ'] = pd.to_numeric(df_agg['PhysicsZ'], errors='coerce')
 df_agg['FinalRaw'] += phys_ratio * ((df_agg['PhysicsZ'] - 50.0) / 10.0).fillna(0.0)
-
-
-# 物理解釈の合成（Z=50を0点化、10で他Zとスケール合わせ）
-df_agg['FinalRaw'] += float(physics_weight) * (
-    (pd.to_numeric(df_agg['PhysicsZ'], errors='coerce') - 50.0) / 10.0
-).fillna(0.0)
 
 # ===== ペースMC（反対称Gumbelで分散低減） =====
 mark_rule={
