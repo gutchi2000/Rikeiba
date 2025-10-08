@@ -1360,23 +1360,39 @@ df_agg['SpecGate_horse_lbl'] = df_agg['SpecGate_horse'].map(_gate_label)
 df_agg['SpecGate_templ_lbl'] = df_agg['SpecGate_templ'].map(_gate_label)
 
 # ===== 調教（物理）→ PhysicsZ を作る =====
+# ===== 調教（物理）→ PhysicsZ を作る =====
 df_phys = pd.DataFrame()
-if USE_PHYSICS and (wood_file is not None or hill_file is not None):
-    trains = []
-    if wood_file is not None:
-        trains.append(_read_train_xlsx(wood_file, 'wood'))
-    if hill_file is not None:
-        trains.append(_read_train_xlsx(hill_file, 'hill'))
-    if trains:
-        T = pd.concat(trains, ignore_index=True).dropna(subset=['馬名','日付'])
-        df_phys = _derive_training_metrics(
-            train_df=T, s0_races=_df.copy(),
-            Crr_wood=Crr_wood, Crr_hill=Crr_hill,
-            CdA=CdA, rho=rho_air,
-            Pmax_wkg=Pmax_wkg, Emax_jkg=Emax_jkg,
-            half_life_days=int(half_life_train_days)
-        )
 
+if USE_PHYSICS:
+    valid_trains = []
+
+    # 入ってくる各ファイルを読み、必須列が揃っているものだけ採用
+    for f, kind in [(wood_file, 'wood'), (hill_file, 'hill')]:
+        if f is None:
+            continue
+        tdf = _read_train_xlsx(f, kind)  # 期待列: 馬名, 日付, _kind, _lap_sec, _intensity
+        if isinstance(tdf, pd.DataFrame) and not tdf.empty:
+            need = {'馬名', '日付', '_lap_sec'}
+            if need.issubset(set(tdf.columns)):
+                # 余計な列はあっても良いが、最低限の列はそろえておく
+                keep = [c for c in ['馬名','日付','_kind','_lap_sec','_intensity'] if c in tdf.columns]
+                valid_trains.append(tdf[keep])
+
+    if valid_trains:
+        T = pd.concat(valid_trains, ignore_index=True)
+        # ここで KeyError が出ないように列存在を再確認
+        if {'馬名','日付'}.issubset(T.columns):
+            T = T.dropna(subset=['馬名','日付'])
+            if not T.empty:
+                df_phys = _derive_training_metrics(
+                    train_df=T, s0_races=_df.copy(),
+                    Crr_wood=Crr_wood, Crr_hill=Crr_hill,
+                    CdA=CdA, rho=rho_air,
+                    Pmax_wkg=Pmax_wkg, Emax_jkg=Emax_jkg,
+                    half_life_days=int(half_life_train_days)
+                )
+
+# 物理DFが空ならダミー列を用意（以降の merge でコケないように）
 if df_phys.empty:
     df_phys = pd.DataFrame({
         '馬名': df_agg['馬名'],
@@ -1384,6 +1400,7 @@ if df_phys.empty:
     })
 
 df_agg = df_agg.merge(df_phys, on='馬名', how='left')
+
 
 # ===== RecencyZ / StabZ =====
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
