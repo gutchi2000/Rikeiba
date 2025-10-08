@@ -229,6 +229,11 @@ if excel_file is None:
     st.info("まずExcelをアップロードしてください。")
     st.stop()
 
+st.subheader("（任意）調教ファイルアップロード")
+wood_file = st.file_uploader("ウッドチップ調教（.xlsx）", type=['xlsx'], key="wood_x")
+hill_file = st.file_uploader("坂路調教（.xlsx）", type=['xlsx'], key="hill_x")
+
+
 @st.cache_data(show_spinner=False)
 def load_excel_bytes(content: bytes):
     xls = pd.ExcelFile(io.BytesIO(content))
@@ -237,6 +242,199 @@ def load_excel_bytes(content: bytes):
     return s0, s1
 
 sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
+
+# ===== 調教データ読み込み＆正規化 =====
+def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
+    """
+    kind='wood' or 'hill'
+    受け付ける列例：
+      - 日付, 馬名, 4F, 3F, 2F, 1F  （区間ラップ秒）
+      - or Lap1..Lap4 / Time1..Time4 / 'ラップ'文字列（12.4-12.1-...）
+      - 強弱（馬なり/強め/一杯/仕掛け など・任意）
+    """
+    if file is None:
+        return pd.DataFrame()
+    try:
+        xls = pd.ExcelFile(io.BytesIO(file.getvalue()))
+        df = pd.read_excel(xls, sheet_name=0)
+    except Exception:
+        return pd.DataFrame()
+
+    df = df.rename(columns=lambda c: str(c).strip())
+    # 馬名/日付
+    name_col = next((c for c in df.columns if re.search(r'馬名|名前', c)), None)
+    date_col = next((c for c in df.columns if re.search(r'日付|調教日|日時', c)), None)
+    if name_col is None or date_col is None:
+        return pd.DataFrame()
+    df['馬名'] = df[name_col].astype(str).str.replace('\u3000',' ').str.strip()
+    df['日付'] = pd.to_datetime(df[date_col], errors='coerce')
+
+    # ラップの拾い方を柔軟に
+    lap_cols = []
+    for pat in [r'^[41]F$', r'^\s*4F\s*$', r'^\s*3F\s*$', r'^\s*2F\s*$', r'^\s*1F\s*$',
+                r'Lap1', r'Lap2', r'Lap3', r'Lap4', r'Time1', r'Time2', r'Time3', r'Time4']:
+        lap_cols += [c for c in df.columns if re.search(pat, str(c))]
+    lap_cols = list(dict.fromkeys(lap_cols))  # uniq順序保持
+
+    # 文字列の “12.5-12.1-…” 形式にも対応
+    if not lap_cols:
+        str_col = next((c for c in df.columns if re.search(r'ラップ|区間|時計|タイム', c) and df[c].astype(str).str.contains('-').any()), None)
+        if str_col:
+            def parse_seq(s):
+                xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
+                xs = [float(x) for x in xs[:4]]
+                while len(xs) < 4: xs.insert(0, np.nan)
+                return pd.Series(xs[-4:])
+            tmp = df[str_col].apply(parse_seq)
+            tmp.columns = ['L1','L2','L3','L4']
+            for i in range(4):
+                df[f'Lap{i+1}'] = tmp.iloc[:, i]
+            lap_cols = [f'Lap{i+1}' for i in range(4)]
+
+    # 秒に変換
+    laps = []
+    for i in range(4, 0, -1):  # 4F→1F（古い順）
+        cand = [c for c in lap_cols if re.search(fr'(^|[^0-9]){i}F([^0-9]|$)|Lap{i}|Time{i}', str(c))]
+        if cand:
+            laps.append(pd.to_numeric(df[cand[0]], errors='coerce'))
+        else:
+            laps.append(pd.Series(np.nan, index=df.index))
+    df['_lap_sec'] = np.vstack([s.to_numpy(float) for s in laps]).T  # shape (N,4)
+
+    # 強弱（任意）
+    st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け', c)), None)
+    df['_intensity'] = df[st_col].astype(str) if st_col else ""
+
+    df['_kind'] = kind  # wood / hill
+    df = df[['馬名','日付','_kind','_lap_sec','_intensity']].copy()
+    return df.dropna(subset=['馬名','日付'])
+
+# ===== コース断面（坂路の傾斜プロファイル） =====
+def _slope_profile(kind: str):
+    # 返り値: list of (length_m, grade_perm) を距離順に
+    if kind == 'hill_ritto':
+        # 栗東：300m 2.0‰? → 2.0%, 続いて 570m 3.5%, 100m 4.5%, 115m 1.25%
+        # 単位は「%」＝ 0.02 など
+        return [(300, 0.020), (570, 0.035), (100, 0.045), (115, 0.0125)]
+    elif kind == 'hill_miho':
+        # 美浦：主計測800m区間の代表値として 3.0% 近傍を一定とみなす（終端付近は4.688%）
+        # 800mを 600m@3.0% + 200m@4.7% に
+        return [(600, 0.030), (200, 0.04688)]
+    else:
+        return [(800, 0.000)]  # フラット
+
+def _intensity_gain(txt: str) -> float:
+    s = str(txt)
+    if re.search(r'一杯|強め', s): return 1.12
+    if re.search(r'強', s):       return 1.08
+    if re.search(r'馬なり', s):   return 0.94
+    if re.search(r'軽め|流し', s):return 0.90
+    return 1.00
+
+def _seg_energy_wkg(v, a, g, grade, Crr, CdA, rho):
+    # v[m/s], a[m/s2], 体重は後で掛けるので W/kg と J/kg で返す
+    # 抵抗：転がり + 重力 + 空力
+    Fr = Crr * 9.80665 * np.cos(np.arctan(grade))            # ≈ Crr*g
+    Fg = g * grade                                           # g*sinθ ≒ g*grade
+    Fa = 0.5 * rho * CdA * v*v / 500.0                       # 係数縮尺（群れ流・姿勢緩和の平均的低減）
+    P_over_m = v*(Fr + Fg) + v*a                             # W/kg
+    P_over_m += Fa*v/75.0                                    # 空力寄与を弱めに（実測合わせ）
+    return max(P_over_m, 0.0)
+
+def _derive_training_metrics(train_df: pd.DataFrame,
+                             s0_races: pd.DataFrame,
+                             Crr_wood, Crr_hill, CdA, rho,
+                             Pmax_wkg, Emax_jkg, half_life_days: int):
+    """
+    各調教1本→ EAP[J/kg/m], PeakWkg[W/kg], EffReserve を計算。
+    馬体重は「その調教日の直近“前”レースの馬体重」を参照（なければ全体中央値）。
+    4F×200m想定。坂路はプロファイルに沿って grade を付与。
+    """
+    if train_df.empty: 
+        return pd.DataFrame(columns=['馬名','日付','EAP','PeakWkg','EffReserve'])
+
+    # 参照体重（kg）を馬/日付で付与
+    bw_map = {}
+    if ('馬名' in s0_races.columns) and ('レース日' in s0_races.columns) and ('馬体重' in s0_races.columns):
+        tmp = s0_races[['馬名','レース日','馬体重']].dropna()
+        tmp = tmp.sort_values(['馬名','レース日'])
+        for name, g in tmp.groupby('馬名'):
+            # 調教日の直前のレース体重
+            bw_map[name] = list(zip(g['レース日'].to_numpy(), g['馬体重'].to_numpy()))
+    bw_median = float(pd.to_numeric(s0_races.get('馬体重', pd.Series([480])), errors='coerce').median(skipna=True) or 480.0)
+
+    out = []
+    for _, r in train_df.iterrows():
+        name = r['馬名']; day = pd.to_datetime(r['日付'])
+        laps = np.array(r['_lap_sec'], dtype=float)
+        if laps.size != 4 or np.isnan(laps).all(): 
+            continue
+        laps = np.where(np.isfinite(laps), laps, np.nan)
+        if np.isnan(laps).any(): 
+            continue
+
+        # 体重取得（その日の“前”レース）
+        bw = bw_median
+        if name in bw_map:
+            prev = [w for (d,w) in bw_map[name] if pd.to_datetime(d) <= day]
+            if prev: bw = float(pd.to_numeric(prev[-1], errors='coerce') or bw_median)
+
+        # 速度・加速度（200mごと）
+        d = 200.0
+        v = d / laps  # m/s
+        a = np.diff(v, prepend=v[0]) / laps  # 粗い離散近似
+
+        kind = r['_kind']
+        if kind == 'hill':
+            prof = _slope_profile('hill_ritto')  # 栗東を既定（ファイルが美浦なら拡張）
+            grades = []
+            remain = 800.0
+            for L, G in prof:
+                take = min(L, remain); grades += [G]*int(round(take/200.0)); remain -= take
+                if remain <= 0: break
+            while len(grades) < 4: grades.append(grades[-1] if grades else 0.03)
+            grade = np.array(grades[:4], float)
+            Crr = Crr_hill
+        else:
+            grade = np.zeros(4, float)  # フラット扱い
+            Crr = Crr_wood
+
+        gain = _intensity_gain(r['_intensity'])
+
+        # 区間ごと出力密度
+        P = []
+        for i in range(4):
+            P.append(_seg_energy_wkg(v[i], a[i], 9.80665, grade[i], Crr, CdA, rho) * gain)
+        P = np.array(P)
+
+        # 指標
+        PeakWkg = float(P.max())
+        EAP = float(np.sum(P * laps) / (800.0))  # （W/kg * s)/m = J/kg/m
+        EffReserve = float(max(0.0, Emax_jkg - np.sum(P * laps))) / Emax_jkg  # 0..1
+
+        out.append({'馬名':name,'日付':day,'EAP':EAP,'PeakWkg':PeakWkg,'EffReserve':EffReserve})
+
+    df = pd.DataFrame(out)
+    if df.empty: 
+        return df
+
+    # 直近重み付け → PhysicsZ を馬ごとに
+    df = df.sort_values(['馬名','日付'])
+    today = pd.Timestamp.today()
+    df['_w'] = 0.5 ** ((today - df['日付']).dt.days.clip(lower=0) / float(half_life_days))
+    agg = (df
+           .groupby('馬名')
+           .apply(lambda g: pd.Series({
+               'EAP': np.average(g['EAP'], weights=g['_w']),
+               'PeakWkg': np.average(g['PeakWkg'], weights=g['_w']),
+               'EffReserve': np.average(g['EffReserve'], weights=g['_w'])
+           }))
+           .reset_index())
+    # 「小さいほど良い」EAP を “大きいほど良い”に反転してZ化
+    agg['PhysicsCore'] = -pd.to_numeric(agg['EAP'], errors='coerce')
+    mu = float(agg['PhysicsCore'].mean()); sd = float(agg['PhysicsCore'].std(ddof=0) or 1.0)
+    agg['PhysicsZ'] = (agg['PhysicsCore'] - mu) / sd * 10 + 50
+    return agg[['馬名','EAP','PeakWkg','EffReserve','PhysicsZ']]
 
 # ===== 列マッピング（軽量） =====
 
@@ -1031,6 +1229,24 @@ df_agg = df_agg.merge(_dfturn, on='馬名', how='left')
 with st.sidebar.expander("📡 スペクトル設定", expanded=True):
     spectral_weight = st.slider("スペクトル適合係数", 0.0, 3.0, 1.0, 0.1)
 
+# ===== 物理（調教）ブロック =====
+with st.sidebar.expander("🏇 物理（調教）", expanded=True):
+    USE_PHYSICS = st.checkbox("物理ブロックを使う（調教×力学）", True)
+    # スペクトル:物理の配分（デフォ 0.6 : 0.4）
+    spec_phys_ratio = st.slider("スペクトル : 物理 の比率", 0.0, 1.0, 0.6, 0.05)
+    spectral_weight = spec_phys_ratio
+    physics_weight  = 1.0 - spec_phys_ratio
+
+    # 任意の初期値（効きが良い実戦値）
+    Crr_wood = st.number_input("Crr（転がり抵抗）: ウッド", 0.0, 0.06, 0.020, 0.001, help="推奨: 0.020")
+    Crr_hill = st.number_input("Crr（転がり抵抗）: 坂路", 0.0, 0.06, 0.014, 0.001, help="推奨: 0.014")
+    CdA      = st.number_input("CdA（空力フロント[m²]）", 0.2, 1.6, 0.80, 0.05, help="推奨: 0.8")
+    rho_air  = st.number_input("空気密度 ρ[kg/m³]", 0.8, 1.5, 1.20, 0.01)
+    Pmax_wkg = st.number_input("最大発揮出力 Pmax[W/kg]", 10.0, 30.0, 20.0, 0.5)
+    Emax_jkg = st.number_input("可用エネルギー Emax[J/kg/800m]", 600.0, 4000.0, 1800.0, 50.0)
+    half_life_train_days = st.slider("調教寄与の半減期（日）", 3, 60, 18, 1)
+
+
 # 過去走ごとに速度曲線を構築（前半で定義した pseudo_curve を使用）
 s0_spec = s0.copy()
 for need in ['距離','走破タイム秒','上がり3Fタイム']:
@@ -1098,6 +1314,31 @@ df_agg['SpecGate_templ']  = pd.to_numeric(df_agg['SpecGate_templ'], errors='coer
 df_agg['SpecGate_horse_lbl'] = df_agg['SpecGate_horse'].map(_gate_label)
 df_agg['SpecGate_templ_lbl'] = df_agg['SpecGate_templ'].map(_gate_label)
 
+# ===== 調教（物理）→ PhysicsZ を作る =====
+df_phys = pd.DataFrame()
+if USE_PHYSICS and (wood_file is not None or hill_file is not None):
+    trains = []
+    if wood_file is not None:
+        trains.append(_read_train_xlsx(wood_file, 'wood'))
+    if hill_file is not None:
+        trains.append(_read_train_xlsx(hill_file, 'hill'))
+    if trains:
+        T = pd.concat(trains, ignore_index=True).dropna(subset=['馬名','日付'])
+        df_phys = _derive_training_metrics(
+            train_df=T, s0_races=_df.copy(),
+            Crr_wood=Crr_wood, Crr_hill=Crr_hill,
+            CdA=CdA, rho=rho_air,
+            Pmax_wkg=Pmax_wkg, Emax_jkg=Emax_jkg,
+            half_life_days=int(half_life_train_days)
+        )
+
+if df_phys.empty:
+    df_phys = pd.DataFrame({
+        '馬名': df_agg['馬名'],
+        'EAP': np.nan, 'PeakWkg': np.nan, 'EffReserve': np.nan, 'PhysicsZ': np.nan
+    })
+
+df_agg = df_agg.merge(df_phys, on='馬名', how='left')
 
 # ===== RecencyZ / StabZ =====
 base_for_recency = df_agg.get('WAvgZ', pd.Series(np.nan, index=df_agg.index)).fillna(df_agg.get('AvgZ', pd.Series(0.0, index=df_agg.index)))
@@ -1159,6 +1400,11 @@ if 'ベストタイム秒' in s1.columns:
 
 # ★ スペクトル寄与を最後に合成
 df_agg['FinalRaw'] += float(spectral_weight) * df_agg['SpecFitZ'].fillna(0.0)
+
+# 物理解釈の合成（Z=50を0点化、10で他Zとスケール合わせ）
+df_agg['FinalRaw'] += float(physics_weight) * (
+    (pd.to_numeric(df_agg['PhysicsZ'], errors='coerce') - 50.0) / 10.0
+).fillna(0.0)
 
 # ===== ペースMC（反対称Gumbelで分散低減） =====
 mark_rule={
@@ -1386,7 +1632,8 @@ show_cols = [
     '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
-    'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl'  # ← ラベル列を表示
+    'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
+    'PhysicsZ','PeakWkg','EAP'
 ]
 
 
@@ -1403,7 +1650,10 @@ JP = {
 }
 JP.update({
     'SpecGate_horse_lbl': '走法型',
-    'SpecGate_templ_lbl': '想定レース型(テンプレ)'
+    'SpecGate_templ_lbl': '想定レース型(テンプレ)',
+    'PhysicsZ':'物理Z',
+    'PeakWkg':'ピークW/kg',
+    'EAP':'EAP[J/kg/m]'
 })
 
 
@@ -1429,6 +1679,11 @@ num_fmt = {
     JP['枠']: _fmt_int,
     JP['番']: _fmt_int,
 }
+fmt.update({
+    JP['PhysicsZ']:'{:.2f}',
+    JP['PeakWkg']:'{:.2f}',
+    JP['EAP']:'{:.3f}',
+})
 num_fmt.update(fmt)
 
 styled = (
@@ -1442,7 +1697,7 @@ st.markdown("### 本命リスト（AUTO統合＋スペクトル）")
 st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
 
 # 上位抜粋（6頭）
-head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts','SpecFitZ']
+head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts','SpecFitZ','PhysicsZ','PeakWkg']
 base = _dfdisp.rename(columns=JP) if '_dfdisp' in globals() else _dfdisp_view
 cols_jp = [JP[c] if c in JP else c for c in head_cols]
 head_view = base[cols_jp].head(6).copy()
