@@ -358,6 +358,8 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         ])
         has_cum = any([c4, c3, c2, c1])
 
+                # ── ここは _parse_one() の中 ─────────────────────────────
+
         laps = np.full((len(df), 4), np.nan, float)
 
         if has_segment:
@@ -365,11 +367,12 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 laps[:, i] = _to_num(df[seg_cands[i][0]]).to_numpy(float)
             # もし累計を拾っていたら差分化
             if np.all(np.diff(laps, axis=1) < 0):
-                t4,t3,t2,t1 = laps.T
-                laps[:,0] = t4 - t3
-                laps[:,1] = t3 - t2
-                laps[:,2] = t2 - t1
-                laps[:,3] = t1
+                t4, t3, t2, t1 = laps.T
+                laps[:, 0] = t4 - t3
+                laps[:, 1] = t3 - t2
+                laps[:, 2] = t2 - t1
+                laps[:, 3] = t1
+
         elif has_cum:
             T4 = _to_num(df[c4]) if c4 else pd.Series(np.nan, index=df.index)
             T3 = _to_num(df[c3]) if c3 else pd.Series(np.nan, index=df.index)
@@ -379,8 +382,9 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             for i in range(len(df)):
                 arr.append(_split4_from_cum(T4.iloc[i], T3.iloc[i], T2.iloc[i], T1.iloc[i]))
             laps = np.vstack(arr)
+
         else:
-            # “12.1-11.8-…” 文字列
+            # “12.1-11.8- …” 形式
             str_col = next((c for c in df.columns
                             if re.search(r'ラップ|区間|時計|タイム', c)
                             and df[c].astype(str).str.contains('-').any()), None)
@@ -388,13 +392,14 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 def parse_seq(s):
                     xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
                     xs = [float(x) for x in xs[:4]]
-                    while len(xs) < 4: xs.insert(0, np.nan)
+                    while len(xs) < 4:
+                        xs.insert(0, np.nan)
                     return xs[-4:]
                 laps = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
             else:
                 return pd.DataFrame()
 
-        # 強弱（任意）
+        # 強弱（任意）←★ ここは if/elif/else の外。インデントを増やさない！
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
         intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
 
@@ -409,10 +414,12 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             '_intensity': intensity,
             '_lap_sec': list(laps)
         })
-        # “最後の値補完”後、4区間のどれかが数値なら採用（末1F欠損でも通す）
+
+        # 4区間のどれかが数値なら採用（末1F欠損でも通す）
         mask = np.isfinite(laps).any(axis=1)
-        out = out[mask].dropna(subset=['馬名','日付'])
+        out = out[mask].dropna(subset=['馬名', '日付'])
         return out
+
 
     frames = []
     for sh in xls.sheet_names:
