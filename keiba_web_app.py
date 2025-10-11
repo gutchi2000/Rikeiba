@@ -258,26 +258,22 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     if file is None:
         return pd.DataFrame()
 
-    # Excelを開く
     try:
         xls = pd.ExcelFile(io.BytesIO(file.getvalue()))
     except Exception:
         return pd.DataFrame()
 
-    # ----------------- helpers -----------------
     def _norm_cols(d: pd.DataFrame) -> pd.DataFrame:
         return d.rename(columns=lambda c: str(c).strip())
 
     name_pat = r'馬名|名前|出走馬|horse|Horse'
     date_pat = r'日付|年月日|調教日|日時|実施日|測定日|記録日|date|Date'
 
-    # セルから先頭の数値を抽出
     def _to_num_like(s):
         ser = pd.Series(s).astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
         num = ser.str.extract(r'([-+]?\d+(?:\.\d+)?)', expand=False)
         return pd.to_numeric(num, errors='coerce')
 
-    # 8桁数字や通常書式をdatetimeに
     def _smart_parse_date(col: pd.Series) -> pd.Series:
         s = col
         if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
@@ -291,16 +287,13 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         out = out.fillna(pd.to_datetime(s, errors='coerce'))
         return out
 
-    # 累計T4/T3/T2/T1から区間s1..s4を推定（欠損は最後の有効値で補完）
     def _split4_from_cum(t4, t3, t2, t1):
         vals = [np.nan, np.nan, np.nan, np.nan]
-        vals[3] = t1  # s4（末1F）
-        # s1
+        vals[3] = t1
         if np.isfinite(t4) and np.isfinite(t3):
             vals[0] = t4 - t3
         elif np.isfinite(t4) and np.isfinite(t1):
             vals[0] = (t4 - t1) / 3.0
-        # s2
         if np.isfinite(t3) and np.isfinite(t2):
             vals[1] = t3 - t2
         elif np.isfinite(t3) and not np.isfinite(t2):
@@ -308,7 +301,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             vals[1] = (t3 - base) / 2.0
         elif np.isfinite(t4) and np.isfinite(t1) and not np.isfinite(t3):
             vals[1] = (t4 - t1) / 3.0
-        # s3
         if np.isfinite(t2) and np.isfinite(t1):
             vals[2] = t2 - t1
         elif np.isfinite(t3) and not np.isfinite(t2):
@@ -325,7 +317,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 arr = np.where(np.isfinite(arr), arr, last)
         return arr
 
-    # シート一枚をパース
     def _parse_one(df_in: pd.DataFrame) -> pd.DataFrame:
         df = _norm_cols(df_in.copy())
 
@@ -337,7 +328,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         df['馬名'] = df[name_col].astype(str).str.replace('\u3000',' ').str.strip()
         df['日付'] = _smart_parse_date(df[date_col])
 
-        # Lap/Time（区間）候補
         seg_cols = []
         for i in range(1, 5):
             cand = [c for c in df.columns if re.search(fr'(^|\b)Lap{i}(\b|$)', c, flags=re.I)]
@@ -346,7 +336,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             seg_cols.append(cand)
         has_segment = all(len(x) > 0 for x in seg_cols)
 
-        # 累計カラム候補
         def _find_first(pats):
             for p in pats:
                 cc = [c for c in df.columns if re.search(p, c, flags=re.I)]
@@ -365,14 +354,12 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         if has_segment:
             for i in range(4):
                 laps[:, i] = _to_num_like(df[seg_cols[i][0]]).to_numpy(float)
-            # 累計っぽい（単調減少）なら差分化
             if np.all(np.diff(laps, axis=1) < 0):
                 t4, t3, t2, t1 = laps.T
                 laps[:, 0] = t4 - t3
                 laps[:, 1] = t3 - t2
                 laps[:, 2] = t2 - t1
                 laps[:, 3] = t1
-
         elif has_cum:
             T4 = _to_num_like(df[c4]) if c4 else pd.Series(np.nan, index=df.index)
             T3 = _to_num_like(df[c3]) if c3 else pd.Series(np.nan, index=df.index)
@@ -382,9 +369,7 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             for i in range(len(df)):
                 arr.append(_split4_from_cum(T4.iloc[i], T3.iloc[i], T2.iloc[i], T1.iloc[i]))
             laps = np.vstack(arr)
-
         else:
-            # “12.1-11.8- …” 形式
             str_col = next(
                 (c for c in df.columns if re.search(r'ラップ|区間|時計|タイム', c) and df[c].astype(str).str.contains('-').any()),
                 None
@@ -400,11 +385,9 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             else:
                 return pd.DataFrame()
 
-        # 強弱（任意）
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
         intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
 
-        # 場所（任意）
         place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
 
         out = pd.DataFrame({
@@ -416,74 +399,8 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             '_lap_sec': list(laps)
         })
 
-        # 4区間のどれかが数値なら採用（末1F欠損でも通す）
         mask = np.isfinite(laps).any(axis=1)
         out = out[mask].dropna(subset=['馬名', '日付'])
-        return out
-
-    frames = []
-    for sh in xls.sheet_names:
-        try:
-            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
-            parsed = _parse_one(df0)
-            if not parsed.empty:
-                frames.append(parsed)
-        except Exception:
-            continue
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-                # ここまでで laps が必ず作られている状態
-
-       
-
-        out = pd.DataFrame({
-            '馬名': df['馬名'],
-            '日付': df['日付'],
-            '場所': (df[place_col].astype(str) if place_col else ""),
-            '_kind': kind,
-            '_intensity': intensity,
-            '_lap_sec': list(laps)
-        })
-
-        # 4区間のどれかが数値なら採用
-        mask = np.isfinite(laps).any(axis=1)
-        out = out[mask].dropna(subset=['馬名', '日付'])
-        return out
-
-    frames = []
-    for sh in xls.sheet_names:
-        try:
-            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
-            parsed = _parse_one(df0)
-            if not parsed.empty:
-                frames.append(parsed)
-        except Exception:
-            continue
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-        # 強弱（任意）
-        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
-        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
-
-
-        # 場所（任意）
-        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
-
-        out = pd.DataFrame({
-            '馬名': df['馬名'],
-            '日付': df['日付'],
-            '場所': (df[place_col].astype(str) if place_col else ""),
-            '_kind': kind,
-            '_intensity': intensity,
-            '_lap_sec': list(laps)
-        })
-        # “最後の値補完”後、少なくとも終い200mが数字のものを採用
-        mask = np.isfinite(laps[:, -1])
-        out = out[mask].dropna(subset=['馬名','日付'])
         return out
 
     frames = []
