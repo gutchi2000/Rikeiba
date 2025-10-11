@@ -262,8 +262,14 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     name_pat = r'馬名|名前|出走馬|馬$|馬\s*名|horse|Horse'
     date_pat = r'日付|年月日|調教日|日時|実施日|測定日|計測日|記録日|date|Date'
 
-    def _to_num(s): 
-        return pd.to_numeric(s, errors='coerce')
+    # 置き換え（元の _to_num を差し替え）
+def _to_num(s):
+    # セルの文字列から先頭の数値 "12.1" を強制抽出して float 化
+    ser = pd.Series(s)
+    ser = ser.astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
+    num = ser.str.extract(r'([-+]?\d+(?:\.\d+)?)', expand=False)
+    return pd.to_numeric(num, errors='coerce')
+
 
     def _smart_parse_date(col: pd.Series) -> pd.Series:
         s = col
@@ -341,10 +347,20 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 cand = [c for c in df.columns if re.search(p, c, flags=re.I)]
                 if cand: return cand[0]
             return None
-        c4 = _find_first([r'(^|\b)4\s*[fＦｆ](\b|$)', r'800\s*m'])
-        c3 = _find_first([r'(^|\b)3\s*[fＦｆ](\b|$)', r'600\s*m'])
-        c2 = _find_first([r'(^|\b)2\s*[fＦｆ](\b|$)', r'400\s*m'])
-        c1 = _find_first([r'(^|\b)1\s*[fＦｆ](\b|$)', r'200\s*m'])
+        # 置き換え（_find_first で探すパターンを拡張）
+    c4 = _find_first([
+        r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'
+    ])
+    c3 = _find_first([
+        r'(^|\b)3\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'600\s*m', r'(^|[^0-9])3Ｆ'
+    ])
+    c2 = _find_first([
+        r'(^|\b)2\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'400\s*m', r'(^|[^0-9])2Ｆ'
+    ])
+    c1 = _find_first([
+        r'(^|\b)1\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'200\s*m', r'(ﾗｽﾄ|末|上がり).{0,3}1\s*[fＦｆ]'
+    ])
+
         has_cum = any([c4,c3,c2,c1])
 
         laps = np.full((len(df), 4), np.nan, float)
