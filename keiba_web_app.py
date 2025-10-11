@@ -473,25 +473,35 @@ def _derive_training_metrics(train_df: pd.DataFrame,
         v = d / laps  # m/s
         a = np.diff(v, prepend=v[0]) / laps  # 粗い離散近似
 
-        kind = r['_kind']
-        place = str(r.get('場所', ''))  # ★ 追加：場所列を読む
+        kind  = r['_kind']
+        place = str(r.get('場所', ''))
 
         if kind == 'hill':
-            prof_key = 'hill_miho' if '美浦' in place else 'hill_ritto'  # ★ ここで place を使う
-            prof = _slope_profile(prof_key)  # 栗東を既定（ファイルが美浦なら拡張）
+            # ★ 美浦判定（日本語/ローマ字どちらも拾う）
+            import re
+            is_miho = bool(re.search(r'美浦|miho', place, flags=re.I))
+            prof_key = 'hill_miho' if is_miho else 'hill_ritto'
+
+            # 坂路の勾配プロファイル
+            prof = _slope_profile(prof_key)
             grades = []
             remain = 800.0
             for L, G in prof:
-                take = min(L, remain); grades += [G]*int(round(take/200.0)); remain -= take
-                if remain <= 0: break
-            while len(grades) < 4: grades.append(grades[-1] if grades else 0.03)
+                take = min(L, remain)
+                grades += [G] * int(round(take / 200.0))
+                remain -= take
+                if remain <= 0:
+                    break
+            while len(grades) < 4:
+                grades.append(grades[-1] if grades else 0.03)
+
             grade = np.array(grades[:4], float)
             Crr = Crr_hill
         else:
-            grade = np.zeros(4, float)  # フラット扱い
+            grade = np.zeros(4, float)    # フラット扱い
             Crr = Crr_wood
 
-        gain = _intensity_gain(r['_intensity'])
+        gain = _intensity_gain(r.get('_intensity', ''))
 
         # 区間ごと出力密度
         P = []
