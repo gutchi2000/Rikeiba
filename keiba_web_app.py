@@ -462,116 +462,116 @@ def _derive_training_metrics(train_df: pd.DataFrame,
     馬体重は「その調教日の直近“前”レースの馬体重」を参照（なければ全体中央値）。
     4F×200m想定。坂路はプロファイルに沿って grade を付与。
     """
-    if train_df.empty: 
-        return pd.DataFrame(columns=['馬名','日付','EAP','PeakWkg','EffReserve'])
+    if train_df.empty:
+        return pd.DataFrame(columns=['馬名','日付','EAP','PeakWkg','EffReserve','PhysicsZ'])
 
-    # 参照体重（kg）を馬/日付で付与
+    # 参照体重マップ
     bw_map = {}
-    if ('馬名' in s0_races.columns) and ('レース日' in s0_races.columns) and ('馬体重' in s0_races.columns):
-        tmp = s0_races[['馬名','レース日','馬体重']].dropna()
-        tmp = tmp.sort_values(['馬名','レース日'])
+    if {'馬名','レース日','馬体重'}.issubset(s0_races.columns):
+        tmp = s0_races[['馬名','レース日','馬体重']].dropna().sort_values(['馬名','レース日'])
         for name, g in tmp.groupby('馬名'):
-            # 調教日の直前のレース体重
             bw_map[name] = list(zip(g['レース日'].to_numpy(), g['馬体重'].to_numpy()))
-    bw_median = float(pd.to_numeric(s0_races.get('馬体重', pd.Series([480])), errors='coerce').median(skipna=True) or 480.0)
+    bw_median = float(pd.to_numeric(s0_races.get('馬体重', pd.Series([480])), errors='coerce')
+                      .median(skipna=True) or 480.0)
 
     out = []
     for _, r in train_df.iterrows():
-        name = r['馬名']; day = pd.to_datetime(r['日付'])
-        laps = np.array(r['_lap_sec'], dtype=float)
-        if laps.size != 4 or np.isnan(laps).all(): 
-            continue
-    laps = np.where(np.isfinite(laps), laps, np.nan)
-    if np.isnan(laps).any():
-        good = np.where(np.isfinite(laps))[0]
-        if good.size == 0:
-            continue
-        fill_val = float(laps[good[-1]])
-        laps = np.where(np.isfinite(laps), laps, fill_val)
+        name = r['馬名']
+        day  = pd.to_datetime(r['日付'])
 
-        # 体重取得（その日の“前”レース）
+        laps = np.array(r['_lap_sec'], dtype=float)
+        if laps.size != 4 or np.isnan(laps).all():
+            continue
+
+        # 欠損は「最後に観測できた区間」で前方補完
+        laps = np.where(np.isfinite(laps), laps, np.nan)
+        if np.isnan(laps).any():
+            good = np.where(np.isfinite(laps))[0]
+            if good.size == 0:
+                continue
+            fill_val = float(laps[good[-1]])
+            laps = np.where(np.isfinite(laps), laps, fill_val)
+
+        # 調教日の直前レースの体重（無ければ全体中央値）
         bw = bw_median
         if name in bw_map:
-            prev = [w for (d,w) in bw_map[name] if pd.to_datetime(d) <= day]
-            if prev: bw = float(pd.to_numeric(prev[-1], errors='coerce') or bw_median)
+            prev = [w for (d, w) in bw_map[name] if pd.to_datetime(d) <= day]
+            if prev:
+                bw = float(pd.to_numeric(prev[-1], errors='coerce') or bw_median)
 
         # 速度・加速度（200mごと）
         d = 200.0
         v = d / laps
         a = np.diff(v, prepend=v[0]) / laps
 
-        kind  = str(r.get('_kind', 'wood'))  # 未記載ならフラット扱い
+        # コース種別（坂路/ウッド）と勾配
+        kind  = str(r.get('_kind', 'wood'))
         place = str(r.get('場所', ''))
-
-        laps = np.where(np.isfinite(laps), laps, np.nan)
-        if np.isnan(laps).any():
-            good = np.where(np.isfinite(laps))[0]
-            if good.size == 0:
-                continue  # 全欠損は捨てる
-            fill_val = float(laps[good[-1]])   # 終いの既知値で埋める
-            laps = np.where(np.isfinite(laps), laps, fill_val)
-
-
-
         if kind == 'hill':
-            import re
-            is_miho = bool(re.search(r'美浦|miho', place, flags=re.I))
+            is_miho  = bool(re.search(r'美浦|miho', place, flags=re.I))
             prof_key = 'hill_miho' if is_miho else 'hill_ritto'
             prof = _slope_profile(prof_key)
+
             grades = []
             remain = 800.0
             for L, G in prof:
                 take = min(L, remain)
-                grades += [G] * int(round(take/200.0))
+                nseg = int(round(take / 200.0))
+                grades += [G] * max(1, nseg)
                 remain -= take
                 if remain <= 0:
                     break
+            if not grades:
+                grades = [0.03] * 4
             while len(grades) < 4:
-                grades.append(grades[-1] if grades else 0.03)
+                grades.append(grades[-1])
             grade = np.array(grades[:4], float)
             Crr = Crr_hill
         else:
             grade = np.zeros(4, float)
-            Crr = Crr_wood
+            Crr   = Crr_wood
 
+        # 強弱による係数
+        gain = _intensity_gain(r.get('_intensity', ''))
 
-        gain = _intensity_gain(r.get('_intensity',''))
-
-
-        # 区間ごと出力密度
-        P = []
-        for i in range(4):
-            P.append(_seg_energy_wkg(v[i], a[i], 9.80665, grade[i], Crr, CdA, rho) * gain)
-        P = np.array(P)
+        # 区間あたりの出力密度（W/kg）
+        P = np.array([_seg_energy_wkg(v[i], a[i], 9.80665, grade[i], Crr, CdA, rho) * gain
+                      for i in range(4)], float)
 
         # 指標
-        PeakWkg = float(P.max())
-        EAP = float(np.sum(P * laps) / (800.0))  # （W/kg * s)/m = J/kg/m
-        EffReserve = float(max(0.0, Emax_jkg - np.sum(P * laps))) / Emax_jkg  # 0..1
+        PeakWkg    = float(P.max())
+        work_jkg   = float(np.sum(P * laps))               # J/kg
+        EAP        = float(work_jkg / 800.0)               # J/kg/m
+        EffReserve = float(max(0.0, Emax_jkg - work_jkg)) / Emax_jkg  # 0..1
 
-        out.append({'馬名':name,'日付':day,'EAP':EAP,'PeakWkg':PeakWkg,'EffReserve':EffReserve})
+        out.append({'馬名': name, '日付': day,
+                    'EAP': EAP, 'PeakWkg': PeakWkg, 'EffReserve': EffReserve})
 
     df = pd.DataFrame(out)
-    if df.empty: 
+    if df.empty:
         return df
 
-    # 直近重み付け → PhysicsZ を馬ごとに
+    # 直近重み付け → PhysicsZ
     df = df.sort_values(['馬名','日付'])
     today = pd.Timestamp.today()
-    df['_w'] = 0.5 ** ((today - df['日付']).dt.days.clip(lower=0) / float(half_life_days))
-    agg = (df
-           .groupby('馬名')
-           .apply(lambda g: pd.Series({
-               'EAP': np.average(g['EAP'], weights=g['_w']),
-               'PeakWkg': np.average(g['PeakWkg'], weights=g['_w']),
-               'EffReserve': np.average(g['EffReserve'], weights=g['_w'])
-           }))
-           .reset_index())
-    # 「小さいほど良い」EAP を “大きいほど良い”に反転してZ化
+    df['_w'] = 0.5 ** ((today - df['日付']).dt.days.clip(lower=0) / float(max(1, half_life_days)))
+
+    agg = (df.groupby('馬名')
+             .apply(lambda g: pd.Series({
+                 'EAP':        np.average(g['EAP'],        weights=g['_w']),
+                 'PeakWkg':    np.average(g['PeakWkg'],    weights=g['_w']),
+                 'EffReserve': np.average(g['EffReserve'], weights=g['_w']),
+             }))
+             .reset_index())
+
+    # 「小さいほど良い」EAP を反転してZ化（平均50, σ10）
     agg['PhysicsCore'] = -pd.to_numeric(agg['EAP'], errors='coerce')
-    mu = float(agg['PhysicsCore'].mean()); sd = float(agg['PhysicsCore'].std(ddof=0) or 1.0)
+    mu = float(agg['PhysicsCore'].mean())
+    sd = float(agg['PhysicsCore'].std(ddof=0) or 1.0)
     agg['PhysicsZ'] = (agg['PhysicsCore'] - mu) / sd * 10 + 50
+
     return agg[['馬名','EAP','PeakWkg','EffReserve','PhysicsZ']]
+
 
 # ===== 列マッピング（軽量） =====
 
