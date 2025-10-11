@@ -390,6 +390,8 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             else:
                 return pd.DataFrame()
 
+                # ここまでで laps が必ず作られている状態
+
         # 強弱（任意）
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
         intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
