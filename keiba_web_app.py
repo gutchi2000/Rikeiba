@@ -428,8 +428,7 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
                 # ここまでで laps が必ず作られている状態
 
-        # 場所（任意）
-        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
+       
 
         out = pd.DataFrame({
             '馬名': df['馬名'],
