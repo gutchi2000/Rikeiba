@@ -387,7 +387,8 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
         # 強弱（任意）
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
-        intensity = df[st_col].astype(str) if st_col else ""
+        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
+
 
         # 場所（任意）
         place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
@@ -491,12 +492,14 @@ def _derive_training_metrics(train_df: pd.DataFrame,
             if prev: bw = float(pd.to_numeric(prev[-1], errors='coerce') or bw_median)
 
         # 速度・加速度（200mごと）
-                d = 200.0
+        d = 200.0
         v = d / laps
         a = np.diff(v, prepend=v[0]) / laps
 
-        kind  = r['_kind']
-        place = str(r.get('場所',''))
+        kind  = str(r.get('_kind', 'wood'))  # 未記載ならフラット扱い
+        place = str(r.get('場所', ''))
+
+
 
         if kind == 'hill':
             import re
@@ -509,7 +512,8 @@ def _derive_training_metrics(train_df: pd.DataFrame,
                 take = min(L, remain)
                 grades += [G] * int(round(take/200.0))
                 remain -= take
-                if remain <= 0: break
+                if remain <= 0:
+                    break
             while len(grades) < 4:
                 grades.append(grades[-1] if grades else 0.03)
             grade = np.array(grades[:4], float)
@@ -517,6 +521,7 @@ def _derive_training_metrics(train_df: pd.DataFrame,
         else:
             grade = np.zeros(4, float)
             Crr = Crr_wood
+
 
         gain = _intensity_gain(r.get('_intensity',''))
 
