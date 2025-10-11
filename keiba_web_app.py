@@ -244,8 +244,6 @@ def load_excel_bytes(content: bytes):
 sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
 
 # ===== 調教データ読み込み＆正規化 =====
-# 修正済み _read_train_xlsx 部分のみ抜粋
-
 def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     """
     調教Excel（複数シート可）から下記列を抽出して統一する:
@@ -435,43 +433,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-        # ---- ここまでで laps が必ず作られている状態 ----
-
-        # 強弱（任意）
-        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
-        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
-
-        # 場所（任意）
-        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
-
-        out = pd.DataFrame({
-            '馬名': df['馬名'],
-            '日付': df['日付'],
-            '場所': (df[place_col].astype(str) if place_col else ""),
-            '_kind': kind,
-            '_intensity': intensity,
-            '_lap_sec': list(laps)
-        })
-
-        # 4区間のどれかが数値なら採用（末1F欠損でも通す）
-        mask = np.isfinite(laps).any(axis=1)
-        out = out[mask].dropna(subset=['馬名', '日付'])
-        return out
-
-    # 全シート統合
-    frames = []
-    for sh in xls.sheet_names:
-        try:
-            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
-            parsed = _parse_one(df0)
-            if not parsed.empty:
-                frames.append(parsed)
-        except Exception:
-            continue
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-# ===== ここまで差し替え =====
-
 
                 # ここまでで laps が必ず作られている状態
 
@@ -490,41 +451,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         mask = np.isfinite(laps).any(axis=1)
         out = out[mask].dropna(subset=['馬名', '日付'])
         return out
-
-    frames = []
-    for sh in xls.sheet_names:
-        try:
-            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
-            parsed = _parse_one(df0)
-            if not parsed.empty:
-                frames.append(parsed)
-        except Exception:
-            continue
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-        # 強弱（任意）←★ ここは if/elif/else の外。インデントを増やさない！
-        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
-        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
-
-        # 場所（任意）
-        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
-
-        out = pd.DataFrame({
-            '馬名': df['馬名'],
-            '日付': df['日付'],
-            '場所': (df[place_col].astype(str) if place_col else ""),
-            '_kind': kind,
-            '_intensity': intensity,
-            '_lap_sec': list(laps)
-        })
-
-        # 4区間のどれかが数値なら採用（末1F欠損でも通す）
-        mask = np.isfinite(laps).any(axis=1)
-        out = out[mask].dropna(subset=['馬名', '日付'])
-        return out
-
 
     frames = []
     for sh in xls.sheet_names:
