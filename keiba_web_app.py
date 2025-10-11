@@ -481,9 +481,13 @@ def _derive_training_metrics(train_df: pd.DataFrame,
         laps = np.array(r['_lap_sec'], dtype=float)
         if laps.size != 4 or np.isnan(laps).all(): 
             continue
-        laps = np.where(np.isfinite(laps), laps, np.nan)
-        if np.isnan(laps).any(): 
+    laps = np.where(np.isfinite(laps), laps, np.nan)
+    if np.isnan(laps).any():
+        good = np.where(np.isfinite(laps))[0]
+        if good.size == 0:
             continue
+        fill_val = float(laps[good[-1]])
+        laps = np.where(np.isfinite(laps), laps, fill_val)
 
         # 体重取得（その日の“前”レース）
         bw = bw_median
@@ -509,7 +513,7 @@ def _derive_training_metrics(train_df: pd.DataFrame,
 
 
 
-            if kind == 'hill':
+        if kind == 'hill':
             import re
             is_miho = bool(re.search(r'美浦|miho', place, flags=re.I))
             prof_key = 'hill_miho' if is_miho else 'hill_ritto'
