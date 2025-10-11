@@ -245,30 +245,39 @@ sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
 
 # ===== 調教データ読み込み＆正規化 =====
 def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
+    """
+    調教Excel（複数シート可）から下記列を抽出して統一する:
+      - 馬名(str), 日付(datetime64), 場所(str/任意), _kind('wood'|'hill'),
+        _intensity(str/任意), _lap_sec(list[4] of float)
+    ・Lap1..Lap4 or Time1..Time4（区間）優先。なければ 4F/3F/2F/1F（累計）→差分化。
+    ・「12.1-11.8-…」等の文字列も許容。
+    ・末尾NaNは最後の有効値で前方補完。
+    """
     import numpy as np, pandas as pd, io, re
 
     if file is None:
         return pd.DataFrame()
 
-    # まず Excel を開く
+    # Excelを開く
     try:
         xls = pd.ExcelFile(io.BytesIO(file.getvalue()))
     except Exception:
         return pd.DataFrame()
 
-    def _norm_cols(d):
+    # ----------------- helpers -----------------
+    def _norm_cols(d: pd.DataFrame) -> pd.DataFrame:
         return d.rename(columns=lambda c: str(c).strip())
 
-    name_pat = r'馬名|名前|出走馬|馬$|馬\s*名|horse|Horse'
-    date_pat = r'日付|年月日|調教日|日時|実施日|測定日|計測日|記録日|date|Date'
+    name_pat = r'馬名|名前|出走馬|horse|Horse'
+    date_pat = r'日付|年月日|調教日|日時|実施日|測定日|記録日|date|Date'
 
-    # セルから先頭の数値だけを強制抽出
-    def _to_num(s):
-        ser = pd.Series(s)
-        ser = ser.astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
+    # セルから先頭の数値を抽出
+    def _to_num_like(s):
+        ser = pd.Series(s).astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
         num = ser.str.extract(r'([-+]?\d+(?:\.\d+)?)', expand=False)
         return pd.to_numeric(num, errors='coerce')
 
+    # 8桁数字や通常書式をdatetimeに
     def _smart_parse_date(col: pd.Series) -> pd.Series:
         s = col
         if pd.api.types.is_integer_dtype(s) or pd.api.types.is_float_dtype(s):
@@ -282,34 +291,33 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         out = out.fillna(pd.to_datetime(s, errors='coerce'))
         return out
 
+    # 累計T4/T3/T2/T1から区間s1..s4を推定（欠損は最後の有効値で補完）
     def _split4_from_cum(t4, t3, t2, t1):
-        s4 = t1
+        vals = [np.nan, np.nan, np.nan, np.nan]
+        vals[3] = t1  # s4（末1F）
+        # s1
         if np.isfinite(t4) and np.isfinite(t3):
-            s1 = t4 - t3
+            vals[0] = t4 - t3
         elif np.isfinite(t4) and np.isfinite(t1):
-            s1 = (t4 - t1) / 3.0
-        else:
-            s1 = np.nan
-
+            vals[0] = (t4 - t1) / 3.0
+        # s2
         if np.isfinite(t3) and np.isfinite(t2):
-            s2 = t3 - t2
+            vals[1] = t3 - t2
         elif np.isfinite(t3) and not np.isfinite(t2):
-            s2 = (t3 - (t1 if np.isfinite(t1) else t3/3.0)) / 2.0
+            base = t1 if np.isfinite(t1) else t3 / 3.0
+            vals[1] = (t3 - base) / 2.0
         elif np.isfinite(t4) and np.isfinite(t1) and not np.isfinite(t3):
-            s2 = (t4 - t1) / 3.0
-        else:
-            s2 = np.nan
-
+            vals[1] = (t4 - t1) / 3.0
+        # s3
         if np.isfinite(t2) and np.isfinite(t1):
-            s3 = t2 - t1
+            vals[2] = t2 - t1
         elif np.isfinite(t3) and not np.isfinite(t2):
-            s3 = (t3 - (t1 if np.isfinite(t1) else t3/3.0)) / 2.0
+            base = t1 if np.isfinite(t1) else t3 / 3.0
+            vals[2] = (t3 - base) / 2.0
         elif np.isfinite(t4) and np.isfinite(t1):
-            s3 = (t4 - t1) / 3.0
-        else:
-            s3 = np.nan
+            vals[2] = (t4 - t1) / 3.0
 
-        arr = np.array([s1, s2, s3, s4], float)
+        arr = np.array(vals, float)
         if np.isnan(arr).any():
             good = np.where(np.isfinite(arr))[0]
             if good.size:
@@ -317,8 +325,10 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 arr = np.where(np.isfinite(arr), arr, last)
         return arr
 
-    def _parse_one(df_in):
+    # シート一枚をパース
+    def _parse_one(df_in: pd.DataFrame) -> pd.DataFrame:
         df = _norm_cols(df_in.copy())
+
         name_col = next((c for c in df.columns if re.search(name_pat, c, flags=re.I)), None)
         date_col = next((c for c in df.columns if re.search(date_pat, c, flags=re.I)), None)
         if name_col is None or date_col is None:
@@ -327,21 +337,21 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         df['馬名'] = df[name_col].astype(str).str.replace('\u3000',' ').str.strip()
         df['日付'] = _smart_parse_date(df[date_col])
 
-        # Lap/Time → セグメント優先
-        seg_cands = []
+        # Lap/Time（区間）候補
+        seg_cols = []
         for i in range(1, 5):
-            cols = [c for c in df.columns if re.search(fr'(^|\b)Lap{i}(\b|$)', c, flags=re.I)]
-            if not cols:
-                cols = [c for c in df.columns if re.search(fr'(^|\b)(L|Time){i}(\b|$)', c, flags=re.I)]
-            seg_cands.append(cols)
-        has_segment = all(len(x) > 0 for x in seg_cands)
+            cand = [c for c in df.columns if re.search(fr'(^|\b)Lap{i}(\b|$)', c, flags=re.I)]
+            if not cand:
+                cand = [c for c in df.columns if re.search(fr'(^|\b)(L|Time){i}(\b|$)', c, flags=re.I)]
+            seg_cols.append(cand)
+        has_segment = all(len(x) > 0 for x in seg_cols)
 
-        # 累計カラム探索
+        # 累計カラム候補
         def _find_first(pats):
             for p in pats:
-                cand = [c for c in df.columns if re.search(p, c, flags=re.I)]
-                if cand:
-                    return cand[0]
+                cc = [c for c in df.columns if re.search(p, c, flags=re.I)]
+                if cc:
+                    return cc[0]
             return None
 
         c4 = _find_first([r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'])
@@ -354,8 +364,8 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
         if has_segment:
             for i in range(4):
-                laps[:, i] = _to_num(df[seg_cands[i][0]]).to_numpy(float)
-            # もし累計を拾っていたら差分化
+                laps[:, i] = _to_num_like(df[seg_cols[i][0]]).to_numpy(float)
+            # 累計っぽい（単調減少）なら差分化
             if np.all(np.diff(laps, axis=1) < 0):
                 t4, t3, t2, t1 = laps.T
                 laps[:, 0] = t4 - t3
@@ -364,10 +374,10 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 laps[:, 3] = t1
 
         elif has_cum:
-            T4 = _to_num(df[c4]) if c4 else pd.Series(np.nan, index=df.index)
-            T3 = _to_num(df[c3]) if c3 else pd.Series(np.nan, index=df.index)
-            T2 = _to_num(df[c2]) if c2 else pd.Series(np.nan, index=df.index)
-            T1 = _to_num(df[c1]) if c1 else pd.Series(np.nan, index=df.index)
+            T4 = _to_num_like(df[c4]) if c4 else pd.Series(np.nan, index=df.index)
+            T3 = _to_num_like(df[c3]) if c3 else pd.Series(np.nan, index=df.index)
+            T2 = _to_num_like(df[c2]) if c2 else pd.Series(np.nan, index=df.index)
+            T1 = _to_num_like(df[c1]) if c1 else pd.Series(np.nan, index=df.index)
             arr = []
             for i in range(len(df)):
                 arr.append(_split4_from_cum(T4.iloc[i], T3.iloc[i], T2.iloc[i], T1.iloc[i]))
@@ -380,17 +390,17 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 None
             )
             if str_col:
-                def parse_seq(s):
+                def _parse_seq(s):
                     xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
                     xs = [float(x) for x in xs[:4]]
                     while len(xs) < 4:
                         xs.insert(0, np.nan)
                     return xs[-4:]
-                laps = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
+                laps = np.vstack(df[str_col].apply(_parse_seq).to_list()).astype(float)
             else:
                 return pd.DataFrame()
 
-        # ここまでで laps が必ず作られている状態
+        # ---- ここまでで laps が必ず作られている状態 ----
 
         # 強弱（任意）
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
@@ -413,6 +423,7 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         out = out[mask].dropna(subset=['馬名', '日付'])
         return out
 
+    # 全シート統合
     frames = []
     for sh in xls.sheet_names:
         try:
@@ -424,6 +435,7 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             continue
 
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+# ===== ここまで差し替え =====
 
 
                 # ここまでで laps が必ず作られている状態
