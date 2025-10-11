@@ -262,14 +262,12 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
     name_pat = r'馬名|名前|出走馬|馬$|馬\s*名|horse|Horse'
     date_pat = r'日付|年月日|調教日|日時|実施日|測定日|計測日|記録日|date|Date'
 
-    # 置き換え（元の _to_num を差し替え）
-def _to_num(s):
-    # セルの文字列から先頭の数値 "12.1" を強制抽出して float 化
-    ser = pd.Series(s)
-    ser = ser.astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
-    num = ser.str.extract(r'([-+]?\d+(?:\.\d+)?)', expand=False)
-    return pd.to_numeric(num, errors='coerce')
-
+    # セルから先頭の数値だけを強制抽出
+    def _to_num(s):
+        ser = pd.Series(s)
+        ser = ser.astype(str).str.replace(',', '').str.replace('\u3000', ' ').str.strip()
+        num = ser.str.extract(r'([-+]?\d+(?:\.\d+)?)', expand=False)
+        return pd.to_numeric(num, errors='coerce')
 
     def _smart_parse_date(col: pd.Series) -> pd.Series:
         s = col
@@ -285,9 +283,7 @@ def _to_num(s):
         return out
 
     def _split4_from_cum(t4, t3, t2, t1):
-        # t* は累計: 4F/3F/2F/1F (秒)。NaN 可
         s4 = t1
-        # s1,s2,s3 を頑健に推定
         if np.isfinite(t4) and np.isfinite(t3):
             s1 = t4 - t3
         elif np.isfinite(t4) and np.isfinite(t1):
@@ -314,7 +310,6 @@ def _to_num(s):
             s3 = np.nan
 
         arr = np.array([s1, s2, s3, s4], float)
-        # 最後の値で補完
         if np.isnan(arr).any():
             good = np.where(np.isfinite(arr))[0]
             if good.size:
@@ -341,27 +336,27 @@ def _to_num(s):
             seg_cands.append(cols)
         has_segment = all(len(x)>0 for x in seg_cands)
 
-        # 累計
+        # 累計カラム探索
         def _find_first(pats):
             for p in pats:
                 cand = [c for c in df.columns if re.search(p, c, flags=re.I)]
                 if cand: return cand[0]
             return None
-        # 置き換え（_find_first で探すパターンを拡張）
-    c4 = _find_first([
-        r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'
-    ])
-    c3 = _find_first([
-        r'(^|\b)3\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'600\s*m', r'(^|[^0-9])3Ｆ'
-    ])
-    c2 = _find_first([
-        r'(^|\b)2\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'400\s*m', r'(^|[^0-9])2Ｆ'
-    ])
-    c1 = _find_first([
-        r'(^|\b)1\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'200\s*m', r'(ﾗｽﾄ|末|上がり).{0,3}1\s*[fＦｆ]'
-    ])
 
-        has_cum = any([c4,c3,c2,c1])
+        # ← ここは必ず _parse_one の中に置く！
+        c4 = _find_first([
+            r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'
+        ])
+        c3 = _find_first([
+            r'(^|\b)3\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'600\s*m', r'(^|[^0-9])3Ｆ'
+        ])
+        c2 = _find_first([
+            r'(^|\b)2\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'400\s*m', r'(^|[^0-9])2Ｆ'
+        ])
+        c1 = _find_first([
+            r'(^|\b)1\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'200\s*m', r'(ﾗｽﾄ|末|上がり).{0,3}1\s*[fＦｆ]'
+        ])
+        has_cum = any([c4, c3, c2, c1])
 
         laps = np.full((len(df), 4), np.nan, float)
 
@@ -375,7 +370,6 @@ def _to_num(s):
                 laps[:,1] = t3 - t2
                 laps[:,2] = t2 - t1
                 laps[:,3] = t1
-
         elif has_cum:
             T4 = _to_num(df[c4]) if c4 else pd.Series(np.nan, index=df.index)
             T3 = _to_num(df[c3]) if c3 else pd.Series(np.nan, index=df.index)
@@ -385,7 +379,6 @@ def _to_num(s):
             for i in range(len(df)):
                 arr.append(_split4_from_cum(T4.iloc[i], T3.iloc[i], T2.iloc[i], T1.iloc[i]))
             laps = np.vstack(arr)
-
         else:
             # “12.1-11.8-…” 文字列
             str_col = next((c for c in df.columns
@@ -400,6 +393,39 @@ def _to_num(s):
                 laps = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
             else:
                 return pd.DataFrame()
+
+        # 強弱（任意）
+        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
+        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
+
+        # 場所（任意）
+        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
+
+        out = pd.DataFrame({
+            '馬名': df['馬名'],
+            '日付': df['日付'],
+            '場所': (df[place_col].astype(str) if place_col else ""),
+            '_kind': kind,
+            '_intensity': intensity,
+            '_lap_sec': list(laps)
+        })
+        # “最後の値補完”後、4区間のどれかが数値なら採用（末1F欠損でも通す）
+        mask = np.isfinite(laps).any(axis=1)
+        out = out[mask].dropna(subset=['馬名','日付'])
+        return out
+
+    frames = []
+    for sh in xls.sheet_names:
+        try:
+            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
+            parsed = _parse_one(df0)
+            if not parsed.empty:
+                frames.append(parsed)
+        except Exception:
+            continue
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
 
         # 強弱（任意）
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
