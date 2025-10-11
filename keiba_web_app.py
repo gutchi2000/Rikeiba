@@ -287,25 +287,25 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
         if np.isfinite(t4) and np.isfinite(t3):
             s1 = t4 - t3
         elif np.isfinite(t4) and np.isfinite(t1):
-            s1 = (t4 - t1)/3.0
+            s1 = (t4 - t1) / 3.0
         else:
             s1 = np.nan
 
         if np.isfinite(t3) and np.isfinite(t2):
             s2 = t3 - t2
         elif np.isfinite(t3) and not np.isfinite(t2):
-            s2 = (t3 - (t1 if np.isfinite(t1) else t3/3.0))/2.0
+            s2 = (t3 - (t1 if np.isfinite(t1) else t3/3.0)) / 2.0
         elif np.isfinite(t4) and np.isfinite(t1) and not np.isfinite(t3):
-            s2 = (t4 - t1)/3.0
+            s2 = (t4 - t1) / 3.0
         else:
             s2 = np.nan
 
         if np.isfinite(t2) and np.isfinite(t1):
             s3 = t2 - t1
         elif np.isfinite(t3) and not np.isfinite(t2):
-            s3 = (t3 - (t1 if np.isfinite(t1) else t3/3.0))/2.0
+            s3 = (t3 - (t1 if np.isfinite(t1) else t3/3.0)) / 2.0
         elif np.isfinite(t4) and np.isfinite(t1):
-            s3 = (t4 - t1)/3.0
+            s3 = (t4 - t1) / 3.0
         else:
             s3 = np.nan
 
@@ -334,31 +334,21 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
             if not cols:
                 cols = [c for c in df.columns if re.search(fr'(^|\b)(L|Time){i}(\b|$)', c, flags=re.I)]
             seg_cands.append(cols)
-        has_segment = all(len(x)>0 for x in seg_cands)
+        has_segment = all(len(x) > 0 for x in seg_cands)
 
         # 累計カラム探索
         def _find_first(pats):
             for p in pats:
                 cand = [c for c in df.columns if re.search(p, c, flags=re.I)]
-                if cand: return cand[0]
+                if cand:
+                    return cand[0]
             return None
 
-        # ← ここは必ず _parse_one の中に置く！
-        c4 = _find_first([
-            r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'
-        ])
-        c3 = _find_first([
-            r'(^|\b)3\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'600\s*m', r'(^|[^0-9])3Ｆ'
-        ])
-        c2 = _find_first([
-            r'(^|\b)2\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'400\s*m', r'(^|[^0-9])2Ｆ'
-        ])
-        c1 = _find_first([
-            r'(^|\b)1\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'200\s*m', r'(ﾗｽﾄ|末|上がり).{0,3}1\s*[fＦｆ]'
-        ])
+        c4 = _find_first([r'(^|\b)4\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'800\s*m', r'(^|[^0-9])4Ｆ'])
+        c3 = _find_first([r'(^|\b)3\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'600\s*m', r'(^|[^0-9])3Ｆ'])
+        c2 = _find_first([r'(^|\b)2\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'400\s*m', r'(^|[^0-9])2Ｆ'])
+        c1 = _find_first([r'(^|\b)1\s*[fＦｆ].{0,3}(時計|ﾀｲﾑ|秒)?(\b|$)', r'200\s*m', r'(ﾗｽﾄ|末|上がり).{0,3}1\s*[fＦｆ]'])
         has_cum = any([c4, c3, c2, c1])
-
-                # ── ここは _parse_one() の中 ─────────────────────────────
 
         laps = np.full((len(df), 4), np.nan, float)
 
@@ -385,9 +375,10 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
         else:
             # “12.1-11.8- …” 形式
-            str_col = next((c for c in df.columns
-                            if re.search(r'ラップ|区間|時計|タイム', c)
-                            and df[c].astype(str).str.contains('-').any()), None)
+            str_col = next(
+                (c for c in df.columns if re.search(r'ラップ|区間|時計|タイム', c) and df[c].astype(str).str.contains('-').any()),
+                None
+            )
             if str_col:
                 def parse_seq(s):
                     xs = re.findall(r'(\d+(?:\.\d+)?)', str(s))
@@ -398,6 +389,40 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
                 laps = np.vstack(df[str_col].apply(parse_seq).to_list()).astype(float)
             else:
                 return pd.DataFrame()
+
+        # 強弱（任意）
+        st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
+        intensity = df[st_col].astype(str) if st_col else pd.Series([''] * len(df), index=df.index)
+
+        # 場所（任意）
+        place_col = next((c for c in df.columns if re.search(r'場所|所属|トレセン|美浦|栗東', c)), None)
+
+        out = pd.DataFrame({
+            '馬名': df['馬名'],
+            '日付': df['日付'],
+            '場所': (df[place_col].astype(str) if place_col else ""),
+            '_kind': kind,
+            '_intensity': intensity,
+            '_lap_sec': list(laps)
+        })
+
+        # 4区間のどれかが数値なら採用
+        mask = np.isfinite(laps).any(axis=1)
+        out = out[mask].dropna(subset=['馬名', '日付'])
+        return out
+
+    frames = []
+    for sh in xls.sheet_names:
+        try:
+            df0 = pd.read_excel(xls, sheet_name=sh, header=0)
+            parsed = _parse_one(df0)
+            if not parsed.empty:
+                frames.append(parsed)
+        except Exception:
+            continue
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
 
         # 強弱（任意）←★ ここは if/elif/else の外。インデントを増やさない！
         st_col = next((c for c in df.columns if re.search(r'強弱|内容|馬なり|一杯|強め|仕掛け|軽め|流し', c)), None)
