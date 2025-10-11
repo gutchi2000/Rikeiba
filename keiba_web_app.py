@@ -499,9 +499,17 @@ def _derive_training_metrics(train_df: pd.DataFrame,
         kind  = str(r.get('_kind', 'wood'))  # 未記載ならフラット扱い
         place = str(r.get('場所', ''))
 
+        laps = np.where(np.isfinite(laps), laps, np.nan)
+        if np.isnan(laps).any():
+            good = np.where(np.isfinite(laps))[0]
+            if good.size == 0:
+                continue  # 全欠損は捨てる
+            fill_val = float(laps[good[-1]])   # 終いの既知値で埋める
+            laps = np.where(np.isfinite(laps), laps, fill_val)
 
 
-        if kind == 'hill':
+
+            if kind == 'hill':
             import re
             is_miho = bool(re.search(r'美浦|miho', place, flags=re.I))
             prof_key = 'hill_miho' if is_miho else 'hill_ritto'
