@@ -35,7 +35,7 @@ plt.rcParams['font.sans-serif'] = [
     'IPAexGothic','IPAGothic','Noto Sans CJK JP','Yu Gothic UI','Meiryo','Hiragino Sans','MS Gothic'
 ]
 
-st.set_page_config(page_title="スペクトル解析論", layout="wide")
+st.set_page_config(page_title="Rikeiba", layout="wide")
 
 # ===== 小ユーティリティ =====
 STYLES = ['逃げ','先行','差し','追込']
@@ -222,7 +222,7 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
 
 # ===== ファイルアップロード =====
-st.title("スペクトル解析論")
+st.title("Rikeiba")
 st.subheader("Excelアップロード（sheet0=過去走 / sheet1=出走表）")
 excel_file = st.file_uploader("Excel（.xlsx）", type=['xlsx'], key="excel_up")
 if excel_file is None:
