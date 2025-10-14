@@ -2039,3 +2039,73 @@ st.markdown("""
 - スペクトルは **FFTの帯域判定** と **DTW適合Z** を使用。テンプレは同距離帯・同Surfaceの中央値。<br>
 </small>
 """, unsafe_allow_html=True)
+
+# ===== 公開用 JSON エクスポート =====
+import json, os
+from datetime import datetime
+
+# 上位6頭に固定で印: ◎ 〇 ▲ △ △ △
+MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
+
+def mark_for_rank(i: int) -> str:
+    return MARKS6[i] if 0 <= i < len(MARKS6) else "△"  # 念のため範囲外は△
+
+st.subheader("③ 公開用JSONを書き出す")
+pub_date = datetime.now().strftime("%Y-%m-%d")
+export_btn = st.button("📤 予想印JSONを書き出す（◎ 〇 ▲ △ △ △）", use_container_width=True)
+
+if export_btn:
+    payload = {
+        "date": pub_date,
+        "brand": "Rikeiba",
+        "races": []
+    }
+
+    # race_id ごとに上位順で並べて印を付ける
+    for rid, g in df.groupby("race_id"):
+        # メタ情報
+        rmeta = df_race[df_race["race_id"] == rid]
+        race_name = rmeta.iloc[0]["race_name"] if len(rmeta) else rid
+        track = rmeta.iloc[0]["course"] if len(rmeta) and "course" in rmeta.columns else ""
+        distance = int(rmeta.iloc[0]["distance"]) if len(rmeta) and "distance" in rmeta.columns and pd.notna(rmeta.iloc[0]["distance"]) else None
+        going = rmeta.iloc[0]["going"] if len(rmeta) and "going" in rmeta.columns else ""
+
+        # スコア順（高い→低い）
+        sub = g.sort_values("FinalZ", ascending=False).reset_index(drop=True)
+
+        # 上位6頭に印を付与
+        picks = []
+        topN = min(6, len(sub))
+        for i in range(topN):
+            r = sub.iloc[i]
+            picks.append({
+                "horse": r["horse"],
+                "mark": mark_for_rank(i),
+                "score": round(float(r["FinalZ"]), 3),
+                # 任意：公開用に自信度を入れたい場合は下の行を有効化
+                # "confidence": round(0.5 + 0.3*float(r.get("sigma_inv",0)) + 0.2*float(r.get("odds_val",0))/2.5, 2)
+            })
+
+        # 既存の「買い目」テーブルがあればJSONにも含める（任意）
+        bets = []
+        if 'tickets' in locals() and isinstance(tickets, list) and len(tickets) > 0:
+            for t in tickets:
+                bets.append({"type": t.get("type",""), "target": t.get("comb",[]), "amount": int(t.get("yen",0))})
+
+        payload["races"].append({
+            "race_id": rid,
+            "race_name": race_name,
+            "track": track,
+            "distance": distance,
+            "going": going,
+            "picks": picks,
+            "recommended_bets": bets
+        })
+
+    os.makedirs("public_exports", exist_ok=True)
+    out_path = os.path.join("public_exports", f"rikeiba_picks_{pub_date}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    st.success(f"公開用JSONを書き出しました: {out_path}")
+    st.code(out_path, language="text")
