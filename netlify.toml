@@ -1,7 +1,7 @@
-# netlify.toml（リポジトリ直下）
 [build]
-  publish = "rikeiba_site"   # ここだけを公開
-  command = ""               # ビルドはしない（依存インストールも不要）
+# ← 依存関係の検出・インストールの起点を rikeiba_site にする
+base = "rikeiba_site"
 
-[build.environment]
-  NODE_VERSION = "18"
+# base 配下をそのまま配信
+publish = "."
+command = ""   # ビルドしない
