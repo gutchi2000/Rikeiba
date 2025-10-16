@@ -2040,117 +2040,74 @@ st.markdown("""
 </small>
 """, unsafe_allow_html=True)
 
-# ===== 公開用 JSON エクスポート =====
-import json, os
+# ===== 公開用 JSON エクスポート（上位6頭：◎ 〇 ▲ △ △ △） =====
 from datetime import datetime
+import os, json
 
-# 上位6頭に固定で印: ◎ 〇 ▲ △ △ △
 MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
 
 def mark_for_rank(i: int) -> str:
-    return MARKS6[i] if 0 <= i < len(MARKS6) else "△"  # 念のため範囲外は△
+    return MARKS6[i] if 0 <= i < len(MARKS6) else "△"
 
-st.subheader("③ 公開用JSONを書き出す")
-pub_date = datetime.now().strftime("%Y-%m-%d")
+st.subheader("③ 公開用JSONを書き出す（Netlify掲載用）")
+
+# 公開メタ（任意入力できるようにする）
+colA, colB = st.columns(2)
+pub_date = colA.text_input("掲載日(YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
+race_name_input = colB.text_input("レース名（例: 毎日王冠(G2)）", value="Rikeiba Picks")
+
+colC, colD, colE = st.columns(3)
+track_input   = colC.text_input("コース表記（例: 東京芝）", value=str(TARGET_SURFACE)+"想定")
+distance_input= colD.number_input("距離[m]", min_value=100, max_value=4000, value=int(TARGET_DISTANCE), step=100)
+going_input   = colE.text_input("馬場（例: 良/稍重/重/不良）", value="")
+
 export_btn = st.button("📤 予想印JSONを書き出す（◎ 〇 ▲ △ △ △）", use_container_width=True)
 
 if export_btn:
-    payload = {
-        "date": pub_date,
-        "brand": "Rikeiba",
-        "races": []
-    }
+    # すでに画面表示に使っているソート済テーブル _dfdisp から上位6頭を取る
+    if '_dfdisp' not in globals() or _dfdisp.empty:
+        st.error("上位リストが空です。先に入力データを読み込み、スコア計算を完了してください。")
+        st.stop()
 
-    # race_id ごとに上位順で並べて印を付ける
-    for rid, g in df.groupby("race_id"):
-        # ---- 直前ホットフィックス ----
-import re
-
-def normalize_cols(df_):
-    # 1) 余計な空白/全角・半角を統一、2) 英字を小文字化、3) 記号を_に
-    new_cols = []
-    for c in df_.columns:
-        c2 = str(c).strip()
-        c2 = c2.replace("　", " ")        # 全角空白→半角
-        c2 = c2.replace("レースＩＤ", "レースID")  # 全角Ｉ→半角Iの一例（任意）
-        c2 = c2.lower()
-        c2 = re.sub(r"\s+", "_", c2)
-        c2 = c2.replace("-", "_")
-        new_cols.append(c2)
-    df_.columns = new_cols
-    return df_
-
-def coerce_race_id(df_):
-    # よくある別名を race_id に寄せる
-    alias = [
-        "race_id", "raceid", "race_id_", "race__id",
-        "レースid", "ﾚｰｽid", "レース_id", "レースid_", "レース＿id",
-        "race id", "race-no", "raceno", "race_no"
-    ]
-    cols = set(df_.columns)
-    if "race_id" in cols:
-        return df_
-    # 候補を探索
-    for a in alias:
-        if a in cols:
-            df_ = df_.rename(columns={a: "race_id"})
-            break
-    else:
-        # 正規表現で「race」と「id」を含む列を拾う
-        cand = [c for c in df_.columns if re.search(r"race", c) and re.search(r"id|no", c)]
-        if cand:
-            df_ = df_.rename(columns={cand[0]: "race_id"})
-    return df_
-
-df = normalize_cols(df)       # ← まず正規化
-df = coerce_race_id(df)       # ← race_id に寄せる
-
-# 型と欠損を整える（文字列化しておくとExcel由来の数値化事故を防げる）
-if "race_id" in df.columns:
-    df["race_id"] = df["race_id"].astype(str).str.strip()
-else:
-    import streamlit as st
-    st.error(f"`race_id` 列が見つかりません。現在の列: {list(df.columns)}")
-    st.stop()
-
-        # メタ情報
-        rmeta = df_race[df_race["race_id"] == rid]
-        race_name = rmeta.iloc[0]["race_name"] if len(rmeta) else rid
-        track = rmeta.iloc[0]["course"] if len(rmeta) and "course" in rmeta.columns else ""
-        distance = int(rmeta.iloc[0]["distance"]) if len(rmeta) and "distance" in rmeta.columns and pd.notna(rmeta.iloc[0]["distance"]) else None
-        going = rmeta.iloc[0]["going"] if len(rmeta) and "going" in rmeta.columns else ""
-
-        # スコア順（高い→低い）
-        sub = g.sort_values("FinalZ", ascending=False).reset_index(drop=True)
-
-        # 上位6頭に印を付与
-        picks = []
-        topN = min(6, len(sub))
-        for i in range(topN):
-            r = sub.iloc[i]
-            picks.append({
-                "horse": r["horse"],
-                "mark": mark_for_rank(i),
-                "score": round(float(r["FinalZ"]), 3),
-                # 任意：公開用に自信度を入れたい場合は下の行を有効化
-                # "confidence": round(0.5 + 0.3*float(r.get("sigma_inv",0)) + 0.2*float(r.get("odds_val",0))/2.5, 2)
-            })
-
-        # 既存の「買い目」テーブルがあればJSONにも含める（任意）
-        bets = []
-        if 'tickets' in locals() and isinstance(tickets, list) and len(tickets) > 0:
-            for t in tickets:
-                bets.append({"type": t.get("type",""), "target": t.get("comb",[]), "amount": int(t.get("yen",0))})
-
-        payload["races"].append({
-            "race_id": rid,
-            "race_name": race_name,
-            "track": track,
-            "distance": distance,
-            "going": going,
-            "picks": picks,
-            "recommended_bets": bets
+    top = _dfdisp[['馬名']].head(6).reset_index(drop=True).copy()
+    picks = []
+    for i, r in top.iterrows():
+        # FinalZ の代わりに公開向け Score として AR100 を流用（見栄えが安定）
+        score_pub = float(_dfdisp.loc[_dfdisp.index[i], 'AR100']) if i < len(_dfdisp) else 0.0
+        picks.append({
+            "horse": str(r['馬名']),
+            "mark": mark_for_rank(i),
+            "score": round(score_pub, 3)  # 公開スコア（AR100を小数で）
         })
+
+    # 推奨買い目（ある場合だけ載せる）— 既存の tickets を想定
+    bets = []
+    if 'tickets' in locals() and isinstance(tickets, list) and len(tickets) > 0:
+        for t in tickets:
+            try:
+                bets.append({
+                    "type": t.get("type",""),
+                    "target": t.get("comb", []),
+                    "amount": int(t.get("yen", 0))
+                })
+            except Exception:
+                continue
+
+    payload = {
+        "date": str(pub_date),
+        "brand": "Rikeiba",
+        "races": [
+            {
+                "race_id": f"{pub_date}-01",            # 単一レース想定の簡易ID（必要なら自由に変更）
+                "race_name": race_name_input,
+                "track": track_input,
+                "distance": int(distance_input) if distance_input else None,
+                "going": going_input,
+                "picks": picks,
+                "recommended_bets": bets
+            }
+        ]
+    }
 
     os.makedirs("public_exports", exist_ok=True)
     out_path = os.path.join("public_exports", f"rikeiba_picks_{pub_date}.json")
@@ -2159,3 +2116,5 @@ else:
 
     st.success(f"公開用JSONを書き出しました: {out_path}")
     st.code(out_path, language="text")
+
+
