@@ -2042,17 +2042,15 @@ st.markdown("""
 
 # ===== 公開用 JSON エクスポート =====
 from pathlib import Path
-import json, os
+import json
 from datetime import datetime
 
-# スクリプト(keiba_web_app.py)のあるディレクトリを基準に固定する
+# スクリプトのある場所（keiba_web_app.py と同じ階層）に固定して出力
 BASE_DIR = Path(__file__).resolve().parent
 OUT_DIR  = BASE_DIR / "public_exports"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_DIR.mkdir(parents=True, exist_ok=True)  # ← ここで必ず作る
 
-# 上位6頭に固定で印: ◎ 〇 ▲ △ △ △
 MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
-
 def mark_for_rank(i: int) -> str:
     return MARKS6[i] if 0 <= i < len(MARKS6) else "△"
 
@@ -2064,46 +2062,36 @@ if export_btn:
     payload = {
         "date": pub_date,
         "brand": "Rikeiba",
-        "races": []
+        "races": []   # ← 今は空でもOK（あとで本物の中身を詰める）
     }
 
-    # ---- ここはあなたのレース集計に合わせて埋める（例用ダミー）----
-    # 実際は df_agg / df から race_id ごとに picks を作って詰める
-    # payload["races"].append({...})
-    # -------------------------------------------------------------
-
-    # ファイル名（今日と latest の2つ）
     path_today  = OUT_DIR / f"rikeiba_picks_{pub_date}.json"
     path_latest = OUT_DIR / "rikeiba_picks_latest.json"
 
-    # UTF-8 で保存
     with path_today.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     with path_latest.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    st.success(
-        f"公開用JSONを書き出しました: {path_today} / {path_latest}"
-    )
+    st.success(f"公開用JSONを書き出しました: {path_today} / {path_latest}")
     st.code(str(path_today), language="text")
 
-    # その場でダウンロードもできるようにする（任意）
+    # その場ダウンロードも付けておく（Cloud/Containerでも回収できる）
     st.download_button(
-        label="⬇ 今日のJSONをダウンロード",
+        "⬇ 今日のJSONをダウンロード",
         file_name=path_today.name,
         mime="application/json",
         data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
         use_container_width=True,
     )
     st.download_button(
-        label="⬇ latest.jsonをダウンロード",
+        "⬇ latest.jsonをダウンロード",
         file_name=path_latest.name,
         mime="application/json",
         data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
         use_container_width=True,
     )
 
-    # デバッグ（どこに書かれたか絶対パス表示）
+    # どこに出力されたか絶対パスを表示（確認用）
     st.caption(f"BASE_DIR = {BASE_DIR}")
     st.caption(f"OUT_DIR  = {OUT_DIR}")
-
