@@ -2041,8 +2041,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===== 公開用 JSON エクスポート =====
+from pathlib import Path
 import json, os
 from datetime import datetime
+
+# スクリプト(keiba_web_app.py)のあるディレクトリを基準に固定する
+BASE_DIR = Path(__file__).resolve().parent
+OUT_DIR  = BASE_DIR / "public_exports"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 上位6頭に固定で印: ◎ 〇 ▲ △ △ △
 MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
@@ -2050,59 +2056,6 @@ MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
 def mark_for_rank(i: int) -> str:
     return MARKS6[i] if 0 <= i < len(MARKS6) else "△"
 
-# --- ① 公開メタ情報（自動初期値 → ユーザー編集可） ----------------------
-def _first_nonnull(series):
-    try:
-        s = pd.Series(series).dropna()
-        return s.iloc[0] if len(s) else None
-    except Exception:
-        return None
-
-# Excel（sheet0/1）から推定
-race_name_auto = _first_nonnull(s0.get('競走名', pd.Series([])))
-venue_auto     = _first_nonnull(s0.get('場名',   pd.Series([])))
-surface_auto   = _first_nonnull(s0.get('芝・ダ', pd.Series([])))
-distance_auto  = _first_nonnull(s0.get('距離',   pd.Series([])))
-going_auto     = _first_nonnull(s0.get('馬場',   pd.Series([])))
-
-# コース表記（例: 京都芝 / 東京ダ）
-track_auto = ""
-if pd.notna(venue_auto):
-    t = str(venue_auto)
-    if isinstance(surface_auto, str):
-        if "芝" in surface_auto: t += "芝"
-        elif "ダ" in surface_auto: t += "ダ"
-    track_auto = t
-
-# UI（初期値は上の自動推定。未取得でも空でOK）
-with st.sidebar.expander("🌐 公開メタ情報（サイトに載る見出し）", expanded=True):
-    race_id_ui   = st.text_input("レースID（任意）", value=datetime.now().strftime("%Y%m%d") + "-R1")
-    race_name_ui = st.text_input("レース名", value=str(race_name_auto or ""))
-    track_ui     = st.text_input("コース（例：京都芝 / 東京ダ）", value=str(track_auto or ""))
-    distance_ui  = st.number_input("距離 [m]", min_value=1000, max_value=3600,
-                                   value=int(pd.to_numeric(distance_auto, errors='coerce')
-                                             if pd.notna(distance_auto) else int(TARGET_DISTANCE)),
-                                   step=100)
-    going_ui     = st.selectbox("馬場", ["良", "稍重", "重", "不良", "不明"],
-                                index=(["良","稍重","重","不良","不明"].index(str(going_auto))
-                                       if str(going_auto) in ["良","稍重","重","不良","不明"] else 4))
-
-# --- ② 上位6頭を抽出して印を割り当て ------------------------------------
-# 表示用のランキングテーブル _dfdisp を流用
-sub = _dfdisp.sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
-
-picks = []
-topN = min(6, len(sub))
-for i in range(topN):
-    r = sub.iloc[i]
-    # score は分かりやすく AR100 を採用（必要なら FinalRaw に変更可）
-    picks.append({
-        "horse": str(r['馬名']),
-        "mark":  mark_for_rank(i),
-        "score": round(float(r.get('AR100', 0.0)), 3)
-    })
-
-# --- ③ JSON を書き出し（public_exports/ 日付別 + 最新ファイル） ----------
 st.subheader("③ 公開用JSONを書き出す")
 pub_date = datetime.now().strftime("%Y-%m-%d")
 export_btn = st.button("📤 予想印JSONを書き出す（◎ 〇 ▲ △ △ △）", use_container_width=True)
@@ -2111,35 +2064,46 @@ if export_btn:
     payload = {
         "date": pub_date,
         "brand": "Rikeiba",
-        "races": [
-            {
-                "race_id": (race_id_ui or pub_date).strip(),
-                "race_name": race_name_ui.strip(),
-                "track": track_ui.strip(),
-                "distance": int(distance_ui) if distance_ui else None,
-                "going": "" if going_ui == "不明" else going_ui,
-                "picks": picks,
-                "recommended_bets": []
-            }
-        ]
+        "races": []
     }
 
-    # 出力先（Actions がここから rikeiba_site/ にコピーして公開）
-    os.makedirs("public_exports", exist_ok=True)
-    dated_path = os.path.join("public_exports", f"rikeiba_picks_{pub_date}.json")
-    latest_path = os.path.join("public_exports", "rikeiba_picks_latest.json")
+    # ---- ここはあなたのレース集計に合わせて埋める（例用ダミー）----
+    # 実際は df_agg / df から race_id ごとに picks を作って詰める
+    # payload["races"].append({...})
+    # -------------------------------------------------------------
 
-    with open(dated_path, "w", encoding="utf-8") as f:
+    # ファイル名（今日と latest の2つ）
+    path_today  = OUT_DIR / f"rikeiba_picks_{pub_date}.json"
+    path_latest = OUT_DIR / "rikeiba_picks_latest.json"
+
+    # UTF-8 で保存
+    with path_today.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    with open(latest_path, "w", encoding="utf-8") as f:
+    with path_latest.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    st.success(f"公開用JSONを書き出しました: {dated_path} / {latest_path}")
-    st.code(dated_path, language="text")
+    st.success(
+        f"公開用JSONを書き出しました: {path_today} / {path_latest}"
+    )
+    st.code(str(path_today), language="text")
 
-    st.info("💡 Git にコミット＆プッシュすれば、GitHub Actions が "
-            "`rikeiba_site/rikeiba_picks.json` に自動反映 → Netlify が公開します。")
+    # その場でダウンロードもできるようにする（任意）
+    st.download_button(
+        label="⬇ 今日のJSONをダウンロード",
+        file_name=path_today.name,
+        mime="application/json",
+        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+        use_container_width=True,
+    )
+    st.download_button(
+        label="⬇ latest.jsonをダウンロード",
+        file_name=path_latest.name,
+        mime="application/json",
+        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+        use_container_width=True,
+    )
 
-
-
+    # デバッグ（どこに書かれたか絶対パス表示）
+    st.caption(f"BASE_DIR = {BASE_DIR}")
+    st.caption(f"OUT_DIR  = {OUT_DIR}")
 
