@@ -1,0 +1,40 @@
+{
+  "date": "2025-10-19",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": null,
+      "race_name": "もみじS(OP)",
+      "track": "芝",
+      "distance": 1400,
+      "going": "良",
+      "picks": [
+        {
+          "horse": "コラルリーフ",
+          "mark": "◎",
+          "score": 98.0
+        },
+        {
+          "horse": "ファニーバニー",
+          "mark": "〇",
+          "score": 77.7
+        },
+        {
+          "horse": "ナオミライトニング",
+          "mark": "▲",
+          "score": 71.0
+        },
+        {
+          "horse": "リリージョワ",
+          "mark": "△",
+          "score": 67.0
+        },
+        {
+          "horse": "シルバーナイツ",
+          "mark": "△",
+          "score": 62.1
+        },
+      ]
+    }
+  ]
+}
