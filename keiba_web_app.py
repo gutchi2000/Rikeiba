@@ -2063,6 +2063,56 @@ if export_btn:
 
     # race_id ごとに上位順で並べて印を付ける
     for rid, g in df.groupby("race_id"):
+        # ---- 直前ホットフィックス ----
+import re
+
+def normalize_cols(df_):
+    # 1) 余計な空白/全角・半角を統一、2) 英字を小文字化、3) 記号を_に
+    new_cols = []
+    for c in df_.columns:
+        c2 = str(c).strip()
+        c2 = c2.replace("　", " ")        # 全角空白→半角
+        c2 = c2.replace("レースＩＤ", "レースID")  # 全角Ｉ→半角Iの一例（任意）
+        c2 = c2.lower()
+        c2 = re.sub(r"\s+", "_", c2)
+        c2 = c2.replace("-", "_")
+        new_cols.append(c2)
+    df_.columns = new_cols
+    return df_
+
+def coerce_race_id(df_):
+    # よくある別名を race_id に寄せる
+    alias = [
+        "race_id", "raceid", "race_id_", "race__id",
+        "レースid", "ﾚｰｽid", "レース_id", "レースid_", "レース＿id",
+        "race id", "race-no", "raceno", "race_no"
+    ]
+    cols = set(df_.columns)
+    if "race_id" in cols:
+        return df_
+    # 候補を探索
+    for a in alias:
+        if a in cols:
+            df_ = df_.rename(columns={a: "race_id"})
+            break
+    else:
+        # 正規表現で「race」と「id」を含む列を拾う
+        cand = [c for c in df_.columns if re.search(r"race", c) and re.search(r"id|no", c)]
+        if cand:
+            df_ = df_.rename(columns={cand[0]: "race_id"})
+    return df_
+
+df = normalize_cols(df)       # ← まず正規化
+df = coerce_race_id(df)       # ← race_id に寄せる
+
+# 型と欠損を整える（文字列化しておくとExcel由来の数値化事故を防げる）
+if "race_id" in df.columns:
+    df["race_id"] = df["race_id"].astype(str).str.strip()
+else:
+    import streamlit as st
+    st.error(f"`race_id` 列が見つかりません。現在の列: {list(df.columns)}")
+    st.stop()
+
         # メタ情報
         rmeta = df_race[df_race["race_id"] == rid]
         race_name = rmeta.iloc[0]["race_name"] if len(rmeta) else rid
