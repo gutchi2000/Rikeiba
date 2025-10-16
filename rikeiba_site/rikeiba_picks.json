@@ -1,90 +1,46 @@
 {
-  "date": "2025-10-18",
+  "date": "2025-10-16",
   "brand": "Rikeiba",
   "races": [
     {
-      "race_id": null,
-      "race_name": "富士S(G2)",
-      "track": "芝",
-      "distance": 1600,
-      "going": "良",
-      "picks": [
-        {
-          "horse": "ソウルラッシュ",
-          "mark": "◎",
-          "score": 98.0
-        },
-        {
-          "horse": "ジャンタルマンタル",
-          "mark": "〇",
-          "score": 84.1
-        },
-        {
-          "horse": "ガイアフォース",
-          "mark": "▲",
-          "score": 77.7
-        },
-        {
-          "horse": "キープカルム",
-          "mark": "△",
-          "score": 73.9
-        },
-        {
-          "horse": "マジックサンズ",
-          "mark": "△",
-          "score": 71.0
-        },
-        {
-          "horse": "ニシノスーベニア",
-          "mark": "△",
-          "score": 69.0
-        }
-      ]
-    }
-  ]
-}
-{
-  "date": "2025-10-19",
-  "brand": "Rikeiba",
-  "races": [
-    {
-      "race_id": null,
-      "race_name": "秋華賞(G1)",
-      "track": "芝",
-      "distance": 2000,
-      "going": "良",
+      "race_id": "RACE-001",
+      "race_name": "　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　",
+      "track": "",
+      "distance": null,
+      "going": "",
       "picks": [
         {
           "horse": "カムニャック",
           "mark": "◎",
-          "score": 98.0
+          "score": 65.82
         },
         {
           "horse": "マピュース",
           "mark": "〇",
-          "score": 86.3
+          "score": 64.002
         },
         {
           "horse": "ビップデイジー",
           "mark": "▲",
-          "score": 79.4
+          "score": 62.713
         },
         {
           "horse": "ブラウンラチェット",
           "mark": "△",
-          "score": 76.4
+          "score": 57.711
         },
         {
           "horse": "エリカエクスプレス",
           "mark": "△",
-          "score": 73.5
+          "score": 57.699
         },
         {
           "horse": "ヴーレヴー",
           "mark": "△",
-          "score": 71.2
+          "score": 52.004
         }
-      ]
+      ],
+      "recommended_bets": []
     }
   ]
 }
