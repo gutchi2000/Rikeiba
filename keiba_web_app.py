@@ -2040,58 +2040,92 @@ st.markdown("""
 </small>
 """, unsafe_allow_html=True)
 
-# ===== 公開用 JSON エクスポート =====
-from pathlib import Path
-import json
-from datetime import datetime
+# ===== ③ 公開用JSON：手入力→AR100採用で書き出し =====
+st.markdown("## ③ 公開用JSON（手入力 → AR100得点で書き出し）")
 
-# スクリプトのある場所（keiba_web_app.py と同じ階層）に固定して出力
-BASE_DIR = Path(__file__).resolve().parent
-OUT_DIR  = BASE_DIR / "public_exports"
-OUT_DIR.mkdir(parents=True, exist_ok=True)  # ← ここで必ず作る
+with st.expander("📝 公開メタ入力", expanded=True):
+    # ※ 開催日はサイト側で必要になるので、デフォルトで今日を入れておく
+    PUB_DATE   = st.date_input("開催日（サイト表示に使用）", value=pd.Timestamp.today().date(), key="pub_date2")
+    FILE_NAME  = st.text_input("ファイル名（.json 省略可）", value="rikeiba_picks", key="pub_fname2")
+    RACE_NAME  = st.text_input("レース名（例：秋華賞(G1), 富士S(G2)）", key="pub_rname2")
+    SURFACE_TX = st.radio("馬場", ["芝", "ダート"], horizontal=True, key="pub_surface2")
+    DIST_M     = st.number_input("距離 [m]", min_value=1000, max_value=3600, value=2000, step=100, key="pub_dist2")
+    # 任意：馬場状態は空でもOK
+    GOING_TX   = st.selectbox("馬場状態（任意）", ["", "良", "稍重", "重", "不良"], index=1, key="pub_going2")
+    # 任意：race_id（空でもOK）
+    RACE_ID_TX = st.text_input("レースID（任意・空で可）", value="", key="pub_rid2")
 
+# 上位6頭を AR100 で書き出し（◎ 〇 ▲ △ △ △）
 MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
-def mark_for_rank(i: int) -> str:
-    return MARKS6[i] if 0 <= i < len(MARKS6) else "△"
 
-st.subheader("③ 公開用JSONを書き出す")
-pub_date = datetime.now().strftime("%Y-%m-%d")
-export_btn = st.button("📤 予想印JSONを書き出す（◎ 〇 ▲ △ △ △）", use_container_width=True)
+btn = st.button("📤 JSONを書き出す（AR100で得点出力）", use_container_width=True)
+if btn:
+    import os, re, json
+    from datetime import datetime
 
-if export_btn:
+    # 入力バリデーション
+    problems = []
+    if not str(RACE_NAME).strip():
+        problems.append("レース名が未入力です。")
+    if not DIST_M:
+        problems.append("距離[m]が未入力です。")
+    if problems:
+        st.error(" / ".join(problems))
+        st.stop()
+
+    # ファイル名整形
+    fname = str(FILE_NAME).strip()
+    if not fname:
+        fname = "rikeiba_picks"
+    # 半角・安全なファイル名に寄せる
+    fname = re.sub(r"[^\w\-\.\(\)]+", "_", fname)
+    if not fname.lower().endswith(".json"):
+        fname += ".json"
+
+    # 上位6頭（_dfdisp は上の集計で作ってある想定）
+    if '_dfdisp' not in globals() or _dfdisp.empty:
+        st.error("出走表の集計が見つかりません（_dfdisp が空）。先にExcelを読み込んでください。")
+        st.stop()
+
+    top = _dfdisp[['馬名','AR100']].head(6).copy()
+    if top.empty:
+        st.error("上位6頭の抽出に失敗（テーブルが空）。")
+        st.stop()
+
+    # picks を AR100 採用で作成
+    picks = []
+    for i in range(len(top)):
+        row = top.iloc[i]
+        picks.append({
+            "horse": str(row['馬名']),
+            "mark": MARKS6[i],
+            # ← ここがリクエストのポイント：score に AR100 を採用（小数1桁）
+            "score": round(float(row['AR100']), 1) if pd.notna(row['AR100']) else None
+        })
+
+    # track は「芝 / ダート」のみ（サイト側は 'ダ' を含めばダートと判定できる）
+    track_text = "芝" if SURFACE_TX == "芝" else "ダート"
+
+    # 単日フォーマット（サイトは単日/累積どちらも自動対応）
     payload = {
-        "date": pub_date,
+        "date": str(PUB_DATE),           # 例: "2025-10-20"
         "brand": "Rikeiba",
-        "races": []   # ← 今は空でもOK（あとで本物の中身を詰める）
+        "races": [{
+            "race_id": RACE_ID_TX.strip() or None,
+            "race_name": RACE_NAME.strip(),
+            "track": track_text,         # 例: "芝" or "ダート"
+            "distance": int(DIST_M),
+            "going": GOING_TX or "",
+            "picks": picks
+        }]
     }
 
-    path_today  = OUT_DIR / f"rikeiba_picks_{pub_date}.json"
-    path_latest = OUT_DIR / "rikeiba_picks_latest.json"
-
-    with path_today.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    with path_latest.open("w", encoding="utf-8") as f:
+    # 保存
+    os.makedirs("public_exports", exist_ok=True)
+    out_path = os.path.join("public_exports", fname)
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    st.success(f"公開用JSONを書き出しました: {path_today} / {path_latest}")
-    st.code(str(path_today), language="text")
-
-    # その場ダウンロードも付けておく（Cloud/Containerでも回収できる）
-    st.download_button(
-        "⬇ 今日のJSONをダウンロード",
-        file_name=path_today.name,
-        mime="application/json",
-        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-        use_container_width=True,
-    )
-    st.download_button(
-        "⬇ latest.jsonをダウンロード",
-        file_name=path_latest.name,
-        mime="application/json",
-        data=json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
-        use_container_width=True,
-    )
-
-    # どこに出力されたか絶対パスを表示（確認用）
-    st.caption(f"BASE_DIR = {BASE_DIR}")
-    st.caption(f"OUT_DIR  = {OUT_DIR}")
+    st.success(f"JSONを書き出しました: {out_path}")
+    st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
+    st.caption("※ そのまま commit & push すれば、Actions → Netlify でサイトに反映されます。")
