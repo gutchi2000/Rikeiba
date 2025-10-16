@@ -1,0 +1,35 @@
+{
+  "date": "2025-10-18",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": null,
+      "race_name": "アイビーS(L)",
+      "track": "芝",
+      "distance": 1800,
+      "going": "良",
+      "picks": [
+        {
+          "horse": "スマートプリエール",
+          "mark": "◎",
+          "score": 98.0
+        },
+        {
+          "horse": "アートバーゼル",
+          "mark": "〇",
+          "score": 76.4
+        },
+        {
+          "horse": "モノポリオ",
+          "mark": "▲",
+          "score": 69.7
+        },
+        {
+          "horse": "アンドゥーリル",
+          "mark": "△",
+          "score": 65.0
+        },
+      ]
+    }
+  ]
+}
