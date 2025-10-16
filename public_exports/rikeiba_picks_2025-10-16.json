@@ -1,0 +1,46 @@
+{
+  "date": "2025-10-16",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": "RACE-001",
+      "race_name": "　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　",
+      "track": "",
+      "distance": null,
+      "going": "",
+      "picks": [
+        {
+          "horse": "カムニャック",
+          "mark": "◎",
+          "score": 65.82
+        },
+        {
+          "horse": "マピュース",
+          "mark": "〇",
+          "score": 64.002
+        },
+        {
+          "horse": "ビップデイジー",
+          "mark": "▲",
+          "score": 62.713
+        },
+        {
+          "horse": "ブラウンラチェット",
+          "mark": "△",
+          "score": 57.711
+        },
+        {
+          "horse": "エリカエクスプレス",
+          "mark": "△",
+          "score": 57.699
+        },
+        {
+          "horse": "ヴーレヴー",
+          "mark": "△",
+          "score": 52.004
+        }
+      ],
+      "recommended_bets": []
+    }
+  ]
+}
