@@ -137,9 +137,20 @@
 <footer>© Rikeiba</footer>
 
 <script>
-const PICKS_URL = "rikeiba_picks.json?_=" + Date.now();
+// ←ここから全部置き換え
 
-let RAW = null;          // 読み込んだJSON
+// ここに読み込むJSONファイル名を列挙（index.html と同じフォルダ）
+const FILES = [
+  "もみじS.json",
+  "アイビーS.json",
+  "ブラジルC.json",
+  "富士S.json",
+  "新潟牝馬S.json",
+  "甲斐路S.json",
+  "秋華賞.json",
+];
+
+let RAW = null;          // 読み込んだデータ（結合後）
 let DAYS = [];           // {date, races[]}
 let CURRENT_DATE = "";   // 選択日
 let VENUES = [];         // 場名候補
@@ -156,28 +167,32 @@ const getGrade = name => {
   return "None";
 };
 const parseSurf = track => String(track||"").includes("ダ") ? "ダ" : (String(track||"").includes("芝") ? "芝" : "");
-const parseVenue = track => {
-  // 例: "東京 芝左" → "東京"
-  const t = String(track||"").trim();
-  return t.split(/\s|　/)[0] || "";
-};
+const parseVenue = track => (String(track||"").trim().split(/\s|　/)[0] || "");
 
-// ==== Load & normalize ====
+// ==== 複数JSONをまとめてロード ====
 async function load(){
-  const res = await fetch(PICKS_URL,{cache:"no-store"});
-  const data = await res.json();
-  RAW = data;
-  // normalize to cumulative
-  if (Array.isArray(data?.days)) {
-    DAYS = data.days;
-  } else if (data?.date && Array.isArray(data?.races)) {
-    DAYS = [{date: data.date, races: data.races}];
-  } else {
-    DAYS = [];
+  const results = await Promise.all(
+    FILES.map(f =>
+      fetch("./" + encodeURI(f) + "?_=" + Date.now(), { cache:"no-store" })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    )
+  );
+
+  // days 形式に正規化して結合
+  const days = [];
+  for (const d of results) {
+    if (!d) continue;
+    if (Array.isArray(d?.days)) {
+      days.push(...d.days);
+    } else if (d?.date && Array.isArray(d?.races)) {
+      days.push({ date: d.date, races: d.races });
+    }
   }
-  // sort by date desc
-  DAYS.sort((a,b)=> String(b.date).localeCompare(String(a.date)));
-  CURRENT_DATE = (DAYS[0]?.date)||"";
+
+  RAW = { days };
+  DAYS = days.sort((a,b)=> String(b.date).localeCompare(String(a.date)));
+  CURRENT_DATE = DAYS[0]?.date || "";
   buildDateUI();
   rebuildVenueList();
   render();
@@ -189,7 +204,7 @@ function buildDateUI(){
   tabs.innerHTML = "";
   sel.innerHTML = "";
 
-  DAYS.forEach((d, i)=>{
+  DAYS.forEach((d) => {
     const b = document.createElement("button");
     b.className = "tab" + (d.date===CURRENT_DATE ? " on": "");
     b.textContent = d.date;
@@ -230,9 +245,7 @@ function rebuildVenueList(){
 }
 
 // ==== Filters state ====
-const state = {
-  q: "", grades:new Set(), surfs:new Set(), minD:"", maxD:"", venue:"", sort:"time"
-};
+const state = { q:"", grades:new Set(), surfs:new Set(), minD:"", maxD:"", venue:"", sort:"time" };
 
 function hookFilters(){
   document.getElementById("q").oninput = e=>{ state.q = e.target.value.trim(); render(); };
@@ -257,8 +270,7 @@ function hookFilters(){
   document.getElementById("maxD").oninput = e=>{ state.maxD = e.target.value; render(); };
 
   document.getElementById("venueSelect").onchange = e=>{ state.venue = e.target.value; render(); };
-
-  document.getElementById("sortSelect").onchange = e=>{ state.sort = e.target.value; render(); };
+  document.getElementById("sortSelect").onchange  = e=>{ state.sort  = e.target.value; render(); };
 
   document.getElementById("clearBtn").onclick = ()=>{
     state.q=""; state.grades.clear(); state.surfs.clear(); state.minD=""; state.maxD=""; state.venue=""; state.sort="time";
@@ -280,11 +292,8 @@ function render(){
   container.innerHTML = "";
 
   const day = DAYS.find(d=> d.date===CURRENT_DATE);
-  if (!day || !Array.isArray(day.races)) {
-    empty.style.display = "block"; return;
-  }
+  if (!day || !Array.isArray(day.races)) { empty.style.display = "block"; return; }
 
-  // enrich races
   let races = day.races.map(r=>{
     const race_name = r.race_name || r.race_id || "";
     const grade = getGrade(race_name);
@@ -294,7 +303,6 @@ function render(){
     return {...r, __race_name: race_name, __grade: grade, __surf: surf, __venue: venue, __distance: distance};
   });
 
-  // filters
   const q = state.q.toLowerCase();
   if (q) races = races.filter(r =>
     r.__race_name.toLowerCase().includes(q) ||
@@ -304,8 +312,8 @@ function render(){
   );
 
   if (state.grades.size) races = races.filter(r => state.grades.has(r.__grade));
-  if (state.surfs.size) races = races.filter(r => state.surfs.has(r.__surf));
-  if (state.venue) races = races.filter(r => r.__venue === state.venue);
+  if (state.surfs.size)  races = races.filter(r => state.surfs.has(r.__surf));
+  if (state.venue)       races = races.filter(r => r.__venue === state.venue);
 
   const minD = Number(state.minD||0), maxD = Number(state.maxD||0);
   if (minD || maxD) {
@@ -317,7 +325,6 @@ function render(){
     });
   }
 
-  // sort
   if (state.sort==="grade"){
     const ord = {G1:1,G2:2,G3:3,L:4,OP:5,None:6};
     races.sort((a,b)=> (ord[a.__grade]||9)-(ord[b.__grade]||9) || String(a.__race_name).localeCompare(String(b.__race_name)));
@@ -326,17 +333,13 @@ function render(){
   } else if (state.sort==="venue"){
     races.sort((a,b)=> String(a.__venue).localeCompare(String(b.__venue)) || (a.__distance||0)-(b.__distance||0));
   }
-  // else "time" → 元順（何もしない）
 
-  // render
   if (!races.length){ empty.style.display="block"; return; }
   empty.style.display="none";
 
   races.forEach(r=>{
     const title = (r.__race_name || r.race_id || "").trim();
-    const metaParts = [
-      r.__venue || "", r.__surf || (r.track||"").includes("ダ")?"ダ":"", r.__distance? `${r.__distance}m`:"", r.going||""
-    ].filter(Boolean);
+    const metaParts = [ r.__venue || "", r.__surf || (String(r.track).includes("ダ")?"ダ":""), r.__distance? `${r.__distance}m`:"", r.going||"" ].filter(Boolean);
     const grade = r.__grade==="None" ? "" : r.__grade;
 
     const card = document.createElement("div");
@@ -365,9 +368,11 @@ function render(){
   });
 }
 
-// boot
+// 起動
 hookFilters();
 load();
+
+
 </script>
 </body>
 </html>
