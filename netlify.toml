@@ -1,0 +1,7 @@
+# netlify.toml（リポジトリ直下）
+[build]
+  publish = "rikeiba_site"   # ここだけを公開
+  command = ""               # ビルドはしない（依存インストールも不要）
+
+[build.environment]
+  NODE_VERSION = "18"
