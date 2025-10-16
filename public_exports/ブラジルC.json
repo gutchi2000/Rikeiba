@@ -1,0 +1,45 @@
+{
+  "date": "2025-10-19",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": null,
+      "race_name": "ブラジルC(L)",
+      "track": "ダート",
+      "distance": 2100,
+      "going": "良",
+      "picks": [
+        {
+          "horse": "ブレイクフォース",
+          "mark": "◎",
+          "score": 98.0
+        },
+        {
+          "horse": "ピュアキアン",
+          "mark": "〇",
+          "score": 82.4
+        },
+        {
+          "horse": "カゼノランナー",
+          "mark": "▲",
+          "score": 76.4
+        },
+        {
+          "horse": "アムールドパリ",
+          "mark": "△",
+          "score": 72.0
+        },
+        {
+          "horse": "ゼットリアン",
+          "mark": "△",
+          "score": 69.7
+        },
+        {
+          "horse": "サンストックトン",
+          "mark": "△",
+          "score": 67.3
+        }
+      ]
+    }
+  ]
+}
