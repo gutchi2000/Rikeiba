@@ -1,41 +1,373 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <title>Rikeiba 予想印</title>
-  <style>
-    body { font-family:-apple-system,BlinkMacSystemFont,"Meiryo",sans-serif; background:#111; color:#eee; margin:0; }
-    header { padding:16px; font-size:22px; font-weight:bold; background:#1e1e1e; color:#0f0; }
-    main { max-width:800px; margin:30px auto; padding:0 20px; }
-    .race { background:#222; margin-bottom:16px; padding:16px; border-radius:8px; }
-    h2 { margin:0 0 8px 0; color:#0f0; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { border-bottom:1px solid #333; padding:6px; text-align:left; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Rikeiba Picks</title>
+<style>
+  :root{
+    --bg:#0b0b0b; --panel:#121212; --panel2:#171717;
+    --text:#e7e7e7; --mute:#a9a9a9; --accent:#8fda7f; --line:#2a2a2a;
+    --brand:#21d07a; --chip:#222; --chipOn:#2c493a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif}
+  header{display:flex;gap:.8rem;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(0deg,transparent,rgba(255,255,255,.03))}
+  .brand{font-weight:800;color:var(--accent);letter-spacing:.3px}
+  .wrap{display:grid;grid-template-columns:280px 1fr;gap:16px;max-width:1200px;margin:0 auto;padding:12px}
+  @media (max-width:900px){.wrap{grid-template-columns:1fr}}
+  /* Sidebar */
+  .side{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .side h3{margin:4px 0 8px;font-size:14px;color:var(--mute);font-weight:700}
+  .field{margin:8px 0}
+  .field label{display:block;font-size:12px;color:var(--mute);margin-bottom:4px}
+  select,input[type="date"],input[type="text"],input[type="number"]{
+    width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:8px 10px;outline:none}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:6px 8px;border:1px solid var(--line);border-radius:999px;background:var(--chip);color:var(--text);font-size:12px;cursor:pointer}
+  .chip.on{background:var(--chipOn);border-color:#365c45}
+  .range{display:flex;gap:8px}
+  .range input{width:50%}
+  /* Main */
+  .main{min-height:60vh}
+  .section-head{display:flex;align-items:center;gap:8px;margin:8px 0 10px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:#101010;color:var(--text);cursor:pointer;font-size:12px}
+  .tab.on{background:var(--brand);color:#000;border-color:var(--brand);font-weight:700}
+  .list{display:flex;flex-direction:column;gap:10px}
+  .race{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px}
+  .race-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between}
+  .title{font-weight:800;color:var(--accent)}
+  .meta{color:var(--mute);font-size:12px}
+  .chips2{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .tag{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:#151515;color:#bbb}
+  .picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:8px}
+  .pick{background:#131313;border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;align-items:center;gap:8px}
+  .mark{min-width:1.8em;text-align:center;font-weight:900;color:#ffea00}
+  .horse{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .empty{color:var(--mute);padding:16px;text-align:center;border:1px dashed var(--line);border-radius:10px;background:#0f0f0f}
+  footer{opacity:.7;text-align:center;font-size:12px;padding:16px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap}
+  .button{background:#1a1a1a;color:#ddd;border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer}
+  .button:hover{filter:brightness(1.1)}
+</style>
 </head>
 <body>
-<header>🐎 Rikeiba Official Picks</header>
-<main id="races">読み込み中...</main>
+<header>
+  <div class="brand">Rikeiba Picks</div>
+  <div class="bar">
+    <button class="button" id="refreshBtn">更新</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- Sidebar filters -->
+  <aside class="side" id="filters">
+    <h3>検索/絞り込み</h3>
+
+    <div class="field">
+      <label>開催日</label>
+      <select id="dateSelect"></select>
+    </div>
+
+    <div class="field">
+      <label>フリーワード（レース名/馬名/場名）</label>
+      <input id="q" type="text" placeholder="例: 秋華賞 / 東京 / リバティアイランド" />
+    </div>
+
+    <div class="field">
+      <label>グレード</label>
+      <div class="chips" id="gradeChips">
+        <span class="chip" data-grade="G1">G1</span>
+        <span class="chip" data-grade="G2">G2</span>
+        <span class="chip" data-grade="G3">G3</span>
+        <span class="chip" data-grade="L">L</span>
+        <span class="chip" data-grade="OP">OP</span>
+        <span class="chip" data-grade="None">指定なし</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>コース</label>
+      <div class="chips" id="surfChips">
+        <span class="chip" data-surf="芝">芝</span>
+        <span class="chip" data-surf="ダ">ダ</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>距離[m] 範囲</label>
+      <div class="range">
+        <input id="minD" type="number" placeholder="例: 1200" />
+        <input id="maxD" type="number" placeholder="例: 3000" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>場名</label>
+      <select id="venueSelect"><option value="">すべて</option></select>
+    </div>
+
+    <div class="field">
+      <button class="button" id="clearBtn" style="width:100%">絞り込みをクリア</button>
+    </div>
+
+    <h3>並び替え</h3>
+    <div class="field">
+      <select id="sortSelect">
+        <option value="time">掲載順（そのまま）</option>
+        <option value="grade">グレード（G1→）</option>
+        <option value="distance">距離（短→長）</option>
+        <option value="venue">場名（あ→）</option>
+      </select>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="section-head">
+      <div class="tabs" id="dateTabs"></div>
+    </div>
+    <div class="list" id="raceList"></div>
+    <div class="empty" id="emptyMsg" style="display:none">条件に一致するレースがありません。</div>
+  </main>
+</div>
+
+<footer>© Rikeiba</footer>
 
 <script>
-fetch("./rikeiba_picks.json")
-  .then(r=>r.json())
-  .then(data=>{
-    const racesEl = document.getElementById('races');
-    racesEl.innerHTML = '';
-    for(const race of data.races){
-      const div = document.createElement('div');
-      div.className = 'race';
-      div.innerHTML = `<h2>${race.race_name}</h2>
-      <p>${race.track} ${race.distance}m ${race.going}</p>
-      <table><thead><tr><th>印</th><th>馬名</th><th>スコア</th></tr></thead>
-      <tbody>${race.picks.map(p=>`<tr><td>${p.mark}</td><td>${p.horse}</td><td>${p.score}</td></tr>`).join('')}</tbody></table>`;
-      racesEl.appendChild(div);
-    }
-  }).catch(err=>{
-    document.getElementById('races').innerHTML = "データがまだ公開されていません。";
-    console.error(err);
+const PICKS_URL = "rikeiba_picks.json?_=" + Date.now();
+
+let RAW = null;          // 読み込んだJSON
+let DAYS = [];           // {date, races[]}
+let CURRENT_DATE = "";   // 選択日
+let VENUES = [];         // 場名候補
+
+// ==== Utilities ====
+const esc = s => String(s||"").replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+const getGrade = name => {
+  const s = String(name||"").toUpperCase();
+  if (/G1\b|Ｇ1|ＧＩ|GI\b/.test(s)) return "G1";
+  if (/G2\b|Ｇ2|ＧＩＩ|GII\b/.test(s)) return "G2";
+  if (/G3\b|Ｇ3|ＧＩＩＩ|GIII\b/.test(s)) return "G3";
+  if (/\bL\b|リステッド/.test(name||"")) return "L";
+  if (/オープン|OP\b|OPEN/i.test(name||"")) return "OP";
+  return "None";
+};
+const parseSurf = track => String(track||"").includes("ダ") ? "ダ" : (String(track||"").includes("芝") ? "芝" : "");
+const parseVenue = track => {
+  // 例: "東京 芝左" → "東京"
+  const t = String(track||"").trim();
+  return t.split(/\s|　/)[0] || "";
+};
+
+// ==== Load & normalize ====
+async function load(){
+  const res = await fetch(PICKS_URL,{cache:"no-store"});
+  const data = await res.json();
+  RAW = data;
+  // normalize to cumulative
+  if (Array.isArray(data?.days)) {
+    DAYS = data.days;
+  } else if (data?.date && Array.isArray(data?.races)) {
+    DAYS = [{date: data.date, races: data.races}];
+  } else {
+    DAYS = [];
+  }
+  // sort by date desc
+  DAYS.sort((a,b)=> String(b.date).localeCompare(String(a.date)));
+  CURRENT_DATE = (DAYS[0]?.date)||"";
+  buildDateUI();
+  rebuildVenueList();
+  render();
+}
+
+function buildDateUI(){
+  const tabs = document.getElementById("dateTabs");
+  const sel  = document.getElementById("dateSelect");
+  tabs.innerHTML = "";
+  sel.innerHTML = "";
+
+  DAYS.forEach((d, i)=>{
+    const b = document.createElement("button");
+    b.className = "tab" + (d.date===CURRENT_DATE ? " on": "");
+    b.textContent = d.date;
+    b.onclick = ()=>{ CURRENT_DATE = d.date; syncDateSelect(); render(); };
+    tabs.appendChild(b);
+
+    const opt = document.createElement("option");
+    opt.value = d.date; opt.textContent = d.date;
+    if (d.date===CURRENT_DATE) opt.selected = true;
+    sel.appendChild(opt);
   });
+
+  document.getElementById("dateSelect").onchange = (e)=>{
+    CURRENT_DATE = e.target.value;
+    syncTabs();
+    render();
+  };
+}
+
+function syncTabs(){
+  document.querySelectorAll(".tab").forEach(el=>{
+    el.classList.toggle("on", el.textContent===CURRENT_DATE);
+  });
+}
+function syncDateSelect(){
+  const sel = document.getElementById("dateSelect");
+  [...sel.options].forEach(o=> o.selected = (o.value===CURRENT_DATE));
+}
+
+function rebuildVenueList(){
+  const today = DAYS.find(d=> d.date===CURRENT_DATE);
+  const venues = new Set();
+  (today?.races||[]).forEach(r=> venues.add(parseVenue(r.track)));
+  const arr = [...venues].filter(Boolean).sort((a,b)=>a.localeCompare(b));
+  VENUES = arr;
+  const vsel = document.getElementById("venueSelect");
+  vsel.innerHTML = "<option value=''>すべて</option>" + arr.map(v=>`<option>${esc(v)}</option>`).join("");
+}
+
+// ==== Filters state ====
+const state = {
+  q: "", grades:new Set(), surfs:new Set(), minD:"", maxD:"", venue:"", sort:"time"
+};
+
+function hookFilters(){
+  document.getElementById("q").oninput = e=>{ state.q = e.target.value.trim(); render(); };
+
+  document.getElementById("gradeChips").addEventListener("click", e=>{
+    const chip = e.target.closest(".chip"); if(!chip) return;
+    const g = chip.dataset.grade;
+    if (chip.classList.toggle("on")) state.grades.add(g);
+    else state.grades.delete(g);
+    render();
+  });
+
+  document.getElementById("surfChips").addEventListener("click", e=>{
+    const chip = e.target.closest(".chip"); if(!chip) return;
+    const s = chip.dataset.surf;
+    if (chip.classList.toggle("on")) state.surfs.add(s);
+    else state.surfs.delete(s);
+    render();
+  });
+
+  document.getElementById("minD").oninput = e=>{ state.minD = e.target.value; render(); };
+  document.getElementById("maxD").oninput = e=>{ state.maxD = e.target.value; render(); };
+
+  document.getElementById("venueSelect").onchange = e=>{ state.venue = e.target.value; render(); };
+
+  document.getElementById("sortSelect").onchange = e=>{ state.sort = e.target.value; render(); };
+
+  document.getElementById("clearBtn").onclick = ()=>{
+    state.q=""; state.grades.clear(); state.surfs.clear(); state.minD=""; state.maxD=""; state.venue=""; state.sort="time";
+    document.getElementById("q").value="";
+    document.querySelectorAll(".chip.on").forEach(x=>x.classList.remove("on"));
+    document.getElementById("minD").value=""; document.getElementById("maxD").value="";
+    document.getElementById("venueSelect").value="";
+    document.getElementById("sortSelect").value="time";
+    render();
+  };
+
+  document.getElementById("refreshBtn").onclick = ()=> load();
+}
+
+// ==== Render ====
+function render(){
+  const container = document.getElementById("raceList");
+  const empty = document.getElementById("emptyMsg");
+  container.innerHTML = "";
+
+  const day = DAYS.find(d=> d.date===CURRENT_DATE);
+  if (!day || !Array.isArray(day.races)) {
+    empty.style.display = "block"; return;
+  }
+
+  // enrich races
+  let races = day.races.map(r=>{
+    const race_name = r.race_name || r.race_id || "";
+    const grade = getGrade(race_name);
+    const surf = parseSurf(r.track);
+    const venue = parseVenue(r.track);
+    const distance = (typeof r.distance === "number") ? r.distance : NaN;
+    return {...r, __race_name: race_name, __grade: grade, __surf: surf, __venue: venue, __distance: distance};
+  });
+
+  // filters
+  const q = state.q.toLowerCase();
+  if (q) races = races.filter(r =>
+    r.__race_name.toLowerCase().includes(q) ||
+    (r.track||"").toLowerCase().includes(q) ||
+    (r.__venue||"").toLowerCase().includes(q) ||
+    (r.picks||[]).some(p => String(p.horse||"").toLowerCase().includes(q))
+  );
+
+  if (state.grades.size) races = races.filter(r => state.grades.has(r.__grade));
+  if (state.surfs.size) races = races.filter(r => state.surfs.has(r.__surf));
+  if (state.venue) races = races.filter(r => r.__venue === state.venue);
+
+  const minD = Number(state.minD||0), maxD = Number(state.maxD||0);
+  if (minD || maxD) {
+    races = races.filter(r => {
+      const d = Number(r.__distance||0);
+      const okMin = minD ? (d >= minD) : true;
+      const okMax = maxD ? (d <= maxD) : true;
+      return okMin && okMax;
+    });
+  }
+
+  // sort
+  if (state.sort==="grade"){
+    const ord = {G1:1,G2:2,G3:3,L:4,OP:5,None:6};
+    races.sort((a,b)=> (ord[a.__grade]||9)-(ord[b.__grade]||9) || String(a.__race_name).localeCompare(String(b.__race_name)));
+  } else if (state.sort==="distance"){
+    races.sort((a,b)=> (a.__distance||0) - (b.__distance||0));
+  } else if (state.sort==="venue"){
+    races.sort((a,b)=> String(a.__venue).localeCompare(String(b.__venue)) || (a.__distance||0)-(b.__distance||0));
+  }
+  // else "time" → 元順（何もしない）
+
+  // render
+  if (!races.length){ empty.style.display="block"; return; }
+  empty.style.display="none";
+
+  races.forEach(r=>{
+    const title = (r.__race_name || r.race_id || "").trim();
+    const metaParts = [
+      r.__venue || "", r.__surf || (r.track||"").includes("ダ")?"ダ":"", r.__distance? `${r.__distance}m`:"", r.going||""
+    ].filter(Boolean);
+    const grade = r.__grade==="None" ? "" : r.__grade;
+
+    const card = document.createElement("div");
+    card.className = "race";
+    card.innerHTML = `
+      <div class="race-head">
+        <div>
+          <div class="title">${esc(title)}</div>
+          <div class="meta">${esc(metaParts.join(" / "))}</div>
+        </div>
+        <div class="chips2">
+          ${grade? `<span class="tag">${esc(grade)}</span>`:``}
+          ${r.race_id? `<span class="tag">ID: ${esc(r.race_id)}</span>`:``}
+        </div>
+      </div>
+      <div class="picks">
+        ${(r.picks||[]).map(p=>`
+          <div class="pick">
+            <span class="mark">${esc(p.mark||"")}</span>
+            <span class="horse">${esc(p.horse||"")}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// boot
+hookFilters();
+load();
 </script>
 </body>
 </html>
