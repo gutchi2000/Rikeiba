@@ -1,0 +1,56 @@
+name: Export picks to site
+
+on:
+  push:
+    branches: [ main ]            # ← デフォは main。別ならここを変更（例：master）
+    paths:
+      - 'public_exports/rikeiba_picks_*.json'  # このファイルが変わった時だけ動く
+  workflow_dispatch:               # 手動実行も可（ActionsタブからRun）
+
+permissions:
+  contents: write                  # 自動コミットに必要
+
+concurrency:
+  group: export-to-site
+  cancel-in-progress: true
+
+jobs:
+  sync-json:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find latest JSON
+        id: find
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(public_exports/rikeiba_picks_*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No JSON found under public_exports/. Exiting."
+            echo "found=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 新しい順に並べ、先頭を採用（日時がファイル名に含まれている前提）
+          latest=$(ls -t public_exports/rikeiba_picks_*.json | head -n1)
+          echo "Latest file: $latest"
+          echo "found=1" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Copy to site as rikeiba_picks.json
+        if: steps.find.outputs.found == '1'
+        run: |
+          mkdir -p rikeiba_site
+          cp "${{ steps.find.outputs.latest }}" "rikeiba_site/rikeiba_picks.json"
+
+      - name: Commit & push changes
+        if: steps.find.outputs.found == '1'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rikeiba_site/rikeiba_picks.json
+          # 変更がなければコミットしない
+          git diff --cached --quiet && echo "No change to commit." || git commit -m "Update picks json from ${{ steps.find.outputs.latest }}"
+          git push
