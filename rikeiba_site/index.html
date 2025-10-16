@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Rikeiba 予想印</title>
+  <style>
+    body { font-family:-apple-system,BlinkMacSystemFont,"Meiryo",sans-serif; background:#111; color:#eee; margin:0; }
+    header { padding:16px; font-size:22px; font-weight:bold; background:#1e1e1e; color:#0f0; }
+    main { max-width:800px; margin:30px auto; padding:0 20px; }
+    .race { background:#222; margin-bottom:16px; padding:16px; border-radius:8px; }
+    h2 { margin:0 0 8px 0; color:#0f0; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { border-bottom:1px solid #333; padding:6px; text-align:left; }
+  </style>
+</head>
+<body>
+<header>🐎 Rikeiba Official Picks</header>
+<main id="races">読み込み中...</main>
+
+<script>
+fetch("./rikeiba_picks.json")
+  .then(r=>r.json())
+  .then(data=>{
+    const racesEl = document.getElementById('races');
+    racesEl.innerHTML = '';
+    for(const race of data.races){
+      const div = document.createElement('div');
+      div.className = 'race';
+      div.innerHTML = `<h2>${race.race_name}</h2>
+      <p>${race.track} ${race.distance}m ${race.going}</p>
+      <table><thead><tr><th>印</th><th>馬名</th><th>スコア</th></tr></thead>
+      <tbody>${race.picks.map(p=>`<tr><td>${p.mark}</td><td>${p.horse}</td><td>${p.score}</td></tr>`).join('')}</tbody></table>`;
+      racesEl.appendChild(div);
+    }
+  }).catch(err=>{
+    document.getElementById('races').innerHTML = "データがまだ公開されていません。";
+    console.error(err);
+  });
+</script>
+</body>
+</html>
