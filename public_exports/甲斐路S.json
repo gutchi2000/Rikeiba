@@ -1,0 +1,45 @@
+{
+  "date": "2025-10-19",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": null,
+      "race_name": "甲斐路S(3勝)",
+      "track": "芝",
+      "distance": 1800,
+      "going": "良",
+      "picks": [
+        {
+          "horse": "レディネス",
+          "mark": "◎",
+          "score": 98.0
+        },
+        {
+          "horse": "ワンダイレクト",
+          "mark": "〇",
+          "score": 86.3
+        },
+        {
+          "horse": "ショウナンラピダス",
+          "mark": "▲",
+          "score": 79.4
+        },
+        {
+          "horse": "マルチャン",
+          "mark": "△",
+          "score": 76.4
+        },
+        {
+          "horse": "エバーハピネス",
+          "mark": "△",
+          "score": 73.5
+        },
+        {
+          "horse": "ブランデーロック",
+          "mark": "△",
+          "score": 71.2
+        }
+      ]
+    }
+  ]
+}
