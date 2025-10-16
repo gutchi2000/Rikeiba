@@ -177,7 +177,8 @@ with st.sidebar.expander("🔰 基本", expanded=True):
     agari3_bonus = st.slider("上がり3F 3位ボーナス", 0, 3, 1)
 
 with st.sidebar.expander("本レース条件", expanded=True):
-    TARGET_GRADE    = st.selectbox("本レースの格", ["G1","G2","G3","L","OP"], index=4)
+    grade_opts = ["G1", "G2", "G3", "L", "OP", "3勝クラス"]
+    TARGET_GRADE = st.selectbox("本レースの格", grade_opts, index=grade_opts.index("OP"))
     TARGET_SURFACE  = st.selectbox("本レースの馬場", ["芝","ダ"], index=0)
     TARGET_DISTANCE = st.number_input("本レースの距離 [m]", 1000, 3600, 1800, 100)
     TARGET_TURN     = st.radio("回り", ["右","左"], index=0, horizontal=True)
