@@ -2040,81 +2040,74 @@ st.markdown("""
 </small>
 """, unsafe_allow_html=True)
 
-# ===== 公開用 JSON エクスポート（上位6頭：◎ 〇 ▲ △ △ △） =====
+# ===== 公開用 JSON エクスポート =====
+import json, os
 from datetime import datetime
-import os, json
 
+st.subheader("③ 公開用JSONを書き出す（◎ 〇 ▲ △ △ △）")
+
+# 上位6頭に固定で印
 MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
 
 def mark_for_rank(i: int) -> str:
     return MARKS6[i] if 0 <= i < len(MARKS6) else "△"
 
-st.subheader("③ 公開用JSONを書き出す（Netlify掲載用）")
+pub_date = datetime.now().strftime("%Y-%m-%d")
 
-# 公開メタ（任意入力できるようにする）
-colA, colB = st.columns(2)
-pub_date = colA.text_input("掲載日(YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
-race_name_input = colB.text_input("レース名（例: 毎日王冠(G2)）", value="Rikeiba Picks")
+# ここでは _dfdisp が最終ランキング（上で作成済）
+# レース単位のメタ情報が無ければ最低限の骨組みだけ付ける
+race_id_default = "RACE-001"
+race_name_default = str(s0['競走名'].dropna().iloc[-1]) if '競走名' in s0.columns and len(s0.dropna(subset=['競走名'])) else "Rikeiba Picks"
 
-colC, colD, colE = st.columns(3)
-track_input   = colC.text_input("コース表記（例: 東京芝）", value=str(TARGET_SURFACE)+"想定")
-distance_input= colD.number_input("距離[m]", min_value=100, max_value=4000, value=int(TARGET_DISTANCE), step=100)
-going_input   = colE.text_input("馬場（例: 良/稍重/重/不良）", value="")
+# スコア列がなければ FinalRaw をZ化して使う
+if 'FinalZ' not in _dfdisp.columns:
+    v = pd.to_numeric(_dfdisp['FinalRaw'], errors='coerce')
+    mu, sd = float(v.mean()), float(v.std() or 1.0)
+    _dfdisp['FinalZ'] = (v - mu) / sd * 10 + 50
 
-export_btn = st.button("📤 予想印JSONを書き出す（◎ 〇 ▲ △ △ △）", use_container_width=True)
+# 上位6頭を整形
+sub = _dfdisp.sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
+topN = min(6, len(sub))
+picks = []
+for i in range(topN):
+    r = sub.iloc[i]
+    picks.append({
+        "horse": str(r.get('馬名', '')),
+        "mark":  mark_for_rank(i),
+        "score": round(float(r.get('FinalZ', 0.0)), 3)
+    })
 
-if export_btn:
-    # すでに画面表示に使っているソート済テーブル _dfdisp から上位6頭を取る
-    if '_dfdisp' not in globals() or _dfdisp.empty:
-        st.error("上位リストが空です。先に入力データを読み込み、スコア計算を完了してください。")
-        st.stop()
+payload = {
+    "date": pub_date,
+    "brand": "Rikeiba",
+    "races": [{
+        "race_id": race_id_default,
+        "race_name": race_name_default,
+        "track": "",
+        "distance": None,
+        "going": "",
+        "picks": picks,
+        "recommended_bets": []
+    }]
+}
 
-    top = _dfdisp[['馬名']].head(6).reset_index(drop=True).copy()
-    picks = []
-    for i, r in top.iterrows():
-        # FinalZ の代わりに公開向け Score として AR100 を流用（見栄えが安定）
-        score_pub = float(_dfdisp.loc[_dfdisp.index[i], 'AR100']) if i < len(_dfdisp) else 0.0
-        picks.append({
-            "horse": str(r['馬名']),
-            "mark": mark_for_rank(i),
-            "score": round(score_pub, 3)  # 公開スコア（AR100を小数で）
-        })
+# 1) レポ内に保存（任意）
+os.makedirs("public_exports", exist_ok=True)
+out_path = os.path.join("public_exports", f"rikeiba_picks_{pub_date}.json")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+st.success(f"公開用JSONを書き出しました: {out_path}")
+st.code(out_path, language="text")
 
-    # 推奨買い目（ある場合だけ載せる）— 既存の tickets を想定
-    bets = []
-    if 'tickets' in locals() and isinstance(tickets, list) and len(tickets) > 0:
-        for t in tickets:
-            try:
-                bets.append({
-                    "type": t.get("type",""),
-                    "target": t.get("comb", []),
-                    "amount": int(t.get("yen", 0))
-                })
-            except Exception:
-                continue
+# 2) 直接ダウンロード（←これを使ってNetlifyに上げる）
+json_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+st.download_button(
+    "📥 予想印JSONをダウンロード",
+    data=json_bytes,
+    file_name=f"rikeiba_picks_{pub_date}.json",
+    mime="application/json",
+    use_container_width=True
+)
 
-    payload = {
-        "date": str(pub_date),
-        "brand": "Rikeiba",
-        "races": [
-            {
-                "race_id": f"{pub_date}-01",            # 単一レース想定の簡易ID（必要なら自由に変更）
-                "race_name": race_name_input,
-                "track": track_input,
-                "distance": int(distance_input) if distance_input else None,
-                "going": going_input,
-                "picks": picks,
-                "recommended_bets": bets
-            }
-        ]
-    }
-
-    os.makedirs("public_exports", exist_ok=True)
-    out_path = os.path.join("public_exports", f"rikeiba_picks_{pub_date}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-    st.success(f"公開用JSONを書き出しました: {out_path}")
-    st.code(out_path, language="text")
 
 
