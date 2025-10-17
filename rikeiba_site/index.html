@@ -24,7 +24,7 @@
     th,td{border:1px solid var(--edge);padding:6px 8px;text-align:left;font-size:14px}
     th{background:#004d60;color:#fff}
     .empty{padding:16px;color:var(--mute);border:1px dashed var(--edge);border-radius:8px;background:rgba(0,188,212,.05);text-align:center}
-    #debugPane{max-width:980px;margin:16px auto;padding:12px;border:1px solid var(--edge);border-radius:8px;background:#0b1628;color:var(--mute);white-space:pre-wrap}
+    #debugPane{max-width:980px;margin:16px auto;padding:12px;border:1px solid var(--edge);border-radius:8px;background:#0b1628;color:var(--mute);white-space:pre-wrap;display:none}
   </style>
 </head>
 <body>
@@ -40,11 +40,11 @@
 
   <main>
     <div id="raceContainer">読み込み中...</div>
-    <pre id="debugPane" style="display:none"></pre>
+    <pre id="debugPane"></pre>
   </main>
 
   <script>
-    // ====== 設定：読み込むJSONファイル名 ======
+    // ===== 設定：読み込むJSONファイル =====
     // 置き場所が index.html と同じ階層でも /data/ 配下でも動くようフォールバックします
     const FILES = [
       "秋華賞.json",
@@ -52,15 +52,15 @@
       "新潟牝馬S.json",
       "甲斐路S.json",
       "ブラジルC.json",
-      "アイビーS.json", // ←実際のファイル名に合わせて
-      "もみじS.json"    // ←実際のファイル名に合わせて
+      "アイビーS.json", // 実ファイル名に合わせて
+      "もみじS.json"    // 実ファイル名に合わせて
     ];
 
-    // ====== 状態 ======
+    // ===== 状態 =====
     let sortMode = "score"; // "score" | "mark"
     const markOrder = { "◎":1, "〇":2, "○":2, "▲":3, "△":4, "":5, null:6, undefined:6 };
 
-    // ====== ユーティリティ ======
+    // ===== Utils =====
     const esc = s => String(s??"").replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
     const normDate = v => {
       let s = String(v ?? "").trim();
@@ -74,6 +74,7 @@
       const y = m[1], mo = ("0"+m[2]).slice(-2), d = ("0"+m[3]).slice(-2);
       return `${y}-${mo}-${d}`;
     };
+    const ROOT = location.pathname.replace(/[^/]*$/, '');
 
     function showDebug(lines){
       const pane = document.getElementById('debugPane');
@@ -84,16 +85,12 @@
       pane.style.display = (pane.style.display === 'none' || !pane.style.display) ? 'block' : 'none';
     }
 
-    // ルート（/keiba-analyzer/）を取得し、相対参照を安定化
-    const ROOT = location.pathname.replace(/[^/]*$/, '');
-
-    // ファイルごとに ./ と ./data/ をフォールバックして取得
     async function fetchWithFallback(file, debug){
-      const tries = [
+      const urls = [
         ROOT + encodeURI(file),
         ROOT + "data/" + encodeURI(file)
       ];
-      for (const url of tries){
+      for(const url of urls){
         try{
           const res = await fetch(url + "?_=" + Date.now(), {cache:"no-store"});
           if(res.ok){
@@ -101,14 +98,14 @@
             return await res.json();
           }
           debug.push(`× ${url} -> HTTP ${res.status}`);
-        }catch(err){
-          debug.push(`× ${url} -> ${err}`);
+        }catch(e){
+          debug.push(`× ${url} -> ${e}`);
         }
       }
       return null;
     }
 
-    // ====== データロード：2形式対応 + 同日結合 + 重複除去 ======
+    // ===== データロード：2形式対応 + 同日結合 + 重複除去 =====
     async function loadData(){
       const debug = [];
       const rows = []; // {date,races[]} の配列へ正規化
@@ -129,14 +126,12 @@
         }
       }
 
-      // 同日マージ
       const byDate = new Map();
       for(const row of rows){
         if(!byDate.has(row.date)) byDate.set(row.date, []);
         byDate.get(row.date).push(...row.races);
       }
 
-      // 重複除去：race_id > race_name > JSON文字列
       const dedup = (races)=>{
         const seen = new Set(), out=[];
         for(const r of races){
@@ -151,7 +146,7 @@
 
       const days = Array.from(byDate.entries())
         .map(([date, races]) => ({ date, races: dedup(races) }))
-        .sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)); // 新しい日付が先
+        .sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)); // 新しい順
 
       debug.push('----');
       debug.push(`読込対象: ${FILES.length} 件`);
@@ -160,7 +155,7 @@
       return days;
     }
 
-    // ====== 描画 ======
+    // ===== 描画 =====
     function render(days){
       const container = document.getElementById("raceContainer");
       container.innerHTML = "";
@@ -222,35 +217,30 @@
       }
     }
 
-    // ====== 安全バインド ======
+    // ===== 安全バインド =====
+    function safeBindClick(id, handler){
+      const el = document.getElementById(id);
+      if(!el){ console.warn(`[skip] #${id} が見つからない`); return; }
+      el.addEventListener('click', handler);
+    }
     function bindUI(){
-      const btnScore = document.getElementById('btnScore');
-      const btnMark  = document.getElementById('btnMark');
-      const btnReload= document.getElementById('btnReload');
-      const btnDebug = document.getElementById('btnDebug');
-
-      if(btnScore) btnScore.addEventListener('click', async ()=>{
+      safeBindClick('btnScore', async ()=>{
         sortMode = "score";
-        btnScore.classList.add('active');
-        btnMark && btnMark.classList.remove('active');
+        document.getElementById('btnScore')?.classList.add('active');
+        document.getElementById('btnMark')?.classList.remove('active');
         render(await loadData());
       });
-
-      if(btnMark) btnMark.addEventListener('click', async ()=>{
+      safeBindClick('btnMark', async ()=>{
         sortMode = "mark";
-        btnMark.classList.add('active');
-        btnScore && btnScore.classList.remove('active');
+        document.getElementById('btnMark')?.classList.add('active');
+        document.getElementById('btnScore')?.classList.remove('active');
         render(await loadData());
       });
-
-      if(btnReload) btnReload.addEventListener('click', async ()=>{
-        render(await loadData());
-      });
-
-      if(btnDebug) btnDebug.addEventListener('click', toggleDebug);
+      safeBindClick('btnReload', async ()=>{ render(await loadData()); });
+      safeBindClick('btnDebug', ()=> toggleDebug());
     }
 
-    // ====== 起動 ======
+    // ===== 起動 =====
     document.addEventListener('DOMContentLoaded', async ()=>{
       bindUI();
       render(await loadData());
