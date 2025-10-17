@@ -1,194 +1,260 @@
-<script>
-// ====== 設定 ======
-const FILES = [
-  // JSONが index.html と同じ階層にある場合
-  // "秋華賞.json","富士S.json","新潟牝馬S.json","甲斐路S.json","ブラジルC.json","アイビーS.json","もみじS.json"
-
-  // もし /data 配下に置いているならこちらに切り替え
-  "data/秋華賞.json","data/富士S.json","data/新潟牝馬S.json","data/甲斐路S.json","data/ブラジルC.json","data/アイビーS.json","data/もみじS.json"
-];
-
-let sortMode = "score";
-const markOrder = { "◎":1, "〇":2, "○":2, "▲":3, "△":4, "":5, null:6, undefined:6 };
-
-// ====== 画面下部にデバッグ表示 ======
-function showDebug(lines){
-  let el = document.getElementById('debugPane');
-  if(!el){
-    el = document.createElement('pre');
-    el.id = 'debugPane';
-    el.style.cssText = 'max-width:980px;margin:16px auto;padding:12px;border:1px solid #00bcd4;border-radius:6px;background:#0b1628;color:#80deea;white-space:pre-wrap;';
-    document.body.appendChild(el);
-  }
-  el.textContent = lines.join('\n');
-}
-
-// ====== Utils ======
-const normDate = v => {
-  let s = String(v ?? "").trim();
-  s = s
-    .replace(/[－—–−―]/g, "-")
-    .replace(/[\/\.]/g, "-")
-    .replace(/[年月]/g, "-")
-    .replace(/[日曜日月火水木金土()\（\）]/g, "");
-  const m = s.match(/(\d{4})\D*(\d{1,2})\D*(\d{1,2})/);
-  if (!m) return String(v ?? "");
-  const y = m[1], mo = ("0"+m[2]).slice(-2), d = ("0"+m[3]).slice(-2);
-  return `${y}-${mo}-${d}`;
-};
-
-// ====== ロード ======
-async function loadData(){
-  const debug = [];
-  const okRows = [];
-  const fails  = [];
-
-  // ルート（/keiba-analyzer/）配下で確実に相対参照にする
-  const ROOT = location.pathname.replace(/[^/]*$/, '');
-
-  const results = await Promise.all(FILES.map(async file => {
-    const url = ROOT + file;   // ex) /keiba-analyzer/data/秋華賞.json
-    try{
-      const res = await fetch(url+'?_='+(Date.now()), {cache:'no-store'});
-      if(!res.ok){
-        debug.push(`× ${url} -> HTTP ${res.status}`);
-        return null;
-      }
-      debug.push(`✓ ${url} -> OK`);
-      return await res.json();
-    }catch(e){
-      debug.push(`× ${url} -> ${e}`);
-      return null;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rikeiba 出馬表</title>
+  <style>
+    :root{
+      --bg:#0f1a2c; --panel:#1a2b44; --edge:#00bcd4; --ink:#e0f7fa; --mute:#80deea; --hl:#00e5ff;
     }
-  }));
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans JP","Yu Gothic UI","Meiryo",sans-serif}
+    header{background:#1c2e4a;padding:12px 16px;border-bottom:2px solid var(--edge);display:flex;gap:12px;align-items:center;justify-content:space-between}
+    h1{margin:0;font-size:20px;color:var(--hl)}
+    .bar{display:flex;gap:8px;flex-wrap:wrap}
+    .btn{background:#263a5c;color:#fff;border:1px solid transparent;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .btn.active{background:var(--edge);color:#000}
+    main{max-width:980px;margin:0 auto;padding:16px}
+    .date-title{font-size:18px;color:var(--mute);margin:24px 0 8px}
+    .race-card{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:16px;margin:10px 0;box-shadow:0 0 8px rgba(0,188,212,.2)}
+    .race-title{font-size:18px;margin:0 0 6px;color:#b2ebf2;font-weight:700}
+    .race-meta{font-size:12px;color:#b2ebf2}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{border:1px solid var(--edge);padding:6px 8px;text-align:left;font-size:14px}
+    th{background:#004d60;color:#fff}
+    .empty{padding:16px;color:var(--mute);border:1px dashed var(--edge);border-radius:8px;background:rgba(0,188,212,.05);text-align:center}
+    #debugPane{max-width:980px;margin:16px auto;padding:12px;border:1px solid var(--edge);border-radius:8px;background:#0b1628;color:var(--mute);white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Rikeiba 出馬表</h1>
+    <div class="bar">
+      <button id="btnScore" class="btn active">スコア順</button>
+      <button id="btnMark"  class="btn">印順</button>
+      <button id="btnReload" class="btn">更新</button>
+      <button id="btnDebug" class="btn">デバッグ</button>
+    </div>
+  </header>
 
-  // 形を吸収：{days:[{date,races}...]} / {date,races}
-  for(const d of results){
-    if(!d){ fails.push('null'); continue; }
-    if(Array.isArray(d.days)){
-      for(const day of d.days){
-        if(day?.date && Array.isArray(day?.races)){
-          okRows.push({ date: normDate(day.date), races: day.races });
+  <main>
+    <div id="raceContainer">読み込み中...</div>
+    <pre id="debugPane" style="display:none"></pre>
+  </main>
+
+  <script>
+    // ====== 設定：読み込むJSONファイル名 ======
+    // 置き場所が index.html と同じ階層でも /data/ 配下でも動くようフォールバックします
+    const FILES = [
+      "秋華賞.json",
+      "富士S.json",
+      "新潟牝馬S.json",
+      "甲斐路S.json",
+      "ブラジルC.json",
+      "アイビーS.json", // ←実際のファイル名に合わせて
+      "もみじS.json"    // ←実際のファイル名に合わせて
+    ];
+
+    // ====== 状態 ======
+    let sortMode = "score"; // "score" | "mark"
+    const markOrder = { "◎":1, "〇":2, "○":2, "▲":3, "△":4, "":5, null:6, undefined:6 };
+
+    // ====== ユーティリティ ======
+    const esc = s => String(s??"").replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+    const normDate = v => {
+      let s = String(v ?? "").trim();
+      s = s
+        .replace(/[－—–−―]/g, "-")   // 全角/長音ハイフン等
+        .replace(/[\/\.]/g, "-")      // / .
+        .replace(/[年月]/g, "-")      // 年 月
+        .replace(/[日曜日月火水木金土()\（\）\s]/g, ""); // 日/曜日/括弧/空白
+      const m = s.match(/(\d{4})\D*(\d{1,2})\D*(\d{1,2})/);
+      if (!m) return String(v ?? "");
+      const y = m[1], mo = ("0"+m[2]).slice(-2), d = ("0"+m[3]).slice(-2);
+      return `${y}-${mo}-${d}`;
+    };
+
+    function showDebug(lines){
+      const pane = document.getElementById('debugPane');
+      pane.textContent = lines.join('\n');
+    }
+    function toggleDebug(){
+      const pane = document.getElementById('debugPane');
+      pane.style.display = (pane.style.display === 'none' || !pane.style.display) ? 'block' : 'none';
+    }
+
+    // ルート（/keiba-analyzer/）を取得し、相対参照を安定化
+    const ROOT = location.pathname.replace(/[^/]*$/, '');
+
+    // ファイルごとに ./ と ./data/ をフォールバックして取得
+    async function fetchWithFallback(file, debug){
+      const tries = [
+        ROOT + encodeURI(file),
+        ROOT + "data/" + encodeURI(file)
+      ];
+      for (const url of tries){
+        try{
+          const res = await fetch(url + "?_=" + Date.now(), {cache:"no-store"});
+          if(res.ok){
+            debug.push(`✓ ${url} -> OK`);
+            return await res.json();
+          }
+          debug.push(`× ${url} -> HTTP ${res.status}`);
+        }catch(err){
+          debug.push(`× ${url} -> ${err}`);
         }
       }
-    }else if(d?.date && Array.isArray(d?.races)){
-      okRows.push({ date: normDate(d.date), races: d.races });
-    }else{
-      fails.push(JSON.stringify(Object.keys(d)));
-    }
-  }
-
-  // 結合 & 重複除去
-  const byDate = new Map();
-  for(const row of okRows){
-    if(!byDate.has(row.date)) byDate.set(row.date, []);
-    byDate.get(row.date).push(...row.races);
-  }
-  const dedup = (races)=>{
-    const seen = new Set(), out=[];
-    for(const r of races){
-      const key = r.race_id ? `ID:${r.race_id}` :
-                 r.race_name ? `N:${r.race_name}` :
-                 JSON.stringify(r);
-      if(seen.has(key)) continue;
-      seen.add(key); out.push(r);
-    }
-    return out;
-  };
-
-  const days = Array.from(byDate.entries())
-    .map(([date, races]) => ({ date, races: dedup(races) }))
-    .sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:0));
-
-  // デバッグ出力
-  const uniqDates = days.map(d=>d.date);
-  debug.push('----');
-  debug.push(`合計ファイル: ${FILES.length}`);
-  debug.push(`読み込み成功: ${results.filter(Boolean).length}`);
-  debug.push(`解釈できた日付: ${uniqDates.join(', ') || '(なし)'}`);
-  if(fails.length) debug.push(`形式不一致 or 読込失敗: ${fails.join(' | ')}`);
-  showDebug(debug);
-
-  return days;
-}
-
-// ====== 描画 ======
-function render(data){
-  const container = document.getElementById("raceContainer");
-  container.innerHTML = "";
-
-  if(!data.length){
-    container.textContent = "レースデータが0件です（JSONのパス/ファイル名/形式を確認）";
-    return;
-  }
-
-  data.forEach(day => {
-    const dateTitle = document.createElement("div");
-    dateTitle.className = "date-title";
-    dateTitle.textContent = day.date;
-    container.appendChild(dateTitle);
-
-    if(!Array.isArray(day.races) || !day.races.length){
-      const empty = document.createElement('div');
-      empty.className = 'race-card';
-      empty.textContent = 'この日のレースが見つかりませんでした。';
-      container.appendChild(empty);
-      return;
+      return null;
     }
 
-    day.races.forEach(race => {
-      const card = document.createElement("div");
-      card.className = "race-card";
+    // ====== データロード：2形式対応 + 同日結合 + 重複除去 ======
+    async function loadData(){
+      const debug = [];
+      const rows = []; // {date,races[]} の配列へ正規化
 
-      const picks = Array.isArray(race.picks) ? [...race.picks] : [];
-      if(sortMode === "score"){
-        picks.sort((a,b)=> (parseFloat(b.score ?? -Infinity) - parseFloat(a.score ?? -Infinity)));
-      }else{
-        picks.sort((a,b)=> (markOrder[a.mark] ?? 99) - (markOrder[b.mark] ?? 99));
+      for(const f of FILES){
+        const d = await fetchWithFallback(f, debug);
+        if(!d) continue;
+        if(Array.isArray(d.days)){
+          for(const day of d.days){
+            if(day?.date && Array.isArray(day?.races)){
+              rows.push({ date: normDate(day.date), races: day.races });
+            }
+          }
+        }else if(d?.date && Array.isArray(d?.races)){
+          rows.push({ date: normDate(d.date), races: d.races });
+        }else{
+          debug.push(`！形式不一致: ${f} keys=${Object.keys(d||{}).join(',')}`);
+        }
       }
 
-      const dist = (race.distance ?? race.dist ?? "").toString().trim();
+      // 同日マージ
+      const byDate = new Map();
+      for(const row of rows){
+        if(!byDate.has(row.date)) byDate.set(row.date, []);
+        byDate.get(row.date).push(...row.races);
+      }
 
-      card.innerHTML = `
-        <div class="race-title">${race.race_name || "レース名不明"}</div>
-        <div class="race-meta">
-          ${(race.track || "").toString()} / ${dist ? dist+"m" : "?"} / 馬場: ${(race.going || "?").toString()}
-        </div>
-        <table>
-          <thead>
-            <tr><th>印</th><th>馬名</th><th>スコア</th></tr>
-          </thead>
-          <tbody>
-            ${picks.map(p => `
-              <tr>
-                <td>${p.mark ?? ""}</td>
-                <td>${p.horse ?? ""}</td>
-                <td>${(p.score ?? "")}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      `;
-      container.appendChild(card);
+      // 重複除去：race_id > race_name > JSON文字列
+      const dedup = (races)=>{
+        const seen = new Set(), out=[];
+        for(const r of races){
+          const key = r.race_id ? `ID:${r.race_id}` :
+                     r.race_name ? `N:${r.race_name}` :
+                     JSON.stringify(r);
+          if(seen.has(key)) continue;
+          seen.add(key); out.push(r);
+        }
+        return out;
+      };
+
+      const days = Array.from(byDate.entries())
+        .map(([date, races]) => ({ date, races: dedup(races) }))
+        .sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)); // 新しい日付が先
+
+      debug.push('----');
+      debug.push(`読込対象: ${FILES.length} 件`);
+      debug.push(`解釈できた日付: ${days.map(d=>d.date).join(', ') || '(なし)'}`);
+      showDebug(debug);
+      return days;
+    }
+
+    // ====== 描画 ======
+    function render(days){
+      const container = document.getElementById("raceContainer");
+      container.innerHTML = "";
+
+      if(!days.length){
+        container.innerHTML = `<div class="empty">レースデータが0件です。JSONのパス/ファイル名/形式を確認してください。</div>`;
+        return;
+      }
+
+      for(const day of days){
+        const dt = document.createElement('div');
+        dt.className = 'date-title';
+        dt.textContent = day.date;
+        container.appendChild(dt);
+
+        if(!Array.isArray(day.races) || !day.races.length){
+          const emp = document.createElement('div');
+          emp.className = 'race-card';
+          emp.textContent = 'この日のレースが見つかりませんでした。';
+          container.appendChild(emp);
+          continue;
+        }
+
+        for(const race of day.races){
+          const card = document.createElement('div');
+          card.className = 'race-card';
+
+          const picks = Array.isArray(race.picks) ? [...race.picks] : [];
+          if(sortMode === "score"){
+            picks.sort((a,b)=> (parseFloat(b.score ?? -Infinity) - parseFloat(a.score ?? -Infinity)));
+          }else{
+            picks.sort((a,b)=> ( (markOrder[a.mark] ?? 99) - (markOrder[b.mark] ?? 99) ));
+          }
+
+          const dist = (race.distance ?? race.dist ?? "").toString().trim();
+
+          card.innerHTML = `
+            <div class="race-title">${esc(race.race_name || "レース名不明")}</div>
+            <div class="race-meta">
+              ${esc(race.track || "")} / ${dist ? esc(dist)+"m" : "?"} / 馬場: ${esc(race.going || "?")}
+            </div>
+            <table>
+              <thead>
+                <tr><th>印</th><th>馬名</th><th>スコア</th></tr>
+              </thead>
+              <tbody>
+                ${picks.map(p=>`
+                  <tr>
+                    <td>${esc(p.mark ?? "")}</td>
+                    <td>${esc(p.horse ?? "")}</td>
+                    <td>${esc(p.score ?? "")}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          `;
+          container.appendChild(card);
+        }
+      }
+    }
+
+    // ====== 安全バインド ======
+    function bindUI(){
+      const btnScore = document.getElementById('btnScore');
+      const btnMark  = document.getElementById('btnMark');
+      const btnReload= document.getElementById('btnReload');
+      const btnDebug = document.getElementById('btnDebug');
+
+      if(btnScore) btnScore.addEventListener('click', async ()=>{
+        sortMode = "score";
+        btnScore.classList.add('active');
+        btnMark && btnMark.classList.remove('active');
+        render(await loadData());
+      });
+
+      if(btnMark) btnMark.addEventListener('click', async ()=>{
+        sortMode = "mark";
+        btnMark.classList.add('active');
+        btnScore && btnScore.classList.remove('active');
+        render(await loadData());
+      });
+
+      if(btnReload) btnReload.addEventListener('click', async ()=>{
+        render(await loadData());
+      });
+
+      if(btnDebug) btnDebug.addEventListener('click', toggleDebug);
+    }
+
+    // ====== 起動 ======
+    document.addEventListener('DOMContentLoaded', async ()=>{
+      bindUI();
+      render(await loadData());
     });
-  });
-}
-
-// ====== ソート切替 ======
-document.getElementById("sortScore").onclick = async () => {
-  sortMode = "score";
-  document.getElementById("sortScore").classList.add("active");
-  document.getElementById("sortMark").classList.remove("active");
-  render(await loadData());
-};
-
-document.getElementById("sortMark").onclick = async () => {
-  sortMode = "mark";
-  document.getElementById("sortMark").classList.add("active");
-  document.getElementById("sortScore").classList.remove("active");
-  render(await loadData());
-};
-
-// 初回
-loadData().then(render);
-</script>
+  </script>
+</body>
+</html>
