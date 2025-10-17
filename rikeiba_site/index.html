@@ -1,280 +1,142 @@
 <script>
-// ==== 読み込むJSON（index.htmlと同じ階層） ====
-const FILES = [
-  "もみじS.json",
-  "アイビーS.json",
-  "ブラジルC.json",
-  "富士S.json",
-  "新潟牝馬S.json",
-  "甲斐路S.json",
-  "秋華賞.json",
-];
+  // --- 外部JSON（index.htmlと同じ階層） ---
+  const FILES = [
+    "秋華賞.json",
+    "富士S.json",
+    "新潟牝馬S.json",
+    "甲斐路S.json",
+    "ブラジルC.json",
+    "アイビーS.json",  // ←S付きに注意（ファイル名に合わせて）
+    "もみじS.json"     // ←S付きに注意（ファイル名に合わせて）
+  ];
 
-let RAW = null;          // 結合後データ
-let DAYS = [];           // [{date, races:Array}]
-let CURRENT_DATE = "";   // 選択中の日付
-let VENUES = [];         // 場名候補
+  let sortMode = "score";
+  const markOrder = { "◎":1, "〇":2, "○":2, "▲":3, "△":4, "":5, null:6, undefined:6 };
 
-// ==== Utils ====
-const esc = s => String(s||"").replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
-const getGrade = name => {
-  const s = String(name||"").toUpperCase();
-  if (/(^|\W)(G1|Ｇ1|GI|ＧＩ)($|\W)/.test(s)) return "G1";
-  if (/(^|\W)(G2|Ｇ2|GII|ＧＩＩ)($|\W)/.test(s)) return "G2";
-  if (/(^|\W)(G3|Ｇ3|GIII|ＧＩＩＩ)($|\W)/.test(s)) return "G3";
-  if (/(^|\W)L($|\W)|リステッド/.test(name||"")) return "L";
-  if (/オープン|(^|\W)OP($|\W)|OPEN/i.test(name||"")) return "OP";
-  return "None"; // 3勝/2勝などはここに落ちる
-};
-const parseSurf  = track => String(track||"").includes("ダ") ? "ダ" : (String(track||"").includes("芝") ? "芝" : "");
-const parseVenue = track => (String(track||"").trim().split(/\s|　/)[0] || "");
-const normDate   = v => {
-  // 文字列日付はそのまま使い、Dateにした時だけISO化
-  if (v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate()).toISOString().slice(0,10);
-  return String(v);
-};
+  // 日付の表記ゆれを全部 YYYY-MM-DD に統一
+  const normDate = v => {
+    let s = String(v ?? "").trim();
+    s = s
+      .replace(/[－—–−―]/g, "-")     // 全角/長音ハイフン等
+      .replace(/[\/\.]/g, "-")        // / .
+      .replace(/[年月]/g, "-")        // 年 月
+      .replace(/[日曜日月火水木金土()\（\）]/g, ""); // 日・曜日・括弧
+    const m = s.match(/(\d{4})\D*(\d{1,2})\D*(\d{1,2})/);
+    if (!m) return String(v ?? "");
+    const y = m[1], mo = ("0"+m[2]).slice(-2), d = ("0"+m[3]).slice(-2);
+    return `${y}-${mo}-${d}`;
+  };
 
-// ==== 複数JSONをロードして、同日を結合 ====
-async function load(){
-  const results = await Promise.all(
-    FILES.map(f =>
-      fetch("./" + encodeURI(f) + "?_=" + Date.now(), { cache:"no-store" })
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null)
-    )
-  );
+  // JSONを読み込み、{date,races[]} の配列に変換し、同日を結合
+  async function loadData(){
+    const results = await Promise.all(
+      FILES.map(file =>
+        fetch("./"+encodeURI(file)+"?_="+Date.now(), {cache:"no-store"})
+          .then(res => res.ok ? res.json() : null)
+          .catch(()=>null)
+      )
+    );
 
-  // まず days[] をすべて拾う
-  const daysRaw = [];
-  for (const d of results) {
-    if (!d) continue;
-    if (Array.isArray(d?.days)) {
-      daysRaw.push(...d.days);
-    } else if (d?.date && Array.isArray(d?.races)) {
-      daysRaw.push({ date: d.date, races: d.races });
+    // まず {date,races[]} を全て抽出
+    const rows = [];
+    for(const d of results){
+      if(!d) continue;
+      if(Array.isArray(d.days)){
+        for(const day of d.days){
+          if(day?.date && Array.isArray(day?.races)){
+            rows.push({ date: normDate(day.date), races: day.races });
+          }
+        }
+      }else if(d?.date && Array.isArray(d?.races)){
+        rows.push({ date: normDate(d.date), races: d.races });
+      }
     }
+
+    // dateごとに結合 & 重複race_id除去
+    const byDate = new Map();
+    for(const row of rows){
+      if(!byDate.has(row.date)) byDate.set(row.date, []);
+      byDate.get(row.date).push(...row.races);
+    }
+    const dedup = races => {
+      const seen = new Set(), out = [];
+      for(const r of races){
+        const key = r.race_id ? `ID:${r.race_id}` :
+                   r.race_name ? `N:${r.race_name}` :
+                   JSON.stringify(r);
+        if(seen.has(key)) continue;
+        seen.add(key); out.push(r);
+      }
+      return out;
+    };
+
+    return Array.from(byDate.entries())
+      .map(([date, races]) => ({ date, races: dedup(races) }))
+      .sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)); // 新しい順
   }
 
-  // <<< ここが肝：dateごとにレースを結合・重複排除 >>>
-  const byDate = new Map(); // date -> Array<race>
-  for (const d of daysRaw) {
-    const ymd = normDate(d.date);
-    if (!byDate.has(ymd)) byDate.set(ymd, []);
-    const bucket = byDate.get(ymd);
-    for (const r of (d.races||[])) bucket.push(r);
-  }
+  function render(data){
+    const container = document.getElementById("raceContainer");
+    container.innerHTML = "";
 
-  // 任意：race_id があるものは重複排除（同じ日付で同じIDが複数ファイルにある可能性に備える）
-  const dedup = (races) => {
-    const seen = new Set();
-    const out = [];
-    for (const r of races) {
-      const key = r.race_id ? String(r.race_id) : (r.race_name ? `N:${r.race_name}` : JSON.stringify(r));
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(r);
-    }
-    return out;
-  };
+    data.forEach(day => {
+      const dateTitle = document.createElement("div");
+      dateTitle.className = "date-title";
+      dateTitle.textContent = day.date;
+      container.appendChild(dateTitle);
 
-  DAYS = Array.from(byDate.entries())
-    .map(([date, races]) => ({ date, races: dedup(races) }))
-    .sort((a,b)=> String(b.date).localeCompare(String(a.date))); // 新しい日付が先
+      day.races.forEach(race => {
+        const card = document.createElement("div");
+        card.className = "race-card";
 
-  RAW = { days: DAYS };
-  CURRENT_DATE = DAYS[0]?.date || "";
-  buildDateUI();
-  rebuildVenueList();
-  render();
-}
+        const picks = Array.isArray(race.picks) ? [...race.picks] : [];
+        if(sortMode === "score"){
+          picks.sort((a,b)=> (parseFloat(b.score ?? -Infinity) - parseFloat(a.score ?? -Infinity)));
+        }else{
+          picks.sort((a,b)=> (markOrder[a.mark] ?? 99) - (markOrder[b.mark] ?? 99));
+        }
 
-// ==== 日付UI ====
-function buildDateUI(){
-  const tabs = document.getElementById("dateTabs");
-  const sel  = document.getElementById("dateSelect");
-  tabs.innerHTML = "";
-  sel.innerHTML = "";
+        const dist = (race.distance ?? race.dist ?? "").toString().trim();
 
-  DAYS.forEach((d) => {
-    const b = document.createElement("button");
-    b.className = "tab" + (d.date===CURRENT_DATE ? " on": "");
-    b.textContent = d.date;
-    b.onclick = ()=>{ CURRENT_DATE = d.date; syncDateSelect(); rebuildVenueList(); render(); };
-    tabs.appendChild(b);
-
-    const opt = document.createElement("option");
-    opt.value = d.date; opt.textContent = d.date;
-    if (d.date===CURRENT_DATE) opt.selected = true;
-    sel.appendChild(opt);
-  });
-
-  document.getElementById("dateSelect").onchange = (e)=>{
-    CURRENT_DATE = e.target.value;
-    syncTabs();
-    rebuildVenueList();
-    render();
-  };
-}
-
-function syncTabs(){
-  document.querySelectorAll(".tab").forEach(el=>{
-    el.classList.toggle("on", el.textContent===CURRENT_DATE);
-  });
-}
-function syncDateSelect(){
-  const sel = document.getElementById("dateSelect");
-  [...sel.options].forEach(o=> o.selected = (o.value===CURRENT_DATE));
-}
-
-// ==== 場名のプルダウン ====
-function rebuildVenueList(){
-  const today = DAYS.find(d=> d.date===CURRENT_DATE);
-  const venues = new Set();
-  (today?.races||[]).forEach(r=> venues.add(parseVenue(r.track)));
-  const arr = [...venues].filter(Boolean).sort((a,b)=>a.localeCompare(b));
-  VENUES = arr;
-  const vsel = document.getElementById("venueSelect");
-  vsel.innerHTML = "<option value=''>すべて</option>" + arr.map(v=>`<option>${esc(v)}</option>`).join("");
-}
-
-// ==== フィルタ状態 ====
-const state = { q:"", grades:new Set(), surfs:new Set(), minD:"", maxD:"", venue:"", sort:"time" };
-
-function hookFilters(){
-  document.getElementById("q").oninput = e=>{ state.q = e.target.value.trim(); render(); };
-
-  // グレード：'指定なし' はフィルタ解除として扱う
-  document.getElementById("gradeChips").addEventListener("click", e=>{
-    const chip = e.target.closest(".chip"); if(!chip) return;
-    const g = chip.dataset.grade;
-    if (g === "None") {
-      // フィルタ解除
-      state.grades.clear();
-      document.querySelectorAll('#gradeChips .chip').forEach(c=>c.classList.remove('on'));
-      // '指定なし'を見た目でONにしない場合は以下を外す
-      // chip.classList.add('on');
-      render();
-      return;
-    }
-    // 通常トグル
-    if (chip.classList.toggle("on")) state.grades.add(g);
-    else state.grades.delete(g);
-    // '指定なし'がONになっていたら外す
-    document.querySelector('#gradeChips .chip[data-grade="None"]')?.classList.remove('on');
-    render();
-  });
-
-  document.getElementById("surfChips").addEventListener("click", e=>{
-    const chip = e.target.closest(".chip"); if(!chip) return;
-    const s = chip.dataset.surf;
-    if (chip.classList.toggle("on")) state.surfs.add(s);
-    else state.surfs.delete(s);
-    render();
-  });
-
-  document.getElementById("minD").oninput = e=>{ state.minD = e.target.value; render(); };
-  document.getElementById("maxD").oninput = e=>{ state.maxD = e.target.value; render(); };
-
-  document.getElementById("venueSelect").onchange = e=>{ state.venue = e.target.value; render(); };
-  document.getElementById("sortSelect").onchange  = e=>{ state.sort  = e.target.value; render(); };
-
-  document.getElementById("clearBtn").onclick = ()=>{
-    state.q=""; state.grades.clear(); state.surfs.clear(); state.minD=""; state.maxD=""; state.venue=""; state.sort="time";
-    document.getElementById("q").value="";
-    document.querySelectorAll(".chip.on").forEach(x=>x.classList.remove("on"));
-    document.getElementById("minD").value=""; document.getElementById("maxD").value="";
-    document.getElementById("venueSelect").value="";
-    document.getElementById("sortSelect").value="time";
-    render();
-  };
-
-  document.getElementById("refreshBtn").onclick = ()=> load();
-}
-
-// ==== 描画 ====
-function render(){
-  const container = document.getElementById("raceList");
-  const empty = document.getElementById("emptyMsg");
-  container.innerHTML = "";
-
-  const day = DAYS.find(d=> d.date===CURRENT_DATE);
-  if (!day || !Array.isArray(day.races)) { empty.style.display = "block"; return; }
-
-  let races = day.races.map(r=>{
-    const race_name = r.race_name || r.race_id || "";
-    const grade = getGrade(race_name);
-    const surf = parseSurf(r.track);
-    const venue = parseVenue(r.track);
-    const distance = (typeof r.distance === "number") ? r.distance : Number(r.dist||NaN);
-    return {...r, __race_name: race_name, __grade: grade, __surf: surf, __venue: venue, __distance: distance};
-  });
-
-  const q = state.q.toLowerCase();
-  if (q) races = races.filter(r =>
-    r.__race_name.toLowerCase().includes(q) ||
-    (r.track||"").toLowerCase().includes(q) ||
-    (r.__venue||"").toLowerCase().includes(q) ||
-    (r.picks||[]).some(p => String(p.horse||"").toLowerCase().includes(q))
-  );
-
-  if (state.grades.size) races = races.filter(r => state.grades.has(r.__grade));
-  if (state.surfs.size)  races = races.filter(r => state.surfs.has(r.__surf));
-  if (state.venue)       races = races.filter(r => r.__venue === state.venue);
-
-  const minD = Number(state.minD||0), maxD = Number(state.maxD||0);
-  if (minD || maxD) {
-    races = races.filter(r => {
-      const d = Number(r.__distance||0);
-      const okMin = minD ? (d >= minD) : true;
-      const okMax = maxD ? (d <= maxD) : true;
-      return okMin && okMax;
+        card.innerHTML = `
+          <div class="race-title">${race.race_name || "レース名不明"}</div>
+          <div class="race-meta">
+            ${(race.track || "").toString()} / ${dist ? dist+"m" : "?"} / 馬場: ${(race.going || "?").toString()}
+          </div>
+          <table>
+            <thead>
+              <tr><th>印</th><th>馬名</th><th>スコア</th></tr>
+            </thead>
+            <tbody>
+              ${picks.map(p => `
+                <tr>
+                  <td>${p.mark ?? ""}</td>
+                  <td>${p.horse ?? ""}</td>
+                  <td>${(p.score ?? "")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        container.appendChild(card);
+      });
     });
   }
 
-  if (state.sort==="grade"){
-    const ord = {G1:1,G2:2,G3:3,L:4,OP:5,None:6};
-    races.sort((a,b)=> (ord[a.__grade]||9)-(ord[b.__grade]||9) || String(a.__race_name).localeCompare(String(b.__race_name)));
-  } else if (state.sort==="distance"){
-    races.sort((a,b)=> (a.__distance||0) - (b.__distance||0));
-  } else if (state.sort==="venue"){
-    races.sort((a,b)=> String(a.__venue).localeCompare(String(b.__venue)) || (a.__distance||0)-(b.__distance||0));
-  }
+  document.getElementById("sortScore").onclick = async () => {
+    sortMode = "score";
+    document.getElementById("sortScore").classList.add("active");
+    document.getElementById("sortMark").classList.remove("active");
+    render(await loadData());
+  };
 
-  if (!races.length){ empty.style.display="block"; return; }
-  empty.style.display="none";
+  document.getElementById("sortMark").onclick = async () => {
+    sortMode = "mark";
+    document.getElementById("sortMark").classList.add("active");
+    document.getElementById("sortScore").classList.remove("active");
+    render(await loadData());
+  };
 
-  races.forEach(r=>{
-    const title = (r.__race_name || r.race_id || "").trim();
-    const metaParts = [ r.__venue || "", r.__surf || (String(r.track).includes("ダ")?"ダ":""), r.__distance? `${r.__distance}m`:"", r.going||"" ].filter(Boolean);
-    const grade = r.__grade==="None" ? "" : r.__grade;
-
-    const card = document.createElement("div");
-    card.className = "race";
-    card.innerHTML = `
-      <div class="race-head">
-        <div>
-          <div class="title">${esc(title)}</div>
-          <div class="meta">${esc(metaParts.join(" / "))}</div>
-        </div>
-        <div class="chips2">
-          ${grade? `<span class="tag">${esc(grade)}</span>`:``}
-          ${r.race_id? `<span class="tag">ID: ${esc(r.race_id)}</span>`:``}
-        </div>
-      </div>
-      <div class="picks">
-        ${(r.picks||[]).map(p=>`
-          <div class="pick">
-            <span class="mark">${esc(p.mark||"")}</span>
-            <span class="horse">${esc(p.horse||"")}</span>
-          </div>
-        `).join("")}
-      </div>
-    `;
-    container.appendChild(card);
-  });
-}
-
-// 起動
-hookFilters();
-load();
+  // 初回
+  loadData().then(render);
 </script>
