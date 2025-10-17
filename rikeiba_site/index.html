@@ -1,145 +1,5 @@
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Rikeiba Picks</title>
-<style>
-  :root{
-    --bg:#0b0b0b; --panel:#121212; --panel2:#171717;
-    --text:#e7e7e7; --mute:#a9a9a9; --accent:#8fda7f; --line:#2a2a2a;
-    --brand:#21d07a; --chip:#222; --chipOn:#2c493a;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif}
-  header{display:flex;gap:.8rem;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(0deg,transparent,rgba(255,255,255,.03))}
-  .brand{font-weight:800;color:var(--accent);letter-spacing:.3px}
-  .wrap{display:grid;grid-template-columns:280px 1fr;gap:16px;max-width:1200px;margin:0 auto;padding:12px}
-  @media (max-width:900px){.wrap{grid-template-columns:1fr}}
-  /* Sidebar */
-  .side{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
-  .side h3{margin:4px 0 8px;font-size:14px;color:var(--mute);font-weight:700}
-  .field{margin:8px 0}
-  .field label{display:block;font-size:12px;color:var(--mute);margin-bottom:4px}
-  select,input[type="date"],input[type="text"],input[type="number"]{
-    width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);
-    border-radius:8px;padding:8px 10px;outline:none}
-  .chips{display:flex;flex-wrap:wrap;gap:6px}
-  .chip{padding:6px 8px;border:1px solid var(--line);border-radius:999px;background:var(--chip);color:var(--text);font-size:12px;cursor:pointer}
-  .chip.on{background:var(--chipOn);border-color:#365c45}
-  .range{display:flex;gap:8px}
-  .range input{width:50%}
-  /* Main */
-  .main{min-height:60vh}
-  .section-head{display:flex;align-items:center;gap:8px;margin:8px 0 10px}
-  .tabs{display:flex;gap:6px;flex-wrap:wrap}
-  .tab{padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:#101010;color:var(--text);cursor:pointer;font-size:12px}
-  .tab.on{background:var(--brand);color:#000;border-color:var(--brand);font-weight:700}
-  .list{display:flex;flex-direction:column;gap:10px}
-  .race{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px}
-  .race-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between}
-  .title{font-weight:800;color:var(--accent)}
-  .meta{color:var(--mute);font-size:12px}
-  .chips2{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .tag{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:2px 6px;background:#151515;color:#bbb}
-  .picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin-top:8px}
-  .pick{background:#131313;border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;align-items:center;gap:8px}
-  .mark{min-width:1.8em;text-align:center;font-weight:900;color:#ffea00}
-  .horse{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .empty{color:var(--mute);padding:16px;text-align:center;border:1px dashed var(--line);border-radius:10px;background:#0f0f0f}
-  footer{opacity:.7;text-align:center;font-size:12px;padding:16px}
-  .bar{display:flex;gap:8px;flex-wrap:wrap}
-  .button{background:#1a1a1a;color:#ddd;border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer}
-  .button:hover{filter:brightness(1.1)}
-</style>
-</head>
-<body>
-<header>
-  <div class="brand">Rikeiba Picks</div>
-  <div class="bar">
-    <button class="button" id="refreshBtn">更新</button>
-  </div>
-</header>
-
-<div class="wrap">
-  <!-- Sidebar filters -->
-  <aside class="side" id="filters">
-    <h3>検索/絞り込み</h3>
-
-    <div class="field">
-      <label>開催日</label>
-      <select id="dateSelect"></select>
-    </div>
-
-    <div class="field">
-      <label>フリーワード（レース名/馬名/場名）</label>
-      <input id="q" type="text" placeholder="例: 秋華賞 / 東京 / リバティアイランド" />
-    </div>
-
-    <div class="field">
-      <label>グレード</label>
-      <div class="chips" id="gradeChips">
-        <span class="chip" data-grade="G1">G1</span>
-        <span class="chip" data-grade="G2">G2</span>
-        <span class="chip" data-grade="G3">G3</span>
-        <span class="chip" data-grade="L">L</span>
-        <span class="chip" data-grade="OP">OP</span>
-        <span class="chip" data-grade="None">指定なし</span>
-      </div>
-    </div>
-
-    <div class="field">
-      <label>コース</label>
-      <div class="chips" id="surfChips">
-        <span class="chip" data-surf="芝">芝</span>
-        <span class="chip" data-surf="ダ">ダ</span>
-      </div>
-    </div>
-
-    <div class="field">
-      <label>距離[m] 範囲</label>
-      <div class="range">
-        <input id="minD" type="number" placeholder="例: 1200" />
-        <input id="maxD" type="number" placeholder="例: 3000" />
-      </div>
-    </div>
-
-    <div class="field">
-      <label>場名</label>
-      <select id="venueSelect"><option value="">すべて</option></select>
-    </div>
-
-    <div class="field">
-      <button class="button" id="clearBtn" style="width:100%">絞り込みをクリア</button>
-    </div>
-
-    <h3>並び替え</h3>
-    <div class="field">
-      <select id="sortSelect">
-        <option value="time">掲載順（そのまま）</option>
-        <option value="grade">グレード（G1→）</option>
-        <option value="distance">距離（短→長）</option>
-        <option value="venue">場名（あ→）</option>
-      </select>
-    </div>
-  </aside>
-
-  <!-- Main -->
-  <main class="main">
-    <div class="section-head">
-      <div class="tabs" id="dateTabs"></div>
-    </div>
-    <div class="list" id="raceList"></div>
-    <div class="empty" id="emptyMsg" style="display:none">条件に一致するレースがありません。</div>
-  </main>
-</div>
-
-<footer>© Rikeiba</footer>
-
 <script>
-// ←ここから全部置き換え
-
-// ここに読み込むJSONファイル名を列挙（index.html と同じフォルダ）
+// ==== 読み込むJSON（index.htmlと同じ階層） ====
 const FILES = [
   "もみじS.json",
   "アイビーS.json",
@@ -150,26 +10,31 @@ const FILES = [
   "秋華賞.json",
 ];
 
-let RAW = null;          // 読み込んだデータ（結合後）
-let DAYS = [];           // {date, races[]}
-let CURRENT_DATE = "";   // 選択日
+let RAW = null;          // 結合後データ
+let DAYS = [];           // [{date, races:Array}]
+let CURRENT_DATE = "";   // 選択中の日付
 let VENUES = [];         // 場名候補
 
-// ==== Utilities ====
+// ==== Utils ====
 const esc = s => String(s||"").replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
 const getGrade = name => {
   const s = String(name||"").toUpperCase();
-  if (/G1\b|Ｇ1|ＧＩ|GI\b/.test(s)) return "G1";
-  if (/G2\b|Ｇ2|ＧＩＩ|GII\b/.test(s)) return "G2";
-  if (/G3\b|Ｇ3|ＧＩＩＩ|GIII\b/.test(s)) return "G3";
-  if (/\bL\b|リステッド/.test(name||"")) return "L";
-  if (/オープン|OP\b|OPEN/i.test(name||"")) return "OP";
-  return "None";
+  if (/(^|\W)(G1|Ｇ1|GI|ＧＩ)($|\W)/.test(s)) return "G1";
+  if (/(^|\W)(G2|Ｇ2|GII|ＧＩＩ)($|\W)/.test(s)) return "G2";
+  if (/(^|\W)(G3|Ｇ3|GIII|ＧＩＩＩ)($|\W)/.test(s)) return "G3";
+  if (/(^|\W)L($|\W)|リステッド/.test(name||"")) return "L";
+  if (/オープン|(^|\W)OP($|\W)|OPEN/i.test(name||"")) return "OP";
+  return "None"; // 3勝/2勝などはここに落ちる
 };
-const parseSurf = track => String(track||"").includes("ダ") ? "ダ" : (String(track||"").includes("芝") ? "芝" : "");
+const parseSurf  = track => String(track||"").includes("ダ") ? "ダ" : (String(track||"").includes("芝") ? "芝" : "");
 const parseVenue = track => (String(track||"").trim().split(/\s|　/)[0] || "");
+const normDate   = v => {
+  // 文字列日付はそのまま使い、Dateにした時だけISO化
+  if (v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate()).toISOString().slice(0,10);
+  return String(v);
+};
 
-// ==== 複数JSONをまとめてロード ====
+// ==== 複数JSONをロードして、同日を結合 ====
 async function load(){
   const results = await Promise.all(
     FILES.map(f =>
@@ -179,25 +44,51 @@ async function load(){
     )
   );
 
-  // days 形式に正規化して結合
-  const days = [];
+  // まず days[] をすべて拾う
+  const daysRaw = [];
   for (const d of results) {
     if (!d) continue;
     if (Array.isArray(d?.days)) {
-      days.push(...d.days);
+      daysRaw.push(...d.days);
     } else if (d?.date && Array.isArray(d?.races)) {
-      days.push({ date: d.date, races: d.races });
+      daysRaw.push({ date: d.date, races: d.races });
     }
   }
 
-  RAW = { days };
-  DAYS = days.sort((a,b)=> String(b.date).localeCompare(String(a.date)));
+  // <<< ここが肝：dateごとにレースを結合・重複排除 >>>
+  const byDate = new Map(); // date -> Array<race>
+  for (const d of daysRaw) {
+    const ymd = normDate(d.date);
+    if (!byDate.has(ymd)) byDate.set(ymd, []);
+    const bucket = byDate.get(ymd);
+    for (const r of (d.races||[])) bucket.push(r);
+  }
+
+  // 任意：race_id があるものは重複排除（同じ日付で同じIDが複数ファイルにある可能性に備える）
+  const dedup = (races) => {
+    const seen = new Set();
+    const out = [];
+    for (const r of races) {
+      const key = r.race_id ? String(r.race_id) : (r.race_name ? `N:${r.race_name}` : JSON.stringify(r));
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+    return out;
+  };
+
+  DAYS = Array.from(byDate.entries())
+    .map(([date, races]) => ({ date, races: dedup(races) }))
+    .sort((a,b)=> String(b.date).localeCompare(String(a.date))); // 新しい日付が先
+
+  RAW = { days: DAYS };
   CURRENT_DATE = DAYS[0]?.date || "";
   buildDateUI();
   rebuildVenueList();
   render();
 }
 
+// ==== 日付UI ====
 function buildDateUI(){
   const tabs = document.getElementById("dateTabs");
   const sel  = document.getElementById("dateSelect");
@@ -208,7 +99,7 @@ function buildDateUI(){
     const b = document.createElement("button");
     b.className = "tab" + (d.date===CURRENT_DATE ? " on": "");
     b.textContent = d.date;
-    b.onclick = ()=>{ CURRENT_DATE = d.date; syncDateSelect(); render(); };
+    b.onclick = ()=>{ CURRENT_DATE = d.date; syncDateSelect(); rebuildVenueList(); render(); };
     tabs.appendChild(b);
 
     const opt = document.createElement("option");
@@ -220,6 +111,7 @@ function buildDateUI(){
   document.getElementById("dateSelect").onchange = (e)=>{
     CURRENT_DATE = e.target.value;
     syncTabs();
+    rebuildVenueList();
     render();
   };
 }
@@ -234,6 +126,7 @@ function syncDateSelect(){
   [...sel.options].forEach(o=> o.selected = (o.value===CURRENT_DATE));
 }
 
+// ==== 場名のプルダウン ====
 function rebuildVenueList(){
   const today = DAYS.find(d=> d.date===CURRENT_DATE);
   const venues = new Set();
@@ -244,17 +137,30 @@ function rebuildVenueList(){
   vsel.innerHTML = "<option value=''>すべて</option>" + arr.map(v=>`<option>${esc(v)}</option>`).join("");
 }
 
-// ==== Filters state ====
+// ==== フィルタ状態 ====
 const state = { q:"", grades:new Set(), surfs:new Set(), minD:"", maxD:"", venue:"", sort:"time" };
 
 function hookFilters(){
   document.getElementById("q").oninput = e=>{ state.q = e.target.value.trim(); render(); };
 
+  // グレード：'指定なし' はフィルタ解除として扱う
   document.getElementById("gradeChips").addEventListener("click", e=>{
     const chip = e.target.closest(".chip"); if(!chip) return;
     const g = chip.dataset.grade;
+    if (g === "None") {
+      // フィルタ解除
+      state.grades.clear();
+      document.querySelectorAll('#gradeChips .chip').forEach(c=>c.classList.remove('on'));
+      // '指定なし'を見た目でONにしない場合は以下を外す
+      // chip.classList.add('on');
+      render();
+      return;
+    }
+    // 通常トグル
     if (chip.classList.toggle("on")) state.grades.add(g);
     else state.grades.delete(g);
+    // '指定なし'がONになっていたら外す
+    document.querySelector('#gradeChips .chip[data-grade="None"]')?.classList.remove('on');
     render();
   });
 
@@ -285,7 +191,7 @@ function hookFilters(){
   document.getElementById("refreshBtn").onclick = ()=> load();
 }
 
-// ==== Render ====
+// ==== 描画 ====
 function render(){
   const container = document.getElementById("raceList");
   const empty = document.getElementById("emptyMsg");
@@ -299,7 +205,7 @@ function render(){
     const grade = getGrade(race_name);
     const surf = parseSurf(r.track);
     const venue = parseVenue(r.track);
-    const distance = (typeof r.distance === "number") ? r.distance : NaN;
+    const distance = (typeof r.distance === "number") ? r.distance : Number(r.dist||NaN);
     return {...r, __race_name: race_name, __grade: grade, __surf: surf, __venue: venue, __distance: distance};
   });
 
@@ -371,8 +277,4 @@ function render(){
 // 起動
 hookFilters();
 load();
-
-
 </script>
-</body>
-</html>
