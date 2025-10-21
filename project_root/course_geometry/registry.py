@@ -1,91 +1,87 @@
-# project_root/course_geometry/registry.py
+# -*- coding: utf-8 -*-
+# course_geometry/registry.py
 from __future__ import annotations
 import importlib
 import pkgutil
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Tuple, Any
+from dataclasses import asdict
+from typing import Dict, Tuple, Any, List
 
-# ============ 内部レジストリ ============
-# キー: (course_id, surface, layout, rail_state, distance_m)
+# CourseGeometry は既存の base_types から使う前提
+from .base_types import CourseGeometry
+
+# 内部レジストリ: キー = (course_id, surface, layout, rail_state, distance_m)
 _REG: Dict[Tuple[str, str, str, str, int], Dict[str, Any]] = {}
 _REGISTERED = False
 
-@dataclass(frozen=True)
-class Geom:
-    course_id: str     # 例: "東京"
-    surface: str       # "芝" or "ダ"
-    layout: str        # "内回り" / "外回り" / "直線"
-    rail_state: str    # "A"|"B"|"C"|"D"
-    distance_m: int
-    # 任意で使う情報（S1やTciの計算に利用）
-    meta: Dict[str, Any]
-
-def _add(course_id: str, surface: str, layout: str, rail_state: str, distance_m: int, meta: Dict[str, Any]):
-    key = (course_id, surface, layout, rail_state, int(distance_m))
-    _REG[key] = dict(
-        course_id=course_id,
-        surface=surface,
-        layout=layout,
-        rail_state=rail_state,
-        distance_m=int(distance_m),
-        **(meta or {}),
+def _add(cg: CourseGeometry) -> None:
+    """*_turf.py から呼ばれる想定の登録関数（互換用）"""
+    key = (
+        cg.course_id, cg.surface, cg.layout, cg.rail_state, int(cg.distance_m)
     )
+    _REG[key] = asdict(cg)
 
-def _auto_import_all_turf_modules():
-    """course_geometry パッケージ内の *_turf.py を全部 import して、各モジュールの register(reg) を叩く"""
+def _auto_import_all_turf_modules() -> None:
+    """course_geometry パッケージ内の *_turf.py を全て import し、各モジュールの register() を呼ぶ。"""
     pkg_name = __name__.rsplit(".", 1)[0]  # "course_geometry"
     pkg = importlib.import_module(pkg_name)
-    for m in pkgutil.iter_modules([Path(pkg.__file__).parent.as_posix()]):
+    for m in pkgutil.iter_modules(pkg.__path__):
         name = m.name
         if not name.endswith("_turf"):
             continue
         mod = importlib.import_module(f"{pkg_name}.{name}")
-        # 各 *_turf.py は register(registry_add_func) を持つ前提
+        # 既存スタイル: 引数なし register() が _add を内部 import して呼ぶ
         if hasattr(mod, "register") and callable(mod.register):
-            mod.register(_add)
+            mod.register()
 
 def register_all_turf(force: bool = False) -> None:
-    """各競馬場モジュールを読み込み、幾何レジストリを構築"""
+    """全コース登録（idempotent）"""
     global _REGISTERED
     if _REGISTERED and not force:
         return
     _REG.clear()
     _auto_import_all_turf_modules()
     if not _REG:
-        raise RuntimeError("No turf geometry registered. *_turf.py の register() が呼ばれていません。")
+        raise RuntimeError("No turf geometry registered. *_turf.py の register() が実行されませんでした。")
     _REGISTERED = True
 
+def _nearest_same_layout(key_like: Tuple[str, str, str, str, int]) -> Tuple[str, str, str, str, int] | None:
+    """距離が一致しない時の同 venue/surface/layout/rail の最近傍距離を返す"""
+    cand = [k for k in _REG.keys() if k[:4] == key_like[:4]]
+    if not cand:
+        return None
+    target_d = key_like[4]
+    return min(cand, key=lambda k: abs(k[4] - target_d))
+
 def get_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail_state: str) -> Dict[str, Any]:
+    """幾何を取得（距離が無ければ最近傍距離でフォールバック）"""
     if not _REGISTERED:
         register_all_turf()
     key = (course_id, surface, layout, rail_state, int(distance_m))
     if key in _REG:
         return _REG[key]
-    # 距離がグリッド化されている場合の簡易最近傍フォールバック（同 venue/surface/layout/rail の中で距離最小差）
-    cands = [k for k in _REG.keys() if k[:4] == key[:4]]
-    if not cands:
+    near = _nearest_same_layout(key)
+    if near is None:
         raise KeyError(f"geometry not found: {key}")
-    nearest = min(cands, key=lambda k: abs(k[4] - key[4]))
-    return _REG[nearest]
+    return _REG[near]
 
-# ===== ここからは S1 が使う軽量ユーティリティ =====
+# ==== 物理S1側が使う軽ユーティリティ（ダミーでもOK） ====
+
 def estimate_tci(geom: Dict[str, Any]) -> float:
-    """Turn/Camber/Incline の総合っぽい係数（暫定のダミーでもOK）。なければ meta から推定。"""
-    # 例: コーナー角度や勾配が meta で提供されるならそこから
-    return float(geom.get("tci", geom.get("corner_gain", 1.0)))
+    # コーナー難度の概算（メタから推定。無ければ 1.0）
+    wmin = float(geom.get("track_width_min_m", 26.0))
+    firstR = float(geom.get("first_turn_R_m", 120.0))
+    base = float(geom.get("tci", 1.0))
+    # 幅が狭いほど +、R が小さいほど +（=難しい）
+    return base * (26.0 / max(20.0, wmin)) * (120.0 / max(80.0, firstR))
 
 def gate_influence_coeff(geom: Dict[str, Any], headcount: int) -> float:
-    """枠順影響の強さ（0..1）"""
-    # コース幅やコーナー半径からヒューリスティック
-    w = float(geom.get("track_width_m", 26.0))
-    r = float(geom.get("first_turn_R_m", 120.0))
+    w = float(geom.get("track_width_min_m", 26.0))
+    firstR = float(geom.get("first_turn_R_m", 120.0))
     n = max(8, int(headcount))
-    k = min(1.0, max(0.0, 0.25 + 0.35*(n/18.0) + 0.20*(26.0/w) + 0.20*(120.0/r)))
-    return k
+    k = 0.20 + 0.35*(n/18.0) + 0.25*(26.0/w) + 0.20*(120.0/firstR)
+    return float(max(0.0, min(1.0, k)))
 
 def band_split(headcount: int):
-    """内・中・外の概算本数（例: 18頭 → 6/6/6）"""
     n = int(max(1, headcount))
     a = n // 3
     b = n // 3
