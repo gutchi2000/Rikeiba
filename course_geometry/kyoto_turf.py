@@ -1,26 +1,85 @@
 # -*- coding: utf-8 -*-
+# course_geometry/kyoto_turf.py
+# 京都競馬場（芝のみ）— A/B/C/D・内回り/外回りの幾何データ
 from __future__ import annotations
 from .base_types import CourseGeometry
 from .registry import _add
 
-COMMON = dict(
-    course_id="京都", surface="芝", direction="右",
-    straight_length_m=404.0,
-    elevation_gain_last600_m=None,  # 後で追記OK
-    finish_grade_pct=None,
-    typical_lane_bias="長距離は持久寄り。週により内有利が出やすい",
-)
+# 方向は右回り
+DIRECTION = "右"
 
-DISTANCES = [
-    ("外回り", 3000, 300, 4, "菊花賞系。配分/心肺要求↑"),
-    ("外回り", 1800, 700, 2, "カシオペアS系。瞬発×位置バランス"),
+# 仮柵別の一周距離・幅員・直線長（m）
+# 画像の「芝コースデータ」および断面図より
+RAILS_INNER = [  # (rail_state, rail_offset_m, lap_length_m, width_min, width_max, straight_len_m)
+    ("A", 0, 1782.8, 27, 38, 328.4),
+    ("B", 3, 1802.2, 24, 35, 323.4),
+    ("C", 6, 1821.1, 21, 32, 323.4),
+    ("D", 9, 1839.9, 18, 29, 323.4),
+]
+RAILS_OUTER = [
+    ("A", 0, 1894.3, 24, 38, 403.7),
+    ("B", 3, 1913.6, 21, 35, 398.7),
+    ("C", 6, 1932.4, 18, 32, 398.7),
+    ("D", 9, 1951.3, 15, 29, 398.7),
 ]
 
+# 備考：高低差（メモ） 内回り=3.1m / 外回り=4.3m
+# finish_grade_pct / elevation_gain_last600_m は不明のため後追いで更新可能
+
+# 内回りの実施距離（JRA発走距離）
+DIST_INNER = [
+    # (distance_m, start_to_first_turn_m, num_turns, notes)
+    (1100, None, 2, "内回り"),
+    (1200, None, 2, "内回り"),
+    (1400, None, 2, "内回り"),
+    (1600, None, 2, "内回り"),
+    (1800, None, 2, "内回り"),
+    (2000, None, 2, "内回り"),
+]
+
+# 外回りの実施距離
+DIST_OUTER = [
+    (1400, None, 2, "外回り"),
+    (1600, None, 2, "外回り"),
+    (2000, None, 2, "外回り"),
+    (2200, None, 2, "外回り"),
+    (2400, None, 2, "外回り"),
+    (3000, None, 4, "外回り・周回（菊花賞系）"),
+    (3200, None, 4, "外回り・周回"),
+]
+
+# 典型バイアスのメモ（任意記述）
+TYPICAL_LANE_BIAS = "開催週により内有利が出やすい。長距離は持久寄り。"
+
 def register():
-    for layout, dist, first, turns, note in DISTANCES:
-        for rs, off in [("A",0),("B",3),("C",6),("D",9)]:
+    # 内回り
+    for dist, first, turns, note in DIST_INNER:
+        for rs, off, lap, wmin, wmax, straight_len in RAILS_INNER:
             _add(CourseGeometry(
-                layout=layout, distance_m=dist, start_to_first_turn_m=first, num_turns=turns,
-                rail_state=rs, rail_offset_m=off,
-                notes=note, **COMMON
+                course_id="京都", surface="芝", layout="内回り",
+                distance_m=dist, direction=DIRECTION,
+                straight_length_m=straight_len,
+                start_to_first_turn_m=first, num_turns=turns,
+                elevation_gain_last600_m=None,    # 後で高低図から追記可
+                finish_grade_pct=None,            # 同上
+                rail_state=rs, rail_offset_m=off, lap_length_m=lap,
+                track_width_min_m=wmin, track_width_max_m=wmax,
+                typical_lane_bias=TYPICAL_LANE_BIAS,
+                notes=note,
+            ))
+
+    # 外回り
+    for dist, first, turns, note in DIST_OUTER:
+        for rs, off, lap, wmin, wmax, straight_len in RAILS_OUTER:
+            _add(CourseGeometry(
+                course_id="京都", surface="芝", layout="外回り",
+                distance_m=dist, direction=DIRECTION,
+                straight_length_m=straight_len,
+                start_to_first_turn_m=first, num_turns=turns,
+                elevation_gain_last600_m=None,
+                finish_grade_pct=None,
+                rail_state=rs, rail_offset_m=off, lap_length_m=lap,
+                track_width_min_m=wmin, track_width_max_m=wmax,
+                typical_lane_bias=TYPICAL_LANE_BIAS,
+                notes=note,
             ))
