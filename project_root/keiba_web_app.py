@@ -1,31 +1,39 @@
-from course_geometry import register_all_turf, get_course_geom
+# -*- coding: utf-8 -*-
+# 競馬予想アプリ（AUTO統合版 + スペクトル解析）
 
+import os, sys
+
+# 同ディレクトリのモジュールを優先して読めるようにする
+BASE = os.path.dirname(os.path.abspath(__file__))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+
+# -- 外部モジュール（ここで宣言しておく） --
+from course_geometry import register_all_turf, get_course_geom
+from physics_sprint1 import add_phys_s1_features  # ← 先頭でimport
+
+import streamlit as st
+
+@st.cache_resource
+def _boot_course_geom():
+    register_all_turf()
+    return True
+_boot_course_geom()
+
+# （必要なら）サンプル実行は無効化して残す
 if False:
     geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
-    # 以降は course_geometry 側に関数があるときだけ使う
-    if hasattr(__import__("course_geometry"), "estimate_tci"):
-        tci = __import__("course_geometry").estimate_tci(geom)
+    # course_geometry に追加関数がある環境だけ試す
+    try:
+        import course_geometry as cg
+        if hasattr(cg, "estimate_tci"):
+            tci = cg.estimate_tci(geom)
+    except Exception:
+        pass
 
+# ※ ここで races_df に対して add_phys_s1_features を即時実行しないこと！
+#   実行は後半の UI（🧪 PhysS1 スモークテスト）内でのみ行います。
 
-# どこかの処理で: races_df に幾何キーが入っている前提
-# 例: columns=['race_id','course_id','surface','distance_m','layout','rail_state',
-#              'final_time_sec','first3f_sec','last3f_sec','break_loss_sec','band','num_turns', ...]
-races_df = add_phys_s1_features(
-    races_df,
-    group_cols=("race_id",),
-    band_col="band",      # 無ければ None でOK
-    verbose=False
-)
-
-# -*- coding: utf-8 -*-
-# 競馬予想アプリ（AUTO統合版 + スペクトル解析 / 2025-09-25）
-
-import os, io, re, json
-import numpy as np
-import pandas as pd
-import streamlit as st
-import matplotlib.pyplot as plt
-from itertools import combinations
 
 
 # keiba_web_app.py 冒頭の import 群の直後
