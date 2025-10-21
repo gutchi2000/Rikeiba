@@ -217,6 +217,53 @@ def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
     except Exception:
         return x
 
+# ===== PhysS1用：サーフェス正規化 & 幾何の自動解決 =====
+def _canon_surface(s: str) -> str:
+    s = str(s)
+    if s.startswith("芝") or "turf" in s.lower(): return "芝"
+    if s.startswith("ダ") or "dirt" in s.lower(): return "ダ"
+    return s
+
+def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str):
+    """
+    get_course_geom(...) が None を返す組合せを自動でフォールバック。
+    戻り値: (layout_ok, rail_ok, geom or None)
+    """
+    surface = _canon_surface(surface)
+    # まず指定そのまま
+    try:
+        g = get_course_geom(course_id, surface, int(distance_m), layout, rail)
+        if g is not None:
+            return layout, rail, g
+    except Exception:
+        pass
+
+    # 柵だけ総当たり
+    for r in ["A", "B", "C", "D", ""]:
+        if r == rail:
+            continue
+        try:
+            g = get_course_geom(course_id, surface, int(distance_m), layout, r)
+            if g is not None:
+                return layout, r, g
+        except Exception:
+            continue
+
+    # レイアウトも変えてみる（UIの候補を利用、なければ保守的に）
+    cand_layouts = (LAYOUT_OPTS.get(course_id) if 'LAYOUT_OPTS' in globals() else ["内回り","外回り","直線"]) or ["内回り","外回り","直線"]
+    for lay in cand_layouts:
+        if lay == layout:
+            continue
+        for r in ["A", "B", "C", "D", ""]:
+            try:
+                g = get_course_geom(course_id, surface, int(distance_m), lay, r)
+                if g is not None:
+                    return lay, r, g
+            except Exception:
+                continue
+
+    return None, None, None
+
 
 # ===== サイドバー =====
 st.sidebar.title("⚙️ パラメタ設定（AUTO統合）")
@@ -247,7 +294,23 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
     }
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
-    RAIL = st.selectbox("コース区分（A/B/C/D）", ["A","B","C","D"], index=0)
+    # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
+_surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+_dist_ui = int(TARGET_DISTANCE)
+valid_rails = []
+for r in ["A", "B", "C", "D", ""]:
+    try:
+        gtest = get_course_geom(COURSE_ID, _surface_ui, _dist_ui, LAYOUT, r)
+        if gtest is not None:
+            valid_rails.append(r or "（指定なし）")
+    except Exception:
+        pass
+if not valid_rails:
+    valid_rails = ["A","B","C"]  # フォールバック
+
+rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
+RAIL = "" if rail_label == "（指定なし）" else rail_label
+
 
     # ← ここで場に連動して既定の回りを出す
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
@@ -1876,25 +1939,35 @@ else:
 # ===== PhysS1（コース幾何）を 予測タイム入り で再計算 → 全馬へ付与 =====
 try:
     # レース想定の代表タイム（各馬のPredTime中央値）
-    race_pred_time = float(pd.to_numeric(df_agg['PredTime_s'], errors='coerce').median()) \
+    race_pred_time = float(pd.to_numeric(df_agg.get('PredTime_s'), errors='coerce').median()) \
                      if 'PredTime_s' in df_agg.columns else np.nan
+
+    # 幾何を解決（None回避）
+    lay_ok, rail_ok, geom = resolve_course_geom(
+        COURSE_ID,
+        "芝" if TARGET_SURFACE == "芝" else "ダ",
+        int(TARGET_DISTANCE),
+        LAYOUT,
+        RAIL
+    )
+    if geom is None:
+        raise ValueError(f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}")
 
     races_df_today = pd.DataFrame([{
         'race_id': 'TODAY',
         'course_id': COURSE_ID,
-        'surface': '芝' if TARGET_SURFACE == '芝' else 'ダ',
+        'surface': "芝" if TARGET_SURFACE == "芝" else "ダ",
         'distance_m': int(TARGET_DISTANCE),
-        'layout': LAYOUT,
-        'rail_state': RAIL,
+        'layout': lay_ok,
+        'rail_state': rail_ok,
         'band': TODAY_BAND,
         'num_turns': 2,
-        # ★ ここがポイント：予測タイムの代表値を渡す（無ければ欠損のままOK）
         'final_time_sec': race_pred_time if np.isfinite(race_pred_time) else None,
     }])
 
     phys1 = add_phys_s1_features(
         races_df_today,
-        group_cols=(),      # 1行なのでOK
+        group_cols=(),
         band_col="band",
         verbose=False
     )
@@ -1907,10 +1980,10 @@ try:
     }
     pv = phys1.rename(columns=phys_cols).iloc[0]
     for k in phys_cols.values():
-        df_agg[k] = float(pv[k])
+        df_agg[k] = float(pd.to_numeric(pv.get(k), errors='coerce'))
 
     # スライダーの強さで加点
-    df_agg['FinalRaw'] += float(PHYS_S1_GAIN) * df_agg['PhysS1'].fillna(0.0)
+    df_agg['FinalRaw'] += float(PHYS_S1_GAIN) * pd.to_numeric(df_agg['PhysS1'], errors='coerce').fillna(0.0)
 
 except Exception as e:
     st.warning(f"PhysS1の計算に失敗しました: {e}")
