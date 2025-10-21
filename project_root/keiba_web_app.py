@@ -37,6 +37,12 @@ from itertools import combinations
 from course_geometry import register_all_turf, get_course_geom
 from physics_sprint1 import add_phys_s1_features
 
+# keiba_web_app.py 冒頭の import 群の直後
+import sys, os
+BASE = os.path.dirname(os.path.abspath(__file__))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+
 # アプリ起動時に一度だけ
 register_all_turf()
 
