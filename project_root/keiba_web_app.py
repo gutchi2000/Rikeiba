@@ -13,6 +13,12 @@ from physics_sprint1 import add_phys_s1_features
 
 register_all_turf()
 
+def _boot_course_geom():
+    # ここで一度だけ、全競馬場の芝コースをレジストリへ登録
+    register_all_turf()
+    return True
+
+_boot_course_geom() 
 # どこかの処理で: races_df に幾何キーが入っている前提
 # 例: columns=['race_id','course_id','surface','distance_m','layout','rail_state',
 #              'final_time_sec','first3f_sec','last3f_sec','break_loss_sec','band','num_turns', ...]
