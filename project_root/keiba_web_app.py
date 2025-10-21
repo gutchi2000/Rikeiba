@@ -294,23 +294,23 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
     }
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
+
     # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
-　　_surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
-　　_dist_ui = int(TARGET_DISTANCE)
-　　valid_rails = []
-for r in ["A", "B", "C", "D", ""]:
-    try:
-        gtest = get_course_geom(COURSE_ID, _surface_ui, _dist_ui, LAYOUT, r)
-        if gtest is not None:
-            valid_rails.append(r or "（指定なし）")
-    except Exception:
-        pass
-if not valid_rails:
-    valid_rails = ["A","B","C"]  # フォールバック
+    _surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+    _dist_ui = int(TARGET_DISTANCE)
+    valid_rails = []
+    for r in ["A", "B", "C", "D", ""]:
+        try:
+            gtest = get_course_geom(COURSE_ID, _surface_ui, _dist_ui, LAYOUT, r)
+            if gtest is not None:
+                valid_rails.append(r or "（指定なし）")
+        except Exception:
+            pass
+    if not valid_rails:
+        valid_rails = ["A", "B", "C"]  # フォールバック
 
-　　rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
-　　RAIL = "" if rail_label == "（指定なし）" else rail_label
-
+    rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
+    RAIL = "" if rail_label == "（指定なし）」 else rail_label
 
     # ← ここで場に連動して既定の回りを出す
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
