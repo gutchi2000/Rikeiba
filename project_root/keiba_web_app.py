@@ -315,7 +315,8 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     # ← ここで場に連動して既定の回りを出す
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
     _turn_default = DEFAULT_VENUE_TURN.get(COURSE_ID, '右')
-    TARGET_TURN = st.radio("回り", ["右","左"], index=(0 if _turn_default=="右" else 1), horizontal=True)
+    TARGET_TURN = st.radio("回り", ["右","左"], index=(0 if _turn_default=="右" else 1),
+                       horizontal=True, key="turn_geom")
 
     TODAY_BAND = st.select_slider("通過帯域（暫定）", options=["内","中","外"], value="中")
 
