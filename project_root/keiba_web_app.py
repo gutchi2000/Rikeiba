@@ -296,21 +296,27 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
 
     # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
-    _surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
-    _dist_ui = int(TARGET_DISTANCE)
-    valid_rails = []
-    for r in ["A", "B", "C", "D", ""]:
-        try:
-            gtest = get_course_geom(COURSE_ID, _surface_ui, _dist_ui, LAYOUT, r)
-            if gtest is not None:
-                valid_rails.append(r or "（指定なし）")
-        except Exception:
-            pass
-    if not valid_rails:
-        valid_rails = ["A", "B", "C"]  # フォールバック
+   # 🔧 ここも修正（コース設定の selectbox を描画する直前）
+# 🔧 ここも修正（コース設定の selectbox を描画する直前）
+surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+dist_ui = int(TARGET_DISTANCE)
 
-    rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
-    RAIL = "" if rail_label == "（指定なし）" else rail_label
+valid_rails = []
+for r in ["A", "B", "C", "D", ""]:
+    try:
+        if get_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, r) is not None:
+            valid_rails.append(r or "（指定なし）")
+    except Exception:
+        pass
+
+# 1つも無ければ “存在しない柵を提示しない”
+if not valid_rails:
+    valid_rails = ["（指定なし）"]
+    st.caption("※ この距離・レイアウトでは登録された柵区分が見つかりません。PhysS1実行時に自動フォールバックします。")
+
+rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
+RAIL = "" if rail_label == "（指定なし）" else rail_label
+
 
     # ← ここで場に連動して既定の回りを出す
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
@@ -364,20 +370,36 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
 
 
+# 🔧 置き換え（スモークテスト部分）
 if st.button("🧪 PhysS1 スモークテスト"):
-    g = get_course_geom(COURSE_ID, "芝" if TARGET_SURFACE=="芝" else "ダ", int(TARGET_DISTANCE), LAYOUT, RAIL)
-    st.write("geom:", g)
+    surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+    dist_ui = int(TARGET_DISTANCE)
+
+    # ← 必ずフォールバック解決を通す
+    lay_ok, rail_ok, geom = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
+
+    st.write("geom (resolved):", geom)
+    st.caption(f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'}")
+
+    # PhysS1 に渡す値も解決後の値で
     races_df_today_dbg = pd.DataFrame([{
-        'race_id':'DBG','course_id':COURSE_ID,'surface':'芝',
-        'distance_m':int(TARGET_DISTANCE),'layout':LAYOUT,'rail_state':RAIL,
-        'band':TODAY_BAND,'num_turns':2
+        'race_id':'DBG',
+        'course_id':COURSE_ID,
+        'surface': surface_ui,
+        'distance_m': dist_ui,
+        'layout': lay_ok or LAYOUT,
+        'rail_state': rail_ok or RAIL,
+        'band': TODAY_BAND,
+        'num_turns': 2
     }])
+
     try:
         out = add_phys_s1_features(races_df_today_dbg, group_cols=(), band_col="band", verbose=True)
         st.write("phys列:", [c for c in out.columns if c.startswith("phys_")])
         st.dataframe(out)
     except Exception as e:
         st.error(f"PhysS1失敗: {e}")
+
 
 # ===== ファイルアップロード =====
 st.title("Rikeiba")
