@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 # course_geometry/nakayama_turf.py
-# 中山競馬場（芝）— 内/外 × A/B/C、距離別の1角距離を反映
+# 中山競馬場（芝）— 内/外 × A/B/C、急坂の勾配を反映した更新版
 from __future__ import annotations
 from .base_types import CourseGeometry
 from .registry import _add
 
 DIRECTION = "右"
-TYPICAL_LANE_BIAS = "高低差5.3m、ゴール前急坂。先行・内有利が出やすい開催多め。"
+TYPICAL_LANE_BIAS = (
+    "高低差5.3m＋急坂（残180-70で+2.2m/最大勾配2.24%）。"
+    "下り長く早仕掛け→持久寄り。開催により内・先行有利が出やすい。"
+)
 
-# ── 仮柵別 一周距離・幅員・直線長（JRA表より）
+# ── 仮柵ごとの一周距離・幅員・直線長（JRA公表）
 # 直線は内外とも 310m
 RAILS_INNER = [  # (rail_state, rail_offset_m, lap_len_m, width_min, width_max, straight_len_m)
     ("A", 0, 1667.1, 20, 32, 310.0),
@@ -21,27 +24,25 @@ RAILS_OUTER = [
     ("C", 6, 1877.3, 18, 26, 310.0),
 ]
 
-# 高低差メモ：芝 5.3m（参考）。finish_grade_pct / last600 は後で追記可。
+# 高低差メモ：芝 5.3m。finish_grade_pct は急坂の最大勾配 2.24% を代表値として採用。
+# elevation_gain_last600_m は後で高低図の読み取りで追記可。
 
-# ── 内回り距離（画像テキストで1角距離が読めたものは数値確定）
+# ── 内回り（距離・1角までの距離）
 DIST_INNER = [
     # (distance_m, start_to_first_turn_m, num_turns, note)
     (1800, 204.9, 2, "スタンド前・急坂手前スタート→1角まで約205m"),
     (2000, 404.9, 2, "4角直線入口スタート→1角まで約405m"),
-    (2200, None, 2, "2000mに近い位置からの発走。内回り使用（数値保留）"),
-    (3200, None, 4, "内回り周回（数値未確認）"),
+    (2200, None, 2, "2000mとほぼ同位置の発走。内回り使用（数値保留）"),
+    (2500, 192.0, 2, "有馬記念距離。舞台は内回りだが発走地点は外回り上→3角まで約192m"),
+    (3200, None, 4, "内回り周回（数値保留）"),
     (3600, 337.7, 4, "スタンド前発走→1角まで約338m（内回り2周）"),
 ]
 
-# ── 外回り距離
+# ── 外回り
 DIST_OUTER = [
-    (1200, 275.1, 2, "向正面・外回り2角過ぎ→3角まで約275m"),
-    (1600, 239.8, 2, "1角奥ポケット→2角まで約240m（外回り）"),
-    (2000, None, 2, "外回り使用の2000m（数値保留。通常は内2000が主流）"),
-    (2500, 192.0, 2, "向正面3角手前スタート→3角まで約192m"),
-    (2600, None, 2, "外回り（数値保留）"),
-    (3200, None, 4, "外回り周回（数値保留）"),
-    (4000, None, 4, "外回り周回（数値保留）"),
+    (1200, 275.1, 2, "向正面・外2角過ぎスタート→3角まで約275m"),
+    (1600, 239.8, 2, "1角奥ポケット（外）→2角まで約240m"),
+    # 2000/2600/3200/4000の外回り値は資料不足のため保留
 ]
 
 def register():
@@ -53,10 +54,12 @@ def register():
                 distance_m=dist, direction=DIRECTION,
                 straight_length_m=straight,
                 start_to_first_turn_m=first, num_turns=turns,
-                elevation_gain_last600_m=None, finish_grade_pct=None,
+                elevation_gain_last600_m=None,        # 後日追記可
+                finish_grade_pct=2.24,                # 急坂の最大勾配を代表値に
                 rail_state=rs, rail_offset_m=off, lap_length_m=lap,
                 track_width_min_m=wmin, track_width_max_m=wmax,
-                typical_lane_bias=TYPICAL_LANE_BIAS, notes=note,
+                typical_lane_bias=TYPICAL_LANE_BIAS,
+                notes=note + "／2角分岐→3角合流・直線310m",
             ))
 
     # 外回り
@@ -67,8 +70,10 @@ def register():
                 distance_m=dist, direction=DIRECTION,
                 straight_length_m=straight,
                 start_to_first_turn_m=first, num_turns=turns,
-                elevation_gain_last600_m=None, finish_grade_pct=None,
+                elevation_gain_last600_m=None,
+                finish_grade_pct=2.24,                # 同上
                 rail_state=rs, rail_offset_m=off, lap_length_m=lap,
                 track_width_min_m=wmin, track_width_max_m=wmax,
-                typical_lane_bias=TYPICAL_LANE_BIAS, notes=note,
+                typical_lane_bias=TYPICAL_LANE_BIAS,
+                notes=note + "／2角分岐→3角合流・直線310m",
             ))
