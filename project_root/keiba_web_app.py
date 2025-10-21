@@ -294,7 +294,7 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     }
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID], key="layout_select")
 
-    # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
+    # 現在の設定で有効な柵だけに絞る
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
     dist_ui = int(TARGET_DISTANCE)
 
@@ -306,49 +306,41 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         except Exception:
             pass
 
+    # 候補が無ければレイアウトの自動切替を試す
     if not valid_rails:
-        valid_rails = ["（指定なし）"]
-        st.caption("※ この距離・レイアウトでは登録された柵区分が見つかりません。PhysS1実行時に自動フォールバックします。")
+        switched = False
+        for lay2 in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
+            if lay2 == LAYOUT:
+                continue
+            vr2 = []
+            for r in ["A","B","C","D",""]:
+                try:
+                    if get_course_geom(COURSE_ID, surface_ui, dist_ui, lay2, r) is not None:
+                        vr2.append(r or "（指定なし）")
+                except Exception:
+                    pass
+            if vr2:
+                st.warning(f"選択レイアウト『{LAYOUT}』では登録が見つからないため『{lay2}』に切り替えました。")
+                st.session_state['layout_select'] = lay2
+                st.rerun()
+                switched = True
+                break
 
-    # 1つも無ければ “存在しない柵を提示しない”
-if not valid_rails:
-    # 他のレイアウトで存在するかを探す → あれば自動で切替
-    switched = False
-    for lay2 in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
-        if lay2 == LAYOUT: 
-            continue
-        vr2 = []
-        for r in ["A","B","C","D",""]:
-            try:
-                if get_course_geom(COURSE_ID, surface_ui, dist_ui, lay2, r) is not None:
-                    vr2.append(r or "（指定なし）")
-            except Exception:
-                pass
-        if vr2:
-            # ここで UI をその場で切り替え
-            st.warning(f"選択レイアウト『{LAYOUT}』では登録が見つからないため『{lay2}』に切り替えました。")
-            st.session_state['layout_select'] = lay2  # ← LAYOUT selectbox に key="layout_select" を付けておく
-            st.rerun()
-            switched = True
-            break
+        if not switched:
+            valid_rails = ["（指定なし）"]
+            st.caption("※ この距離では登録された柵区分が見つかりません。上のスモークテストで利用可能な組合せを確認してください。")
 
-    # どのレイアウトにも無かった
-    if not switched:
-        valid_rails = ["（指定なし）"]
-        st.caption("※ この距離では登録された柵区分が見つかりません。上のスモークテストで利用可能な組合せを確認してください。")
-
-
+    # ← ここからは常にウィジェットを出す（未定義防止）
     rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0, key="rail_select")
     RAIL = "" if rail_label == "（指定なし）" else rail_label
 
-    # 競馬場に応じた既定の回り（ここで出す）
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
     _turn_default = DEFAULT_VENUE_TURN.get(COURSE_ID, '右')
     TARGET_TURN = st.radio("回り", ["右","左"],
                            index=(0 if _turn_default == "右" else 1),
                            horizontal=True, key="turn_geom")
 
-    TODAY_BAND = st.select_slider("通過帯域（暫定）", options=["内","中","外"], value="中")
+    TODAY_BAND = st.select_slider("通過帯域（暫定）", options=["内","中","外"], value="中", key="band_today")
 
 
 with st.sidebar.expander("🧮 物理(Sprint1)の重み", expanded=True):
