@@ -1976,7 +1976,7 @@ show_cols = [
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
     'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
-    'PhysicsZ','PeakWkg','EAP''CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
+    'PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
 ]
 
 
@@ -2040,7 +2040,7 @@ st.markdown("### 本命リスト（AUTO統合＋スペクトル）")
 st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
 
 # 上位抜粋（6頭）
-head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts','SpecFitZ','PhysicsZ','PeakWkg']
+head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts','SpecFitZ','PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']
 base = _dfdisp.rename(columns=JP) if '_dfdisp' in globals() else _dfdisp_view
 cols_jp = [JP[c] if c in JP else c for c in head_cols]
 head_view = base[cols_jp].head(6).copy()
