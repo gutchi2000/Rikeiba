@@ -72,12 +72,17 @@ except Exception:
     SK_ISO = False
 
 # ===== 日本語フォント =====
+import matplotlib
+matplotlib.use("Agg")  # Streamlit Cloud 等のヘッドレス環境で安全
+import matplotlib.pyplot as plt
 from matplotlib import font_manager
+
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = [
     'IPAexGothic','IPAGothic','Noto Sans CJK JP','Yu Gothic UI','Meiryo','Hiragino Sans','MS Gothic'
 ]
+
 
 st.set_page_config(page_title="Rikeiba", layout="wide")
 
