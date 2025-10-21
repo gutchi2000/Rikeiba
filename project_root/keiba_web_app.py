@@ -1,11 +1,10 @@
-from course_geometry import register_all_turf, get_course_geom, estimate_tci, gate_influence_coeff, band_split
+from course_geometry import register_all_turf, get_course_geom
 
-
-# レース行の例
-geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
-tci = estimate_tci(geom)
-gate_fix = gate_influence_coeff(geom, headcount=18)
-inner, middle, outer = band_split(headcount=18)
+ if False:
+     geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
+     # 以降は course_geometry 側に関数があるときだけ使う
+     if hasattr(__import__("course_geometry"), "estimate_tci"):
+         tci = __import__("course_geometry").estimate_tci(geom)
 
 
 # どこかの処理で: races_df に幾何キーが入っている前提
