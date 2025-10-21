@@ -23,22 +23,25 @@ from physics_sprint1 import add_phys_s1_features  # ※ ここでは「定義の
 st.set_page_config(page_title="Rikeiba", layout="wide")
 
 # ===== コース幾何の初期化（1回だけ）=====
+# ===== コース幾何の初期化（1回だけ）=====
 @st.cache_resource
-def _boot_course_geom():
+def _boot_course_geom(version: int = 1):
+    # 直前の登録をクリア（定義があれば使う）
+    try:
+        from course_geometry.registry import clear_registry
+        clear_registry()
+    except Exception:
+        # clear_registry が無ければ無視（_add が上書きしてくれる想定）
+        pass
+
+    # すべての *_turf.py を登録
+    from course_geometry import register_all_turf
     register_all_turf()
     return True
 
-_boot_course_geom()
+# ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
+_boot_course_geom(version=2)
 
-# （必要なら）サンプル実行は無効化して残す（本体起動時に副作用を出さない）
-if False:
-    geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
-    try:
-        import course_geometry as cg
-        if hasattr(cg, "estimate_tci"):
-            tci = cg.estimate_tci(geom)
-    except Exception:
-        pass
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
 #   実際の実行は UI 側（例：🧪 PhysS1 スモークテストボタン）で行う。
