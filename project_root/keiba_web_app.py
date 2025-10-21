@@ -295,9 +295,9 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     }
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
     # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
-_surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
-_dist_ui = int(TARGET_DISTANCE)
-valid_rails = []
+　　_surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+　　_dist_ui = int(TARGET_DISTANCE)
+　　valid_rails = []
 for r in ["A", "B", "C", "D", ""]:
     try:
         gtest = get_course_geom(COURSE_ID, _surface_ui, _dist_ui, LAYOUT, r)
@@ -308,8 +308,8 @@ for r in ["A", "B", "C", "D", ""]:
 if not valid_rails:
     valid_rails = ["A","B","C"]  # フォールバック
 
-rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
-RAIL = "" if rail_label == "（指定なし）" else rail_label
+　　rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
+　　RAIL = "" if rail_label == "（指定なし）" else rail_label
 
 
     # ← ここで場に連動して既定の回りを出す
