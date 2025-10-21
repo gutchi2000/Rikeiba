@@ -1,13 +1,27 @@
 from course_geometry import register_all_turf, get_course_geom, estimate_tci, gate_influence_coeff, band_split
 
-# アプリ起動時に一度だけ
-register_all_turf()
 
 # レース行の例
 geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
 tci = estimate_tci(geom)
 gate_fix = gate_influence_coeff(geom, headcount=18)
 inner, middle, outer = band_split(headcount=18)
+
+# keiba_web_app.py
+from course_geometry import register_all_turf
+from physics_sprint1 import add_phys_s1_features
+
+register_all_turf()
+
+# どこかの処理で: races_df に幾何キーが入っている前提
+# 例: columns=['race_id','course_id','surface','distance_m','layout','rail_state',
+#              'final_time_sec','first3f_sec','last3f_sec','break_loss_sec','band','num_turns', ...]
+races_df = add_phys_s1_features(
+    races_df,
+    group_cols=("race_id",),
+    band_col="band",      # 無ければ None でOK
+    verbose=False
+)
 
 # -*- coding: utf-8 -*-
 # 競馬予想アプリ（AUTO統合版 + スペクトル解析 / 2025-09-25）
@@ -18,6 +32,13 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from itertools import combinations
+
+# 既存の import 群の下あたりに追記
+from course_geometry import register_all_turf, get_course_geom
+from physics_sprint1 import add_phys_s1_features
+
+# アプリ起動時に一度だけ
+register_all_turf()
 
 # ---- optional ----
 try:
@@ -193,6 +214,23 @@ with st.sidebar.expander("本レース条件", expanded=True):
     TARGET_SURFACE  = st.selectbox("本レースの馬場", ["芝","ダ"], index=0)
     TARGET_DISTANCE = st.number_input("本レースの距離 [m]", 1000, 3600, 1800, 100)
     TARGET_TURN     = st.radio("回り", ["右","左"], index=0, horizontal=True)
+    
+with st.sidebar.expander("📐 本レース幾何（コース設定）", expanded=True):
+    VENUES = ["札幌","函館","福島","新潟","東京","中山","中京","京都","阪神","小倉"]
+    COURSE_ID = st.selectbox("競馬場", VENUES, index=VENUES.index("東京"))
+    LAYOUT_OPTS = {
+        "札幌":["内回り"], "函館":["内回り"], "福島":["内回り"],
+        "新潟":["内回り","外回り","直線"], "東京":["外回り"],
+        "中山":["内回り","外回り"], "中京":["外回り"],
+        "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
+    }
+    LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
+    RAIL = st.selectbox("コース区分（A/B/C/D）", ["A","B","C","D"], index=0)
+    # 内中外の帯域は当面固定。実況や位置データが入れば列を渡す
+    TODAY_BAND = st.select_slider("通過帯域（暫定）", options=["内","中","外"], value="中")
+
+with st.sidebar.expander("🧮 物理(Sprint1)の重み", expanded=True):
+    PHYS_S1_GAIN = st.slider("PhysS1加点の強さ", 0.0, 3.0, 1.0, 0.1)
 
 with st.sidebar.expander("🛠 安定化/補正", expanded=True):
     half_life_m  = st.slider("時系列半減期(月)", 0.0, 12.0, 6.0, 0.5)
@@ -1636,6 +1674,53 @@ df_agg['FinalRaw'] = (
     + df_agg['SexPts'] + df_agg['StylePts'] + df_agg['AgePts'] + df_agg['WakuPts']
 )
 
+# ===== PhysS1（コース幾何）を1行レースDFで算出 → 全馬へ付与 =====
+try:
+    # 今日の1レースを表す最小DF（速度は無ければ内部でフォールバック）
+    races_df_today = pd.DataFrame([{
+        'race_id': 'TODAY',
+        'course_id': COURSE_ID,
+        'surface': '芝' if TARGET_SURFACE == '芝' else 'ダ',  # Sprint1は芝のみ計算、ダは0扱い
+        'distance_m': int(TARGET_DISTANCE),
+        'layout': LAYOUT,
+        'rail_state': RAIL,
+        # 任意: 速度推定に使える列があれば入れてOK（無ければ平均速度フォールバック）
+        # 'final_time_sec': float(...)  # 予測タイム中央値 PredTime_s が出た後で再計算してもOK
+        'band': TODAY_BAND,
+        # 周回などでコーナー通過が増えるなら指定（通常は2）
+        'num_turns': 2
+    }])
+
+    phys1 = add_phys_s1_features(
+        races_df_today,
+        group_cols=(),      # 1行なのでグローバルで0-1正規化
+        band_col="band",
+        verbose=False
+    )
+
+    # 列名を見やすく
+    phys_cols = {
+        'phys_corner_load':'CornerLoadS1',
+        'phys_start_cost':'StartCostS1',
+        'phys_finish_grade':'FinishGradeS1',
+        'phys_s1_score':'PhysS1'
+    }
+    phys_view = phys1.rename(columns=phys_cols)[list(phys_cols.values())].iloc[0].to_dict()
+
+    # 全馬にブロードキャスト（同じレース条件なので値は共通）
+    for k, v in phys_view.items():
+        df_agg[k] = float(v)
+
+    # 最終スコアへ加点（スライダーで強さ調整）
+    df_agg['FinalRaw'] += float(PHYS_S1_GAIN) * df_agg['PhysS1'].fillna(0.0)
+
+except Exception as e:
+    st.warning(f"PhysS1の計算に失敗しました: {e}")
+    df_agg['CornerLoadS1']=np.nan
+    df_agg['StartCostS1']=np.nan
+    df_agg['FinishGradeS1']=np.nan
+    df_agg['PhysS1']=np.nan
+
 # 斤量ペナルティ（中央値基準）
 if '斤量' in df_agg.columns and pd.to_numeric(df_agg['斤量'], errors='coerce').notna().any():
     kg = pd.to_numeric(df_agg['斤量'], errors='coerce')
@@ -1891,7 +1976,7 @@ show_cols = [
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
     'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
     'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
-    'PhysicsZ','PeakWkg','EAP'
+    'PhysicsZ','PeakWkg','EAP''CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
 ]
 
 
