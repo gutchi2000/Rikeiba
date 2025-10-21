@@ -292,7 +292,7 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         "中山":["内回り","外回り"], "中京":["外回り"],
         "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
     }
-    LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
+    LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID], key="layout_select")
 
     # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
@@ -309,6 +309,34 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     if not valid_rails:
         valid_rails = ["（指定なし）"]
         st.caption("※ この距離・レイアウトでは登録された柵区分が見つかりません。PhysS1実行時に自動フォールバックします。")
+
+    # 1つも無ければ “存在しない柵を提示しない”
+if not valid_rails:
+    # 他のレイアウトで存在するかを探す → あれば自動で切替
+    switched = False
+    for lay2 in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
+        if lay2 == LAYOUT: 
+            continue
+        vr2 = []
+        for r in ["A","B","C","D",""]:
+            try:
+                if get_course_geom(COURSE_ID, surface_ui, dist_ui, lay2, r) is not None:
+                    vr2.append(r or "（指定なし）")
+            except Exception:
+                pass
+        if vr2:
+            # ここで UI をその場で切り替え
+            st.warning(f"選択レイアウト『{LAYOUT}』では登録が見つからないため『{lay2}』に切り替えました。")
+            st.session_state['layout_select'] = lay2  # ← LAYOUT selectbox に key="layout_select" を付けておく
+            st.rerun()
+            switched = True
+            break
+
+    # どのレイアウトにも無かった
+    if not switched:
+        valid_rails = ["（指定なし）"]
+        st.caption("※ この距離では登録された柵区分が見つかりません。上のスモークテストで利用可能な組合せを確認してください。")
+
 
     rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0, key="rail_select")
     RAIL = "" if rail_label == "（指定なし）" else rail_label
@@ -371,20 +399,39 @@ if st.button("🧪 PhysS1 スモークテスト"):
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
     dist_ui = int(TARGET_DISTANCE)
 
-    # ← 必ずフォールバック解決を通す
     lay_ok, rail_ok, geom = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
 
     st.write("geom (resolved):", geom)
     st.caption(f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'}")
 
-    # PhysS1 に渡す値も解決後の値で
+    # ← ここで None を弾いて落ちないようにする
+    if geom is None:
+        st.error("この組合せのコース幾何が未登録のため PhysS1 を実行できません。下の一覧から存在する組合せを選んでください。")
+
+        # 利用可能な組合せを列挙して見せる（デバッグ用）
+        avail = []
+        for lay in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
+            for r in ["A","B","C","D",""]:
+                try:
+                    g = get_course_geom(COURSE_ID, surface_ui, dist_ui, lay, r)
+                    if g is not None:
+                        avail.append({"レイアウト": lay, "柵": (r or "（指定なし）")})
+                except Exception:
+                    pass
+        if avail:
+            st.dataframe(pd.DataFrame(avail))
+        else:
+            st.info("※ この距離では登録が見つかりません。距離を変えると出る可能性があります。")
+        st.stop()  # ここで終了
+
+    # ここまで来たら geom がある
     races_df_today_dbg = pd.DataFrame([{
         'race_id':'DBG',
         'course_id':COURSE_ID,
         'surface': surface_ui,
         'distance_m': dist_ui,
-        'layout': lay_ok or LAYOUT,
-        'rail_state': rail_ok or RAIL,
+        'layout': lay_ok,
+        'rail_state': rail_ok,
         'band': TODAY_BAND,
         'num_turns': 2
     }])
@@ -395,6 +442,7 @@ if st.button("🧪 PhysS1 スモークテスト"):
         st.dataframe(out)
     except Exception as e:
         st.error(f"PhysS1失敗: {e}")
+
 
 
 # ===== ファイルアップロード =====
