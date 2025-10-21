@@ -281,7 +281,6 @@ with st.sidebar.expander("本レース条件", expanded=True):
     TARGET_GRADE = st.selectbox("本レースの格", grade_opts, index=grade_opts.index("OP"))
     TARGET_SURFACE  = st.selectbox("本レースの馬場", ["芝","ダ"], index=0)
     TARGET_DISTANCE = st.number_input("本レースの距離 [m]", 1000, 3600, 1800, 100)
-    TARGET_TURN     = st.radio("回り", ["右","左"], index=0, horizontal=True)
     
 with st.sidebar.expander("📐 本レース幾何（コース設定）", expanded=True):
     VENUES = ["札幌","函館","福島","新潟","東京","中山","中京","京都","阪神","小倉"]
@@ -296,33 +295,30 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID])
 
     # 現在の設定で有効な柵だけに絞る（見つからなければフォールバック）
-   # 🔧 ここも修正（コース設定の selectbox を描画する直前）
-# 🔧 ここも修正（コース設定の selectbox を描画する直前）
-surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
-dist_ui = int(TARGET_DISTANCE)
+    surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
+    dist_ui = int(TARGET_DISTANCE)
 
-valid_rails = []
-for r in ["A", "B", "C", "D", ""]:
-    try:
-        if get_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, r) is not None:
-            valid_rails.append(r or "（指定なし）")
-    except Exception:
-        pass
+    valid_rails = []
+    for r in ["A", "B", "C", "D", ""]:
+        try:
+            if get_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, r) is not None:
+                valid_rails.append(r or "（指定なし）")
+        except Exception:
+            pass
 
-# 1つも無ければ “存在しない柵を提示しない”
-if not valid_rails:
-    valid_rails = ["（指定なし）"]
-    st.caption("※ この距離・レイアウトでは登録された柵区分が見つかりません。PhysS1実行時に自動フォールバックします。")
+    if not valid_rails:
+        valid_rails = ["（指定なし）"]
+        st.caption("※ この距離・レイアウトでは登録された柵区分が見つかりません。PhysS1実行時に自動フォールバックします。")
 
-rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0)
-RAIL = "" if rail_label == "（指定なし）" else rail_label
+    rail_label = st.selectbox("コース区分（A/B/C/D）", valid_rails, index=0, key="rail_select")
+    RAIL = "" if rail_label == "（指定なし）" else rail_label
 
-
-    # ← ここで場に連動して既定の回りを出す
+    # 競馬場に応じた既定の回り（ここで出す）
     DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
     _turn_default = DEFAULT_VENUE_TURN.get(COURSE_ID, '右')
-    TARGET_TURN = st.radio("回り", ["右","左"], index=(0 if _turn_default=="右" else 1),
-                       horizontal=True, key="turn_geom")
+    TARGET_TURN = st.radio("回り", ["右","左"],
+                           index=(0 if _turn_default == "右" else 1),
+                           horizontal=True, key="turn_geom")
 
     TODAY_BAND = st.select_slider("通過帯域（暫定）", options=["内","中","外"], value="中")
 
