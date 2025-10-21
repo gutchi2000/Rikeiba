@@ -1,4 +1,4 @@
-# project_root/course_geometry/__init__.py
+# course_geometry/__init__.py
 from .registry import (
     register_all_turf,
     get_course_geom,
