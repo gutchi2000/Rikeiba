@@ -1,29 +1,38 @@
 # -*- coding: utf-8 -*-
 # 競馬予想アプリ（AUTO統合版 + スペクトル解析）
 
-import os, sys
+from __future__ import annotations
 
-# 同ディレクトリのモジュールを優先して読めるようにする
+# ===== 標準ライブラリ =====
+import os, sys, io, re, json
+
+# ===== サードパーティ =====
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+# ===== 自作モジュールを優先解決 =====
 BASE = os.path.dirname(os.path.abspath(__file__))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-# -- 外部モジュール（ここで宣言しておく） --
 from course_geometry import register_all_turf, get_course_geom
-from physics_sprint1 import add_phys_s1_features  # ← 先頭でimport
+from physics_sprint1 import add_phys_s1_features  # ※ ここでは「定義の import のみ」。即時実行しない。
 
-import streamlit as st
+# ===== Streamlit 先にページ設定（UIを使う前に呼ぶ）=====
+st.set_page_config(page_title="Rikeiba", layout="wide")
 
+# ===== コース幾何の初期化（1回だけ）=====
 @st.cache_resource
 def _boot_course_geom():
     register_all_turf()
     return True
+
 _boot_course_geom()
 
-# （必要なら）サンプル実行は無効化して残す
+# （必要なら）サンプル実行は無効化して残す（本体起動時に副作用を出さない）
 if False:
     geom = get_course_geom(course_id="東京", surface="芝", distance_m=1600, layout="外回り", rail_state="A")
-    # course_geometry に追加関数がある環境だけ試す
     try:
         import course_geometry as cg
         if hasattr(cg, "estimate_tci"):
@@ -31,28 +40,10 @@ if False:
     except Exception:
         pass
 
-# ※ ここで races_df に対して add_phys_s1_features を即時実行しないこと！
-#   実行は後半の UI（🧪 PhysS1 スモークテスト）内でのみ行います。
+# ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
+#   実際の実行は UI 側（例：🧪 PhysS1 スモークテストボタン）で行う。
 
-
-
-# keiba_web_app.py 冒頭の import 群の直後
-import sys, os
-BASE = os.path.dirname(os.path.abspath(__file__))
-if BASE not in sys.path:
-    sys.path.insert(0, BASE)
-
-from course_geometry import register_all_turf, get_course_geom
-from physics_sprint1 import add_phys_s1_features
-
-import streamlit as st
-
-@st.cache_resource
-def _boot_course_geom():
-    register_all_turf()
-    return True
-_boot_course_geom()
-# ---- optional ----
+# ---- optional deps（無くても動く系）----
 try:
     import altair as alt
     ALT_AVAILABLE = True
@@ -71,9 +62,9 @@ try:
 except Exception:
     SK_ISO = False
 
-# ===== 日本語フォント =====
+# ===== Matplotlib（ヘッドレス安全化 & 日本語フォント）=====
 import matplotlib
-matplotlib.use("Agg")  # Streamlit Cloud 等のヘッドレス環境で安全
+matplotlib.use("Agg")  # ヘッドレス環境（Streamlit Cloud 等）で安全
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
@@ -82,25 +73,6 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = [
     'IPAexGothic','IPAGothic','Noto Sans CJK JP','Yu Gothic UI','Meiryo','Hiragino Sans','MS Gothic'
 ]
-
-
-st.set_page_config(page_title="Rikeiba", layout="wide")
-
-# ===== 小ユーティリティ =====
-STYLES = ['逃げ','先行','差し','追込']
-_fw = str.maketrans('０１２３４５６７８９％','0123456789%')
-
-STYLE_ALIASES = {
-    '追い込み':'追込','追込み':'追込','おいこみ':'追込','おい込み':'追込',
-    'さし':'差し','差込':'差し','差込み':'差し',
-    'せんこう':'先行','先行 ':'先行','先行　':'先行',
-    'にげ':'逃げ','逃げ ':'逃げ','逃げ　':'逃げ'
-}
-
-def normalize_style(s: str) -> str:
-    s = str(s).replace('　','').strip().translate(_fw)
-    s = STYLE_ALIASES.get(s, s)
-    return s if s in STYLES else ''
 
 @st.cache_resource
 def get_jp_font():
@@ -119,86 +91,117 @@ def get_jp_font():
             return font_manager.FontProperties(fname=p)
     return None
 
-jp_font = get_jp_font()
-if jp_font is not None:
+_jp_font = get_jp_font()
+if _jp_font is not None:
     try:
-        plt.rcParams['font.family'] = jp_font.get_name()
+        plt.rcParams['font.family'] = _jp_font.get_name()
     except Exception:
         pass
 
-# ===== スタイル関係 =====
+# ===== 小ユーティリティ =====
+STYLES = ['逃げ','先行','差し','追込']
+_fw = str.maketrans('０１２３４５６７８９％','0123456789%')
+
+STYLE_ALIASES = {
+    '追い込み':'追込','追込み':'追込','おいこみ':'追込','おい込み':'追込',
+    'さし':'差し','差込':'差し','差込み':'差し',
+    'せんこう':'先行','先行 ':'先行','先行　':'先行',
+    'にげ':'逃げ','逃げ ':'逃げ','逃げ　':'逃げ'
+}
+
+def normalize_style(s: str) -> str:
+    s = str(s).replace('　','').strip().translate(_fw)
+    s = STYLE_ALIASES.get(s, s)
+    return s if s in STYLES else ''
+
+# ===== 表示スタイル（枠色）=====
 WAKU_COL = {1:"#ffffff",2:"#000000",3:"#e6002b",4:"#1560bd",5:"#ffd700",6:"#00a04b",7:"#ff7f27",8:"#f19ec2"}
 
 def _style_waku(s: pd.Series):
-    out=[]
+    out = []
     for v in s:
         if pd.isna(v):
             out.append("")
         else:
-            v=int(v); bg=WAKU_COL.get(v,"#fff"); fg="#000" if v==1 else "#fff"
+            v = int(v)
+            bg = WAKU_COL.get(v, "#fff")
+            fg = "#000" if v == 1 else "#fff"
             out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
     return out
 
-# ===== 関数群 =====
-
+# ===== 共通関数群 =====
 def season_of(m: int) -> str:
-    if 3<=m<=5: return '春'
-    if 6<=m<=8: return '夏'
-    if 9<=m<=11: return '秋'
+    if 3 <= m <= 5:  return '春'
+    if 6 <= m <= 8:  return '夏'
+    if 9 <= m <= 11: return '秋'
     return '冬'
 
 def z_score(s: pd.Series) -> pd.Series:
     s = pd.to_numeric(s, errors='coerce')
     std = s.std(ddof=0)
-    if not np.isfinite(std) or std==0: return pd.Series([50]*len(s), index=s.index)
-    return 50 + 10*(s - s.mean())/std
+    if not np.isfinite(std) or std == 0:
+        return pd.Series([50] * len(s), index=s.index)
+    return 50 + 10 * (s - s.mean()) / std
 
 def _parse_time_to_sec(x):
-    if x is None or (isinstance(x,float) and np.isnan(x)): return np.nan
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return np.nan
     s = str(x).strip()
     m = re.match(r'^(\d+):(\d+)\.(\d+)$', s)
-    if m: return int(m.group(1))*60 + int(m.group(2)) + float('0.'+m.group(3))
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2)) + float('0.' + m.group(3))
     m = re.match(r'^(\d+)[\.:](\d+)[\.:](\d+)$', s)
-    if m: return int(m.group(1))*60 + int(m.group(2)) + int(m.group(3))/10
-    try: return float(s)
-    except: return np.nan
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2)) + int(m.group(3)) / 10
+    try:
+        return float(s)
+    except Exception:
+        return np.nan
 
 def _trim_name(x):
-    try: return str(x).replace('\u3000',' ').strip()
-    except: return str(x)
+    try:
+        return str(x).replace('\u3000', ' ').strip()
+    except Exception:
+        return str(x)
 
 def w_std_unbiased(x, w, ddof=1):
-    x=np.asarray(x,float); w=np.asarray(w,float)
-    sw=w.sum()
-    if not np.isfinite(sw) or sw<=0: return np.nan
-    m=np.sum(w*x)/sw
-    var=np.sum(w*(x-m)**2)/sw
-    n_eff=(sw**2)/np.sum(w**2) if np.sum(w**2)>0 else 0
-    if ddof and n_eff>ddof: var*= n_eff/(n_eff-ddof)
-    return float(np.sqrt(max(var,0.0)))
+    x = np.asarray(x, float)
+    w = np.asarray(w, float)
+    sw = w.sum()
+    if not np.isfinite(sw) or sw <= 0:
+        return np.nan
+    m = np.sum(w * x) / sw
+    var = np.sum(w * (x - m) ** 2) / sw
+    n_eff = (sw ** 2) / np.sum(w ** 2) if np.sum(w ** 2) > 0 else 0
+    if ddof and n_eff > ddof:
+        var *= n_eff / (n_eff - ddof)
+    return float(np.sqrt(max(var, 0.0)))
 
-def ndcg_by_race(frame: pd.DataFrame, scores, k: int=3) -> float:
-    f = frame[['race_id','y']].copy().reset_index(drop=True)
-    s = np.asarray(scores,float)
-    if len(s)!=len(f): s=s[:len(f)]
-    vals=[]
+def ndcg_by_race(frame: pd.DataFrame, scores, k: int = 3) -> float:
+    f = frame[['race_id', 'y']].copy().reset_index(drop=True)
+    s = np.asarray(scores, float)
+    if len(s) != len(f):
+        s = s[:len(f)]
+    vals = []
     for _, idx in f.groupby('race_id').groups.items():
-        idx=np.asarray(list(idx),int)
-        y_true=np.nan_to_num(f.loc[idx,'y'].astype(float).to_numpy(), nan=0.0)
-        y_pred=np.nan_to_num(s[idx].astype(float), nan=0.0)
-        m=len(idx)
-        if m==0: continue
-        if m==1:
-            vals.append(1.0 if y_true[0]>0 else 0.0); continue
-        kk=int(min(max(1,k),m))
-        order=np.argsort(-y_pred)
-        gains=(2.0**y_true[order]-1.0)
-        discounts=1.0/np.log2(np.arange(2,m+2))
-        dcg=float(np.sum(gains[:kk]*discounts[:kk]))
-        order_best=np.argsort(-y_true)
-        gains_best=(2.0**y_true[order_best]-1.0)
-        idcg=float(np.sum(gains_best[:kk]*discounts[:kk]))
-        vals.append(dcg/idcg if idcg>0 else 0.0)
+        idx = np.asarray(list(idx), int)
+        y_true = np.nan_to_num(f.loc[idx, 'y'].astype(float).to_numpy(), nan=0.0)
+        y_pred = np.nan_to_num(s[idx].astype(float), nan=0.0)
+        m = len(idx)
+        if m == 0:
+            continue
+        if m == 1:
+            vals.append(1.0 if y_true[0] > 0 else 0.0)
+            continue
+        kk = int(min(max(1, k), m))
+        order = np.argsort(-y_pred)
+        gains = (2.0 ** y_true[order] - 1.0)
+        discounts = 1.0 / np.log2(np.arange(2, m + 2))
+        dcg = float(np.sum(gains[:kk] * discounts[:kk]))
+        order_best = np.argsort(-y_true)
+        gains_best = (2.0 ** y_true[order_best] - 1.0)
+        idcg = float(np.sum(gains_best[:kk] * discounts[:kk]))
+        vals.append(dcg / idcg if idcg > 0 else 0.0)
     return float(np.mean(vals)) if vals else float('nan')
 
 def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
@@ -213,6 +216,7 @@ def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
         return (y / s) if s > 0 else x
     except Exception:
         return x
+
 
 # ===== サイドバー =====
 st.sidebar.title("⚙️ パラメタ設定（AUTO統合）")
