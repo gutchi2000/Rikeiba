@@ -261,17 +261,18 @@ def _compute_finish_grade_row(row: pd.Series) -> float:
 # =========================
 # 公開: DataFrame に付与
 # =========================
+# --- 追加：ユーティリティ（モジュール先頭～中腹のどこでもOK。実行はしない） ---
 def band_from_waku(gate_no: pd.Series, field_size: pd.Series) -> pd.Series:
-    # 内=下3分位, 外=上3分位, それ以外=中
-    q = (gate_no.astype(float) - 1) / (field_size.astype(float).clip(lower=2) - 1)
-    return pd.cut(q, bins=[-1e9, 1/3, 2/3, 1e9], labels=["内","中","外"]).astype(str)
+    """枠番と頭数から '内/中/外' を機械的に割り当てる。"""
+    g = pd.to_numeric(gate_no, errors="coerce")
+    f = pd.to_numeric(field_size, errors="coerce").clip(lower=2)
+    q = (g - 1.0) / (f - 1.0)  # 0=最内, 1=大外
+    bins = [-1e9, 1/3, 2/3, 1e9]
+    lab  = ["内", "中", "外"]
+    out = pd.cut(q, bins=bins, labels=lab)
+    return out.astype(str)
 
-df['band'] = band_from_waku(df['gate_no'], df['field_size'])
-# そのまま band_col='band' で渡す
-
-
-
-
+# --- 既存関数をこの形に変更 ---
 def add_phys_s1_features(
     df: pd.DataFrame,
     *,
@@ -279,51 +280,30 @@ def add_phys_s1_features(
     band_col: Optional[str] = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
-    """
-    Sprint 1 の物理特徴を df に付与する。
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        入力DF。最低限の列:
-          - course_id, surface, distance_m, layout, rail_state
-        あると良い列:
-          - final_time_sec / race_time_sec / time_sec （平均速度の推定に使用）
-          - first3f_sec / last3f_sec （速度の代替）
-          - break_loss_sec（出遅れ秒）
-          - finish_uphill_len_m（分かる場は200m以外を指定可能）
-          - num_turns（周回レースなどで4にしておくと精度↑）
-        あれば使う列:
-          - band_col（'内'/'中'/'外' 等の帯域）
-
-    group_cols : tuple
-        正規化（min-max）を行うグループキー。通常は ("race_id",)。
-        まとめて同一レース内で 0-1 スケールされます。
-
-    band_col : str or None
-        帯域の列名。列がなければ None でOK（半径補正は 0 扱い）。
-
-    Returns
-    -------
-    df_out : pd.DataFrame
-        以下の列が追加されます:
-          - phys_corner_load_raw, phys_corner_load
-          - phys_start_cost_raw,  phys_start_cost
-          - phys_finish_grade_raw, phys_finish_grade
-          - phys_s1_score  （合成スコア: 0-1）
-    """
     df = df.copy()
 
-    # インプットの正規化（列名）
+    # 必須列チェック
     required = ("course_id", "surface", "distance_m", "layout", "rail_state")
     for k in required:
         if k not in df.columns:
             raise KeyError(f"required column missing: {k}")
 
+    # ---- band（内/中/外）を決める ----
     if band_col and band_col in df.columns:
         df["band"] = df[band_col]
     else:
-        df["band"] = None
+        # gate_no / field_size があれば自動生成（無ければ None）
+        if {"gate_no", "field_size"}.issubset(df.columns):
+            df["band"] = band_from_waku(df["gate_no"], df["field_size"])
+        else:
+            df["band"] = None
+
+    # 以降は今の実装のまま …
+    # df["phys_corner_load_raw"] = ...
+    # df["phys_start_cost_raw"]  = ...
+    # df["phys_finish_grade_raw"]= ...
+    # 正規化 & 合成も今のままでOK
+    ...
 
     # 原スコア計算
     if verbose:
