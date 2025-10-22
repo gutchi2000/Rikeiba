@@ -23,7 +23,6 @@ from physics_sprint1 import add_phys_s1_features  # ※ ここでは「定義の
 st.set_page_config(page_title="Rikeiba", layout="wide")
 
 # ===== コース幾何の初期化（1回だけ）=====
-# ===== コース幾何の初期化（1回だけ）=====
 @st.cache_resource
 def _boot_course_geom(version: int = 1):
     # 直前の登録をクリア（定義があれば使う）
@@ -40,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=3)
+_boot_course_geom(version=4)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
