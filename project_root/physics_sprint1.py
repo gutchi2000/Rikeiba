@@ -121,11 +121,11 @@ def _safe_div(a: float, b: float, default: float = 0.0) -> float:
         return default
 
 def _minmax01(x: pd.Series) -> pd.Series:
-    _min = x.min()
-    _max = x.max()
+    _min, _max = x.min(), x.max()
     if pd.isna(_min) or pd.isna(_max) or _max - _min <= 1e-12:
-        return pd.Series(np.zeros(len(x)), index=x.index)
+        return pd.Series(np.full(len(x), 0.5), index=x.index)
     return (x - _min) / (_max - _min)
+
 
 def _pick_speed_mps(row: pd.Series, distance_m: float) -> float:
     """
@@ -166,66 +166,51 @@ def _first_turn_weight(d_first: Optional[float]) -> float:
 # =========================
 
 def _compute_corner_load_row(row: pd.Series) -> float:
-    """
-    コーナー負荷（無次元） ~ s * v * theta を近似で算出。
-    - s: スパイラル低減
-    - v: 代表速度
-    - theta: 1周あたりの曲がり角 ≈ π を 1周のコーナー数で割った角を、通過回数分加算
-    """
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
     rail      = row.get('rail_state', 'A')
-    band      = row.get('band', None)  # 内/中/外 のどれか（あれば）
+    band      = row.get('band', None)
     distance  = float(row.get('distance_m', np.nan))
-
     if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
         return 0.0
 
-    # 幾何（幅員・直線長等）
     try:
         geom = get_course_geom(course_id, surface, int(distance), layout, rail)
     except Exception:
         return 0.0
 
-    # 半径とスパイラル
     r0 = _represent_radius(course_id, layout)
     width_avg = _avg_track_width(geom)
-    r = max(5.0, r0 + _band_delta_r(band, width_avg))
+    r = max(5.0, r0 + _band_delta_r(band, width_avg))   # 帯域で半径を動かす
     s = _course_spiral_coeff(course_id)
 
-    # 角度：1周の合計を π（180°）として、1コーナーあたり π/2
-    #   → 内回り/外回り共通の簡易近似。通過回数 = num_turns（周回は4）
-    num_turns = int(row.get('num_turns', geom.num_turns or 2))
-    theta_per_turn = math.pi / 2.0
-    theta_total = theta_per_turn * num_turns
+    # num_turns の NaN に強い取得
+    nt = row.get('num_turns', None)
+    if pd.isna(nt):
+        nt = geom.num_turns or 2
+    nt = int(nt)
 
-    # 速度
+    theta_total = (math.pi / 2.0) * nt
     v = _pick_speed_mps(row, distance)
 
-    # 指標
-    load = s * v * theta_total * (1.0 / max(r, 1e-6)) * r  # v*theta（上の導出では r が約分する）
-    # ↑理屈上 v*theta で十分だが、あとで係数校正しやすいよう load を v*theta に等価化
+    # ★ 半径が効く形に修正
+    load = s * (v ** 2) * theta_total / max(r, 1e-6)
     return float(max(0.0, load))
 
 
+
 def _compute_start_cost_row(row: pd.Series) -> float:
-    """
-    スタート加速コスト: alpha * v_c^2 * weight(first_turn) + beta * break_loss_sec
-    """
     distance  = float(row.get('distance_m', np.nan))
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
     rail      = row.get('rail_state', 'A')
-
     if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
         return 0.0
 
-    # 巡航速度
     v_c = _pick_speed_mps(row, distance)
 
-    # 1角まで距離
     try:
         geom = get_course_geom(course_id, surface, int(distance), layout, rail)
         d_first = geom.start_to_first_turn_m
@@ -233,10 +218,18 @@ def _compute_start_cost_row(row: pd.Series) -> float:
         d_first = None
     w_first = _first_turn_weight(d_first)
 
-    # 出遅れ（任意列）
     break_loss = float(row.get('break_loss_sec', 0.0) or 0.0)
 
-    return float(START_ALPHA * (v_c ** 2) * w_first + START_BETA * break_loss)
+    # 外枠ほど不利（短1角ほど強く）…任意
+    lane_pen = 0.0
+    gate = row.get('gate_no', None)        # 枠番(1..頭数)
+    field = row.get('field_size', None)    # 頭数
+    if gate and field and field > 1:
+        q = (float(gate) - 1.0) / (float(field) - 1.0)  # 0=最内,1=大外
+        lane_pen = 0.25 * w_first * q
+
+    return float(START_ALPHA * (v_c ** 2) * w_first + START_BETA * break_loss + lane_pen)
+
 
 
 def _compute_finish_grade_row(row: pd.Series) -> float:
@@ -268,6 +261,16 @@ def _compute_finish_grade_row(row: pd.Series) -> float:
 # =========================
 # 公開: DataFrame に付与
 # =========================
+def band_from_waku(gate_no: pd.Series, field_size: pd.Series) -> pd.Series:
+    # 内=下3分位, 外=上3分位, それ以外=中
+    q = (gate_no.astype(float) - 1) / (field_size.astype(float).clip(lower=2) - 1)
+    return pd.cut(q, bins=[-1e9, 1/3, 2/3, 1e9], labels=["内","中","外"]).astype(str)
+
+df['band'] = band_from_waku(df['gate_no'], df['field_size'])
+# そのまま band_col='band' で渡す
+
+
+
 
 def add_phys_s1_features(
     df: pd.DataFrame,
