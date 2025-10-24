@@ -435,11 +435,14 @@ if st.button("🧪 PhysS1 スモークテスト"):
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
     dist_ui = int(TARGET_DISTANCE)
 
-    lay_ok, rail_ok, geom, used_d = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
-
+    lay_ok, rail_ok, geom, used_d, is_fb = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
     st.write("geom (resolved):", geom)
-    st.caption(f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'} / "
-               f"distance: {dist_ui} → {used_d or '—'}")
+    st.caption(
+        f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'} / "
+        f"distance: {dist_ui} → {used_d or '—'}" + (" 〔fallback: 簡易ジオメトリ〕" if is_fb else "")
+    )
+
+
 
     if geom is None:
         st.error("この組合せのコース幾何が未登録のため PhysS1 を実行できません。下の一覧から存在する組合せを選んでください。")
@@ -2050,15 +2053,18 @@ try:
                      if 'PredTime_s' in df_agg.columns else np.nan
 
     # 幾何の解決
-    lay_ok, rail_ok, geom = resolve_course_geom(
+    lay_ok, rail_ok, geom, used_d, is_fb = resolve_course_geom(
         COURSE_ID,
         "芝" if TARGET_SURFACE == "芝" else "ダ",
         int(TARGET_DISTANCE),
         LAYOUT,
         RAIL
     )
-    if geom is None:
-        raise ValueError(f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}")
+if geom is None:
+    raise ValueError(f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}")
+if is_fb:
+    st.warning("course_geometry に登録が無い距離のため、簡易ジオメトリで PhysS1 を計算しました（保守的な推定）。")
+
 
     # ★ 馬ごとに1行作る（馬番/頭数を入れる）
     #   ・gate_no ← sheet1 の「番」を想定（無ければ NaN）
