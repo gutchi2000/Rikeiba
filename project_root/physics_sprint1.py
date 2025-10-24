@@ -9,6 +9,7 @@ Sprint 1 の物理スコア（コーナー v^2/r ・スタート加速 ・終盤
 from __future__ import annotations
 import math
 from typing import Optional, Tuple, Dict
+from types import SimpleNamespace  # ★ 修正: 追加
 
 import numpy as np
 import pandas as pd
@@ -72,9 +73,32 @@ FINISH_UPHILL_LEN_DEFAULT = 200.0  # [m]
 # 内部ユーティリティ
 # =========================
 
+# ★ 修正: 簡易ジオメトリ（未登録距離・柵の救済）
+def _fallback_geom(course_id: str, surface: str, distance_m: int, layout: str, rail_state: str):
+    """
+    PhysS1 が参照する最小限の属性だけを持つ簡易ジオメトリ。
+    芝のみ救済（ダート等は 0 寄与で安全に進める）。
+    """
+    return SimpleNamespace(
+        course_id=course_id,
+        surface=surface,
+        distance_m=int(distance_m),
+        layout=layout,
+        rail_state=rail_state,
+        track_width_min_m=25.0,
+        track_width_max_m=25.0,
+        num_turns=2,
+        start_to_first_turn_m=FIRST_TURN_DIST_DEFAULT,
+        finish_grade_pct=0.0,
+    )
+
 def _avg_track_width(geom) -> float:
     """幅員が取れないときは 25m を返す。"""
-    wmin, wmax = geom.track_width_min_m, geom.track_width_max_m
+    # ★ 修正: geom が None でも落ちないように
+    if geom is None:
+        return 25.0
+    wmin = getattr(geom, "track_width_min_m", None)
+    wmax = getattr(geom, "track_width_max_m", None)
     if wmin and wmax:
         return (wmin + wmax) / 2.0
     return 25.0
@@ -165,10 +189,14 @@ def _compute_corner_load_row(row: pd.Series) -> float:
     if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
         return 0.0
 
+    # ★ 修正: geom None を救済
+    geom = None
     try:
         geom = get_course_geom(course_id, surface, int(distance), layout, rail)
     except Exception:
-        return 0.0
+        geom = None
+    if geom is None and str(surface).startswith("芝"):
+        geom = _fallback_geom(course_id, surface, int(distance), layout, rail)
 
     r0 = _represent_radius(course_id, layout)
     width_avg = _avg_track_width(geom)
@@ -177,7 +205,7 @@ def _compute_corner_load_row(row: pd.Series) -> float:
 
     nt = row.get('num_turns', None)
     if pd.isna(nt):
-        nt = geom.num_turns or 2
+        nt = getattr(geom, "num_turns", None) or 2
     nt = int(nt)
 
     theta_total = (math.pi / 2.0) * nt
@@ -198,9 +226,10 @@ def _compute_start_cost_row(row: pd.Series) -> float:
 
     v_c = _pick_speed_mps(row, distance)
 
+    # get_course_geom が None を返すだけなら AttributeError → except で d_first=None
     try:
         geom = get_course_geom(course_id, surface, int(distance), layout, rail)
-        d_first = geom.start_to_first_turn_m
+        d_first = getattr(geom, "start_to_first_turn_m", None)
     except Exception:
         d_first = None
     w_first = _first_turn_weight(d_first)
@@ -230,7 +259,7 @@ def _compute_finish_grade_row(row: pd.Series) -> float:
 
     try:
         geom = get_course_geom(course_id, surface, int(distance), layout, rail)
-        grade_pct = geom.finish_grade_pct
+        grade_pct = getattr(geom, "finish_grade_pct", None)
     except Exception:
         grade_pct = None
 
