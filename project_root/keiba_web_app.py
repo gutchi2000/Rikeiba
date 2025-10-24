@@ -219,45 +219,60 @@ def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
     except Exception:
         return x
 
+from types import SimpleNamespace
+
 def _canon_surface(s: str) -> str:
     s = str(s)
     if s.startswith("芝") or "turf" in s.lower(): return "芝"
     if s.startswith("ダ") or "dirt" in s.lower(): return "ダ"
     return s
 
-def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str, *,
-                        dist_tol: int = 300, step: int = 100):
+def _fallback_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str):
     """
-    get_course_geom(...) が None を返す組合せを自動でフォールバック。
-    1) 指定そのまま
-    2) 柵のみ変更
-    3) レイアウト変更
-    4) 距離を ±dist_tol を step 刻みで近傍探索（レイアウト/柵も含めて）
-    戻り値: (layout_ok, rail_ok, geom or None, used_distance)
+    最低限の属性だけを持つ簡易ジオメトリ（PhysS1 Sprint1に必要な分だけ）。
+    ※ finish_grade_pct は不明⇒0%、start_to_first_turn_m は保守的に 800m
+    """
+    return SimpleNamespace(
+        course_id=course_id,
+        surface=surface,
+        distance_m=int(distance_m),
+        layout=layout,
+        rail_state=rail,
+        # Sprint1 で参照する属性
+        track_width_min_m=25.0,
+        track_width_max_m=25.0,
+        num_turns=2,
+        start_to_first_turn_m=800.0,
+        finish_grade_pct=0.0,
+    )
+
+def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str,
+                        *, dist_tol: int = 300, step: int = 100, allow_fallback: bool = True):
+    """
+    1) 指定そのまま → 2) 柵だけ変更 → 3) レイアウト変更 → 4) 距離±tol探索
+    見つからなければ allow_fallback=True なら「簡易ジオメトリ」を返す。
+    戻り値: (layout_ok, rail_ok, geom, used_distance, is_fallback)
     """
     surface = _canon_surface(surface)
     used_distance = int(distance_m)
 
-    # まず指定そのまま
     try:
         g = get_course_geom(course_id, surface, int(distance_m), layout, rail)
         if g is not None:
-            return layout, rail, g, used_distance
+            return layout, rail, g, used_distance, False
     except Exception:
         pass
 
-    # 柵だけ総当たり
     for r in ["A", "B", "C", "D", ""]:
         if r == rail: 
             continue
         try:
             g = get_course_geom(course_id, surface, int(distance_m), layout, r)
             if g is not None:
-                return layout, r, g, used_distance
+                return layout, r, g, used_distance, False
         except Exception:
             continue
 
-    # レイアウト変更（候補はUIの辞書かデフォルト）
     cand_layouts = (LAYOUT_OPTS.get(course_id) if 'LAYOUT_OPTS' in globals() else ["内回り","外回り","直線"]) or ["内回り","外回り","直線"]
     for lay in cand_layouts:
         if lay == layout:
@@ -266,15 +281,14 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
             try:
                 g = get_course_geom(course_id, surface, int(distance_m), lay, r)
                 if g is not None:
-                    return lay, r, g, used_distance
+                    return lay, r, g, used_distance, False
             except Exception:
                 continue
 
-    # ★ 距離の近傍探索（±dist_tol, step刻み）
     dlist = [distance_m]
     for d in range(step, dist_tol + step, step):
         dlist.extend([distance_m - d, distance_m + d])
-    dlist = [int(d) for d in dlist if 800 <= d <= 3600]  # 常識的な範囲
+    dlist = [int(d) for d in dlist if 800 <= d <= 3600]
 
     for d2 in dlist:
         for lay in cand_layouts:
@@ -282,11 +296,17 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
                 try:
                     g = get_course_geom(course_id, surface, int(d2), lay, r)
                     if g is not None:
-                        return lay, r, g, int(d2)
+                        return lay, r, g, int(d2), False
                 except Exception:
                     continue
 
-    return None, None, None, None
+    if allow_fallback and surface == "芝":
+        # ← 最終手段：簡易ジオメトリで続行（京都3000mのような未登録距離対策）
+        g = _fallback_geom(course_id, surface, int(distance_m), layout, rail)
+        return layout, rail, g, int(distance_m), True
+
+    return None, None, None, None, False
+
 
 
 
