@@ -219,39 +219,45 @@ def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
     except Exception:
         return x
 
-# ===== PhysS1用：サーフェス正規化 & 幾何の自動解決 =====
 def _canon_surface(s: str) -> str:
     s = str(s)
     if s.startswith("芝") or "turf" in s.lower(): return "芝"
     if s.startswith("ダ") or "dirt" in s.lower(): return "ダ"
     return s
 
-def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str):
+def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str, *,
+                        dist_tol: int = 300, step: int = 100):
     """
     get_course_geom(...) が None を返す組合せを自動でフォールバック。
-    戻り値: (layout_ok, rail_ok, geom or None)
+    1) 指定そのまま
+    2) 柵のみ変更
+    3) レイアウト変更
+    4) 距離を ±dist_tol を step 刻みで近傍探索（レイアウト/柵も含めて）
+    戻り値: (layout_ok, rail_ok, geom or None, used_distance)
     """
     surface = _canon_surface(surface)
+    used_distance = int(distance_m)
+
     # まず指定そのまま
     try:
         g = get_course_geom(course_id, surface, int(distance_m), layout, rail)
         if g is not None:
-            return layout, rail, g
+            return layout, rail, g, used_distance
     except Exception:
         pass
 
     # 柵だけ総当たり
     for r in ["A", "B", "C", "D", ""]:
-        if r == rail:
+        if r == rail: 
             continue
         try:
             g = get_course_geom(course_id, surface, int(distance_m), layout, r)
             if g is not None:
-                return layout, r, g
+                return layout, r, g, used_distance
         except Exception:
             continue
 
-    # レイアウトも変えてみる（UIの候補を利用、なければ保守的に）
+    # レイアウト変更（候補はUIの辞書かデフォルト）
     cand_layouts = (LAYOUT_OPTS.get(course_id) if 'LAYOUT_OPTS' in globals() else ["内回り","外回り","直線"]) or ["内回り","外回り","直線"]
     for lay in cand_layouts:
         if lay == layout:
@@ -260,11 +266,28 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
             try:
                 g = get_course_geom(course_id, surface, int(distance_m), lay, r)
                 if g is not None:
-                    return lay, r, g
+                    return lay, r, g, used_distance
             except Exception:
                 continue
 
-    return None, None, None
+    # ★ 距離の近傍探索（±dist_tol, step刻み）
+    dlist = [distance_m]
+    for d in range(step, dist_tol + step, step):
+        dlist.extend([distance_m - d, distance_m + d])
+    dlist = [int(d) for d in dlist if 800 <= d <= 3600]  # 常識的な範囲
+
+    for d2 in dlist:
+        for lay in cand_layouts:
+            for r in ["A", "B", "C", "D", ""]:
+                try:
+                    g = get_course_geom(course_id, surface, int(d2), lay, r)
+                    if g is not None:
+                        return lay, r, g, int(d2)
+                except Exception:
+                    continue
+
+    return None, None, None, None
+
 
 
 # ===== サイドバー =====
@@ -388,35 +411,38 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
 
 
-# 🔧 置き換え（スモークテスト部分）
 if st.button("🧪 PhysS1 スモークテスト"):
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
     dist_ui = int(TARGET_DISTANCE)
 
-    lay_ok, rail_ok, geom = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
+    lay_ok, rail_ok, geom, used_d = resolve_course_geom(COURSE_ID, surface_ui, dist_ui, LAYOUT, RAIL)
 
     st.write("geom (resolved):", geom)
-    st.caption(f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'}")
+    st.caption(f"layout: {LAYOUT} → {lay_ok or '—'} / rail: {RAIL or '（指定なし）'} → {rail_ok or '（指定なし）'} / "
+               f"distance: {dist_ui} → {used_d or '—'}")
 
-    # ← ここで None を弾いて落ちないようにする
     if geom is None:
         st.error("この組合せのコース幾何が未登録のため PhysS1 を実行できません。下の一覧から存在する組合せを選んでください。")
 
-        # 利用可能な組合せを列挙して見せる（デバッグ用）
+        # 近傍距離でも探して一覧に出す（±300m）
         avail = []
-        for lay in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
-            for r in ["A","B","C","D",""]:
-                try:
-                    g = get_course_geom(COURSE_ID, surface_ui, dist_ui, lay, r)
-                    if g is not None:
-                        avail.append({"レイアウト": lay, "柵": (r or "（指定なし）")})
-                except Exception:
-                    pass
+        for d2 in range(max(800, dist_ui-300), min(3600, dist_ui+300)+1, 100):
+            for lay in (LAYOUT_OPTS.get(COURSE_ID) or ["内回り","外回り","直線"]):
+                for r in ["A","B","C","D",""]:
+                    try:
+                        g = get_course_geom(COURSE_ID, surface_ui, int(d2), lay, r)
+                        if g is not None:
+                            avail.append({"距離[m]": d2, "レイアウト": lay, "柵": (r or "（指定なし）")})
+                    except Exception:
+                        pass
         if avail:
-            st.dataframe(pd.DataFrame(avail))
+            st.dataframe(pd.DataFrame(avail).drop_duplicates().sort_values(["距離[m]","レイアウト","柵"]))
         else:
-            st.info("※ この距離では登録が見つかりません。距離を変えると出る可能性があります。")
-        st.stop()  # ここで終了
+            st.info("※ 近傍距離(±300m)でも登録が見つかりません。別の距離・コースを選んでください。")
+        st.stop()
+    # ここまで来たら geom あり → 従来通り DataFrame 作成 & 実行
+    ...
+
 
     # ここまで来たら geom がある
     races_df_today_dbg = pd.DataFrame([{
