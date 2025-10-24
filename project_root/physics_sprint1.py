@@ -2,14 +2,13 @@
 """
 physics_sprint1.py
 Sprint 1 の物理スコア（コーナー v^2/r ・スタート加速 ・終盤勾配）を DataFrame に付与する。
-
 公開関数:
 - add_phys_s1_features(df, *, group_cols=("race_id",), band_col=None, verbose=False) -> pd.DataFrame
 """
 from __future__ import annotations
 import math
 from typing import Optional, Tuple, Dict
-from types import SimpleNamespace  # ★ 修正: 追加
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -69,34 +68,26 @@ FIRST_TURN_DIST_DEFAULT = 800.0  # [m]
 # 終盤上り区間の代表長さ（不明時）
 FINISH_UPHILL_LEN_DEFAULT = 200.0  # [m]
 
+# レイアウト候補（場ごとフォールバック順）
+LAYOUT_OPTS: Dict[str, Tuple[str, ...]] = {
+    "札幌": ("内回り",),
+    "函館": ("内回り",),
+    "福島": ("内回り",),
+    "新潟": ("外回り","内回り","直線"),
+    "東京": ("外回り",),
+    "中山": ("内回り","外回り"),
+    "中京": ("外回り",),
+    "京都": ("外回り","内回り"),
+    "阪神": ("外回り","内回り"),
+    "小倉": ("内回り",),
+}
+
 # =========================
 # 内部ユーティリティ
 # =========================
 
-# ★ 修正: 簡易ジオメトリ（未登録距離・柵の救済）
-def _fallback_geom(course_id: str, surface: str, distance_m: int, layout: str, rail_state: str):
-    """
-    PhysS1 が参照する最小限の属性だけを持つ簡易ジオメトリ。
-    芝のみ救済（ダート等は 0 寄与で安全に進める）。
-    """
-    return SimpleNamespace(
-        course_id=course_id,
-        surface=surface,
-        distance_m=int(distance_m),
-        layout=layout,
-        rail_state=rail_state,
-        track_width_min_m=25.0,
-        track_width_max_m=25.0,
-        num_turns=2,
-        start_to_first_turn_m=FIRST_TURN_DIST_DEFAULT,
-        finish_grade_pct=0.0,
-    )
-
 def _avg_track_width(geom) -> float:
     """幅員が取れないときは 25m を返す。"""
-    # ★ 修正: geom が None でも落ちないように
-    if geom is None:
-        return 25.0
     wmin = getattr(geom, "track_width_min_m", None)
     wmax = getattr(geom, "track_width_max_m", None)
     if wmin and wmax:
@@ -129,44 +120,83 @@ def _safe_div(a: float, b: float, default: float = 0.0) -> float:
 def _minmax01(x: pd.Series) -> pd.Series:
     xmin, xmax = x.min(), x.max()
     if pd.isna(xmin) or pd.isna(xmax) or xmax - xmin <= 1e-12:
-        # すべて同値なら 0.5 を返して「中立」にする
         return pd.Series(np.full(len(x), 0.5), index=x.index, dtype=float)
     return (x - xmin) / (xmax - xmin)
 
 def _pick_speed_mps(row: pd.Series, distance_m: float) -> float:
-    """
-    速度[m/s]の代表値：
-    1) avg_speed_mps
-    2) distance_m / final_time_sec
-    3) first3f_sec / last3f_sec から 1F平均
-    どれも無ければ 16.7 m/s。
-    """
     if 'avg_speed_mps' in row and pd.notna(row['avg_speed_mps']):
         return float(row['avg_speed_mps'])
     for k in ('final_time_sec', 'race_time_sec', 'time_sec'):
-        if k in row and pd.notna(row[k]) and row[k] > 0:
-            return _safe_div(distance_m, row[k], 16.7)
+        v = row.get(k, None)
+        if v and float(v) > 0:
+            return _safe_div(distance_m, float(v), 16.7)
     for k in ('first3f_sec', 'last3f_sec'):
-        if k in row and pd.notna(row[k]) and row[k] > 0:
-            one_f_sec = float(row[k]) / 3.0
+        v = row.get(k, None)
+        if v and float(v) > 0:
+            one_f_sec = float(v) / 3.0
             return _safe_div(200.0, one_f_sec, 16.7)
     return 16.7
 
 def _first_turn_weight(d_first: Optional[float]) -> float:
-    """
-    1角まで距離の短さをウェイト化（短いほど重い）。
-    d=200m -> 1.0, d=800m -> 0.0 の線形をクリップ。
-    """
     d = d_first if (d_first is not None and d_first > 0) else FIRST_TURN_DIST_DEFAULT
     x = (d - 200.0) / (800.0 - 200.0)
     x = max(0.0, min(1.0, x))
     return 1.0 - x
 
 # =================================================
-# 帯域を作るユーティリティ（import時には実行しない）
+# ここが核心：幾何の“自動フォールバック解決”
+# =================================================
+
+@lru_cache(maxsize=4096)
+def _resolve_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str):
+    """
+    1) 指定そのまま → 2) 柵だけ変更(A/B/C/D/空) → 3) レイアウト変更
+    → 4) rail="" で再トライ（未登録柵対策）
+    見つからなければ None を返す。
+    """
+    surf = "芝" if str(surface).lower().startswith(("芝","turf")) else "ダ"
+    dist = int(distance_m)
+    # 1) 指定そのまま
+    try:
+        g = get_course_geom(course_id, surf, dist, layout, rail)
+        if g is not None:
+            return g, layout, rail
+    except Exception:
+        pass
+    # 2) 柵だけ変更
+    for r2 in ("A","B","C","D",""):
+        if r2 == rail: 
+            continue
+        try:
+            g = get_course_geom(course_id, surf, dist, layout, r2)
+            if g is not None:
+                return g, layout, r2
+        except Exception:
+            continue
+    # 3) レイアウト変更（場の候補順）
+    for lay2 in LAYOUT_OPTS.get(course_id, ("内回り","外回り","直線")):
+        if lay2 == layout:
+            continue
+        for r2 in ("A","B","C","D",""):
+            try:
+                g = get_course_geom(course_id, surf, dist, lay2, r2)
+                if g is not None:
+                    return g, lay2, r2
+            except Exception:
+                continue
+    # 4) rail="" で最後の再トライ
+    try:
+        g = get_course_geom(course_id, surf, dist, layout, "")
+        if g is not None:
+            return g, layout, ""
+    except Exception:
+        pass
+    return None, None, None
+
+# =================================================
+# 帯域を作るユーティリティ
 # =================================================
 def band_from_waku(gate_no: pd.Series, field_size: pd.Series) -> pd.Series:
-    """枠番と頭数から '内/中/外' を機械的に割り当てる。"""
     g = pd.to_numeric(gate_no, errors="coerce")
     f = pd.to_numeric(field_size, errors="coerce").clip(lower=2)
     q = (g - 1.0) / (f - 1.0)  # 0=最内, 1=大外
@@ -183,63 +213,48 @@ def _compute_corner_load_row(row: pd.Series) -> float:
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
-    rail      = row.get('rail_state', 'A')
+    rail      = row.get('rail_state', '')
     band      = row.get('band', None)
     distance  = float(row.get('distance_m', np.nan))
-    if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
+    if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
 
-    # ★ 修正: geom None を救済
-    geom = None
-    try:
-        geom = get_course_geom(course_id, surface, int(distance), layout, rail)
-    except Exception:
-        geom = None
-    if geom is None and str(surface).startswith("芝"):
-        geom = _fallback_geom(course_id, surface, int(distance), layout, rail)
+    geom, lay_used, rail_used = _resolve_geom(course_id, surface, int(distance), layout, rail)
+    if geom is None:
+        return 0.0
 
-    r0 = _represent_radius(course_id, layout)
+    r0 = _represent_radius(course_id, lay_used or layout)
     width_avg = _avg_track_width(geom)
     r = max(5.0, r0 + _band_delta_r(band, width_avg))   # 帯域で半径を動かす
     s = _course_spiral_coeff(course_id)
 
     nt = row.get('num_turns', None)
     if pd.isna(nt):
-        nt = getattr(geom, "num_turns", None) or 2
+        nt = getattr(geom, "num_turns", 2) or 2
     nt = int(nt)
 
     theta_total = (math.pi / 2.0) * nt
     v = _pick_speed_mps(row, distance)
-
-    # 半径が効く形： s * v^2 * θ / r
-    load = s * (v ** 2) * theta_total / max(r, 1e-6)
-    return float(max(0.0, load))
+    return float(max(0.0, s * (v ** 2) * theta_total / max(r, 1e-6)))
 
 def _compute_start_cost_row(row: pd.Series) -> float:
     distance  = float(row.get('distance_m', np.nan))
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
-    rail      = row.get('rail_state', 'A')
-    if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
+    rail      = row.get('rail_state', '')
+    if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
 
     v_c = _pick_speed_mps(row, distance)
-
-    # get_course_geom が None を返すだけなら AttributeError → except で d_first=None
-    try:
-        geom = get_course_geom(course_id, surface, int(distance), layout, rail)
-        d_first = getattr(geom, "start_to_first_turn_m", None)
-    except Exception:
-        d_first = None
+    geom, lay_used, rail_used = _resolve_geom(course_id, surface, int(distance), layout, rail)
+    d_first = getattr(geom, "start_to_first_turn_m", None) if geom else None
     w_first = _first_turn_weight(d_first)
-
     break_loss = float(row.get('break_loss_sec', 0.0) or 0.0)
 
-    # 外枠ほど不利（短1角ほど強く）
     lane_pen = 0.0
-    gate = row.get('gate_no', None)        # 枠番(1..頭数)
-    field = row.get('field_size', None)    # 頭数
+    gate = row.get('gate_no', None)
+    field = row.get('field_size', None)
     if pd.notna(gate) and pd.notna(field) and float(field) > 1:
         q = (float(gate) - 1.0) / (float(field) - 1.0)  # 0=最内,1=大外
         lane_pen = 0.25 * w_first * q
@@ -247,25 +262,18 @@ def _compute_start_cost_row(row: pd.Series) -> float:
     return float(START_ALPHA * (v_c ** 2) * w_first + START_BETA * break_loss + lane_pen)
 
 def _compute_finish_grade_row(row: pd.Series) -> float:
-    """終盤勾配コスト: (grade_pct/100) * L_fin"""
     distance  = float(row.get('distance_m', np.nan))
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
-    rail      = row.get('rail_state', 'A')
-
-    if not isinstance(course_id, str) or surface != '芝' or not math.isfinite(distance):
+    rail      = row.get('rail_state', '')
+    if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
 
-    try:
-        geom = get_course_geom(course_id, surface, int(distance), layout, rail)
-        grade_pct = getattr(geom, "finish_grade_pct", None)
-    except Exception:
-        grade_pct = None
-
+    geom, _, _ = _resolve_geom(course_id, surface, int(distance), layout, rail)
+    grade_pct = getattr(geom, "finish_grade_pct", None) if geom else None
     if not grade_pct:
         return 0.0
-
     L_fin = float(row.get('finish_uphill_len_m', FINISH_UPHILL_LEN_DEFAULT))
     return float((grade_pct / 100.0) * L_fin)
 
@@ -304,7 +312,6 @@ def add_phys_s1_features(
         else:
             df["band"] = None
 
-    # 原スコア計算
     if verbose:
         print("[phys_s1] computing raw loads...")
 
@@ -312,7 +319,6 @@ def add_phys_s1_features(
     df["phys_start_cost_raw"]   = df.apply(_compute_start_cost_row,  axis=1)
     df["phys_finish_grade_raw"] = df.apply(_compute_finish_grade_row, axis=1)
 
-    # グループ内 min-max 正規化 → 合成
     if verbose:
         print("[phys_s1] min-max normalization within groups:", group_cols)
 
@@ -346,7 +352,6 @@ from physics_sprint1 import add_phys_s1_features
 
 register_all_turf()
 
-# 例：馬ごとに1行持つ DF（同一レース）
 df_in = pd.DataFrame({
     "race_id": "R1",
     "horse":  ["A","B","C","D"],
@@ -354,10 +359,9 @@ df_in = pd.DataFrame({
     "surface": ["芝"]*4,
     "distance_m": [1800]*4,
     "layout": ["外回り"]*4,
-    "rail_state": ["A"]*4,
+    "rail_state": ["A"]*4,    # 未登録でも自動で別柵/レイアウトにフォールバック
     "gate_no": [1,4,8,12],
     "field_size": [12]*4,
 })
-
 df_out = add_phys_s1_features(df_in, group_cols=("race_id",), band_col=None, verbose=False)
 """
