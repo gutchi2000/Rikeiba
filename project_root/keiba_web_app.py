@@ -2060,16 +2060,16 @@ try:
         LAYOUT,
         RAIL
     )
-if geom is None:
-    raise ValueError(f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}")
-if is_fb:
-    st.warning("course_geometry に登録が無い距離のため、簡易ジオメトリで PhysS1 を計算しました（保守的な推定）。")
 
+    # ← ここは try の「中」に入れる（SyntaxError 回避）
+    if geom is None:
+        raise ValueError(
+            f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}"
+        )
+    if is_fb:
+        st.warning("course_geometry に登録が無い距離のため、簡易ジオメトリで PhysS1 を計算しました（保守的な推定）。")
 
-    # ★ 馬ごとに1行作る（馬番/頭数を入れる）
-    #   ・gate_no ← sheet1 の「番」を想定（無ければ NaN）
-    #   ・field_size ← 出走頭数
-    #   ・break_loss_sec は未知なので 0.0（列があれば差し替わる）
+    # ★ ここから PhysS1 本計算はフォールバックの有無に関わらず“常に”実行
     fld_size = int(len(horses)) if len(horses) > 0 else None
     races_df_today = []
     for _, r in horses.iterrows():
@@ -2086,37 +2086,33 @@ if is_fb:
             'gate_no': gate_no,
             'field_size': fld_size,
             'break_loss_sec': 0.0,
-            '馬名': r.get('馬名', None)  # 後でマージ用に通す
+            '馬名': r.get('馬名', None)
         })
     races_df_today = pd.DataFrame(races_df_today)
 
-    # 帯域は gate_no/field_size から自動推定させるので band_col=None
     phys1 = add_phys_s1_features(
         races_df_today,
-        group_cols=("race_id",),  # ★ レース内でMin-Max
+        group_cols=("race_id",),
         band_col=None,
         verbose=False
+    ).rename(columns={
+        'phys_corner_load': 'CornerLoadS1',
+        'phys_start_cost': 'StartCostS1',
+        'phys_finish_grade': 'FinishGradeS1',
+        'phys_s1_score': 'PhysS1'
+    })
+
+    df_agg = df_agg.merge(
+        phys1[['馬名','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']],
+        on='馬名', how='left'
     )
-
-    phys_cols = {
-        'phys_corner_load':'CornerLoadS1',
-        'phys_start_cost':'StartCostS1',
-        'phys_finish_grade':'FinishGradeS1',
-        'phys_s1_score':'PhysS1'
-    }
-    phys1 = phys1.rename(columns=phys_cols)
-
-    # 馬名でマージ（馬番でやるなら '番' と 'gate_no' を使ってもOK）
-    df_agg = df_agg.merge(phys1[['馬名','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']],
-                          on='馬名', how='left')
-
-    # スライダーの強さで加点
     df_agg['FinalRaw'] += float(PHYS_S1_GAIN) * pd.to_numeric(df_agg['PhysS1'], errors='coerce').fillna(0.0)
 
 except Exception as e:
     st.warning(f"PhysS1の計算に失敗しました: {e}")
     for k in ['CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']:
         df_agg[k] = np.nan
+
 
 
 # PacePts反映
