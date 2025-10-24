@@ -1999,11 +1999,11 @@ else:
 
 # ===== PhysS1（コース幾何）を 予測タイム入り で再計算 → 全馬へ付与 =====
 try:
-    # レース想定の代表タイム（各馬のPredTime中央値）
+    # レース代表タイム（各馬PredTime中央値）
     race_pred_time = float(pd.to_numeric(df_agg.get('PredTime_s'), errors='coerce').median()) \
                      if 'PredTime_s' in df_agg.columns else np.nan
 
-    # 幾何を解決（None回避）
+    # 幾何の解決
     lay_ok, rail_ok, geom = resolve_course_geom(
         COURSE_ID,
         "芝" if TARGET_SURFACE == "芝" else "ダ",
@@ -2014,22 +2014,35 @@ try:
     if geom is None:
         raise ValueError(f"未対応のコース設定: {COURSE_ID}/{TARGET_SURFACE}/{int(TARGET_DISTANCE)}m/{LAYOUT}-{RAIL}")
 
-    races_df_today = pd.DataFrame([{
-        'race_id': 'TODAY',
-        'course_id': COURSE_ID,
-        'surface': "芝" if TARGET_SURFACE == "芝" else "ダ",
-        'distance_m': int(TARGET_DISTANCE),
-        'layout': lay_ok,
-        'rail_state': rail_ok,
-        'band': TODAY_BAND,
-        'num_turns': 2,
-        'final_time_sec': race_pred_time if np.isfinite(race_pred_time) else None,
-    }])
+    # ★ 馬ごとに1行作る（馬番/頭数を入れる）
+    #   ・gate_no ← sheet1 の「番」を想定（無ければ NaN）
+    #   ・field_size ← 出走頭数
+    #   ・break_loss_sec は未知なので 0.0（列があれば差し替わる）
+    fld_size = int(len(horses)) if len(horses) > 0 else None
+    races_df_today = []
+    for _, r in horses.iterrows():
+        gate_no = pd.to_numeric(r.get('番', np.nan), errors='coerce')
+        races_df_today.append({
+            'race_id': 'TODAY',
+            'course_id': COURSE_ID,
+            'surface': "芝" if TARGET_SURFACE == "芝" else "ダ",
+            'distance_m': int(TARGET_DISTANCE),
+            'layout': lay_ok,
+            'rail_state': rail_ok,
+            'num_turns': 2,
+            'final_time_sec': race_pred_time if np.isfinite(race_pred_time) else None,
+            'gate_no': gate_no,
+            'field_size': fld_size,
+            'break_loss_sec': 0.0,
+            '馬名': r.get('馬名', None)  # 後でマージ用に通す
+        })
+    races_df_today = pd.DataFrame(races_df_today)
 
+    # 帯域は gate_no/field_size から自動推定させるので band_col=None
     phys1 = add_phys_s1_features(
         races_df_today,
-        group_cols=(),
-        band_col="band",
+        group_cols=("race_id",),  # ★ レース内でMin-Max
+        band_col=None,
         verbose=False
     )
 
@@ -2039,9 +2052,11 @@ try:
         'phys_finish_grade':'FinishGradeS1',
         'phys_s1_score':'PhysS1'
     }
-    pv = phys1.rename(columns=phys_cols).iloc[0]
-    for k in phys_cols.values():
-        df_agg[k] = float(pd.to_numeric(pv.get(k), errors='coerce'))
+    phys1 = phys1.rename(columns=phys_cols)
+
+    # 馬名でマージ（馬番でやるなら '番' と 'gate_no' を使ってもOK）
+    df_agg = df_agg.merge(phys1[['馬名','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']],
+                          on='馬名', how='left')
 
     # スライダーの強さで加点
     df_agg['FinalRaw'] += float(PHYS_S1_GAIN) * pd.to_numeric(df_agg['PhysS1'], errors='coerce').fillna(0.0)
@@ -2050,6 +2065,7 @@ except Exception as e:
     st.warning(f"PhysS1の計算に失敗しました: {e}")
     for k in ['CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']:
         df_agg[k] = np.nan
+
 
 # PacePts反映
 df_agg['PacePts'] = pd.to_numeric(df_agg['PacePts'], errors='coerce').fillna(0.0)
