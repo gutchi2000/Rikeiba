@@ -39,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=10)
+_boot_course_geom(version=11)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2318,6 +2318,14 @@ bt_base = _df[['馬名','確定着順','rid_hist','レース日','ClassKey','Wee
 bt_base['確定着順'] = pd.to_numeric(bt_base['確定着順'], errors='coerce')
 bt_base = bt_base[bt_base['確定着順'] >= 1]
 
+bt_base = (
+    bt_base
+    .groupby('rid_hist', group_keys=False)
+    .filter(lambda g: len(g) >= 2 and g['確定着順'].nunique() >= 2)
+)
+if bt_base.empty:
+    # ここで止めない。後段のフォールバックで均等に落とす
+    pass
 # 時系列重み（例：ロバストに寄せてやや緩め）
 bt_base['_w_time'] = 0.5 ** ((pd.Timestamp.today() - pd.to_datetime(bt_base['レース日'], errors='coerce')).dt.days.clip(lower=0) / (half_life_m*30.4375 if half_life_m>0 else 180.0))
 
@@ -2334,9 +2342,33 @@ names_bt, N_bt, M_bt = _build_pairwise_from_ranks(
 )
 worth_bt = fit_bradley_terry(names_bt, N_bt, M_bt)  # Series(index=馬名, value=worth)
 
+worth_bt = fit_bradley_terry(names_bt, N_bt, M_bt)  # Series(index=馬名, value=worth)
+
+# ★ 追記: 行列が実質ゼロ or 学習結果が空なら、均等重みにフォールバック
+try:
+    total_comp = float(np.nansum(M_bt)) if isinstance(M_bt, np.ndarray) else 0.0
+except Exception:
+    total_comp = 0.0
+
+if (worth_bt is None) or (len(worth_bt) == 0) or (not np.isfinite(total_comp) or total_comp <= 0):
+    worth_bt = pd.Series(1.0, index=names_bt, dtype=float)
+
 # ===== 今日の勝率（BT） =====
 runners = horses['馬名'].astype(str).tolist()
 w_today = pd.Series([worth_bt.get(nm, np.nan) for nm in runners], index=runners, dtype=float)
+
+# ★ 追記: 未学習馬・全NaN・和が0のときの救済（均等→安全に確率化）
+if not np.isfinite(w_today).any():
+    w_today = pd.Series(1.0, index=runners, dtype=float)
+w_today = w_today.fillna(1.0)
+
+sw = float(w_today.sum()) if np.isfinite(w_today.sum()) else 0.0
+if sw <= 0:
+    w_today = pd.Series(1.0, index=runners, dtype=float)
+    sw = float(w_today.sum())
+
+p_win_bt = (w_today / sw).reindex(df_agg['馬名'], fill_value=np.nan)
+df_agg['勝率%_BT'] = (100.0 * p_win_bt).round(2)
 
 # 未学習馬にはバックオフ（全体平均の 0.8×など）
 w_back = float(np.nanmean(w_today)) if np.isfinite(np.nanmean(w_today)) else (1.0 / max(len(runners),1))
