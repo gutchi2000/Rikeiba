@@ -2354,29 +2354,39 @@ if (worth_bt is None) or (len(worth_bt) == 0) or (not np.isfinite(total_comp) or
     worth_bt = pd.Series(1.0, index=names_bt, dtype=float)
 
 # ===== 今日の勝率（BT） =====
+# ===== 今日の勝率（BT） =====
 runners = horses['馬名'].astype(str).tolist()
+
+# 学習結果が空/ほぼゼロのときは均等フォールバック
+try:
+    total_comp = float(np.nansum(M_bt)) if isinstance(M_bt, np.ndarray) else 0.0
+except Exception:
+    total_comp = 0.0
+if (worth_bt is None) or (len(worth_bt) == 0) or (not np.isfinite(total_comp) or total_comp <= 0):
+    worth_bt = pd.Series(1.0, index=names_bt, dtype=float)
+
+# 今日の出走馬に対応する強さベクトル
 w_today = pd.Series([worth_bt.get(nm, np.nan) for nm in runners], index=runners, dtype=float)
 
-# ★ 追記: 未学習馬・全NaN・和が0のときの救済（均等→安全に確率化）
+# すべて欠損→均等、欠損→バックオフ
 if not np.isfinite(w_today).any():
     w_today = pd.Series(1.0, index=runners, dtype=float)
-w_today = w_today.fillna(1.0)
-
-sw = float(w_today.sum()) if np.isfinite(w_today.sum()) else 0.0
-if sw <= 0:
-    w_today = pd.Series(1.0, index=runners, dtype=float)
-    sw = float(w_today.sum())
-
-p_win_bt = (w_today / sw).reindex(df_agg['馬名'], fill_value=np.nan)
-df_agg['勝率%_BT'] = (100.0 * p_win_bt).round(2)
-
-# 未学習馬にはバックオフ（全体平均の 0.8×など）
-w_back = float(np.nanmean(w_today)) if np.isfinite(np.nanmean(w_today)) else (1.0 / max(len(runners),1))
+w_back = float(np.nanmean(w_today)) if np.isfinite(np.nanmean(w_today)) else (1.0 / max(len(runners), 1))
 w_today = w_today.fillna(0.8 * w_back)
 
-# 規格化 → 勝率
-p_win_bt = (w_today / w_today.sum()).reindex(df_agg['馬名'], fill_value=np.nan)
-df_agg['勝率%_BT'] = (100.0 * p_win_bt).round(2)
+# 正規化
+p_today = w_today / max(w_today.sum(), 1e-12)
+
+# ★ dict→map で“安定当て込み”（None 混入を防ぐ）
+bt_map = p_today.to_dict()
+df_agg['勝率%_BT'] = (
+    df_agg['馬名'].astype(str).map(lambda n: bt_map.get(str(n), np.nan))
+    .astype(float).mul(100.0).round(2)
+)
+
+# 念のため：数値化を強制（Styler の "None" 表示回避）
+df_agg['勝率%_BT'] = pd.to_numeric(df_agg['勝率%_BT'], errors='coerce')
+
 
 
 # ===== 勝率（PL解析解）＆ Top3（Gumbel反対称） =====
@@ -2439,7 +2449,6 @@ for k in range(3):
     counts += np.bincount(rank_idx[:,k], minlength=len(abilities)).astype(float)
 df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
 
-# ===== H) AR100: 分位写像 =====
 # ===== H) AR100: 分位写像 =====
 ranks = S.rank(method='average', pct=True).fillna(0.5)
 
