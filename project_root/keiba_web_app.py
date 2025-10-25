@@ -2576,20 +2576,28 @@ if SHOW_CORNER:
 
 # 診断タブ（校正/NDCGなど）
 with st.expander('📈 診断（校正・NDCG）', expanded=False):
+    # ---- NDCG@3（未校正softmaxの擬似）----
     try:
         df_tmp=_df[['レース日','競走名','score_adj','確定着順']].dropna().copy()
         df_tmp['race_id']=pd.to_datetime(df_tmp['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + df_tmp['競走名'].astype(str)
         df_tmp['y']=(pd.to_numeric(df_tmp['確定着順'], errors='coerce')==1).astype(int)
+
         pr=[]
         for rid, g in df_tmp.groupby('race_id'):
-            s=g['score_adj'].astype(float).to_numpy(); p=np.exp(beta_pl*(s-s.max())); p/=p.sum(); pr.append(p)
+            s=g['score_adj'].astype(float).to_numpy()
+            p=np.exp(beta_pl*(s-s.max())); p/=p.sum()
+            pr.append(p)
         p_raw=np.concatenate(pr) if pr else np.array([])
         ndcg=ndcg_by_race(df_tmp[['race_id','y']], p_raw, k=3)
         st.caption(f"NDCG@3（未校正softmaxの擬似）: {ndcg:.4f}")
-            # === 追加: Brier / LogLoss / AUC / ECE（5-bin） ===
+    except Exception:
+        pass
+
+    # ---- 追加：Brier / LogLoss / AUC / ECE(5bin) ----
     try:
         dfh2 = _df.dropna(subset=['score_adj','確定着順']).copy()
         dfh2['race_id'] = pd.to_datetime(dfh2['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + dfh2['競走名'].astype(str)
+
         P_list2, Y_list2 = [], []
         for _, g2 in dfh2.groupby('race_id'):
             xs = g2['score_adj'].astype(float).to_numpy()
@@ -2599,19 +2607,17 @@ with st.expander('📈 診断（校正・NDCG）', expanded=False):
             ps = np.exp(beta_pl * (xs - xs.max()))
             ps = ps / ps.sum()
             P_list2.append(ps); Y_list2.append(ys)
+
         if P_list2:
             P2 = np.concatenate(P_list2); Y2 = np.concatenate(Y_list2)
-            # Brier / LogLoss
             brier = float(np.mean((P2 - Y2)**2))
             eps = 1e-12
             logloss = float(-np.mean(Y2*np.log(P2+eps) + (1-Y2)*np.log(1-P2+eps)))
-            # AUC
             try:
                 from sklearn.metrics import roc_auc_score
                 auc = float(roc_auc_score(Y2, P2)) if len(np.unique(Y2)) > 1 else float('nan')
             except Exception:
                 auc = float('nan')
-            # ECE(5-bin)
             bins = np.linspace(0, 1, 6)
             idx = np.digitize(P2, bins) - 1
             ece = 0.0; n = len(P2)
@@ -2627,12 +2633,12 @@ with st.expander('📈 診断（校正・NDCG）', expanded=False):
     except Exception as e:
         st.info(f"成績指標の計算に失敗: {e}")
 
-    except Exception:
-        pass
+    # 校正の状況表示
     if calibrator is None and do_calib:
         st.warning('校正器の学習に必要なデータが不足しています。')
     elif calibrator is not None:
         st.success('等温回帰で勝率を校正中。')
+
 
 
 
