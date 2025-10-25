@@ -39,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=6)
+_boot_course_geom(version=7)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -218,6 +218,80 @@ def safe_iso_predict(ir, p_vec: np.ndarray) -> np.ndarray:
         return (y / s) if s > 0 else x
     except Exception:
         return x
+
+# ===== Bradley–Terry: ランキング→ペア勝敗→MM更新 =====
+def _build_pairwise_from_ranks(df_rank: pd.DataFrame,
+                               rid_col: str, name_col: str, rank_col: str,
+                               weight_col: str | None = None):
+    """
+    各レース内の着順からペア勝敗カウント n_ij を構築。
+    n_ij: i が j に勝った回数（重み付き）。対称な m_ij = n_ij + n_ji も返す。
+    """
+    # 名前→index
+    names = pd.Index(sorted(df_rank[name_col].dropna().astype(str).unique()))
+    idx = {n:i for i,n in enumerate(names)}
+    n = len(names)
+    if n == 0:
+        return names, np.zeros((0,0)), np.zeros((0,0))
+
+    N = np.zeros((n, n), float)  # n_ij
+    for rid, g in df_rank.groupby(rid_col):
+        g = g.dropna(subset=[name_col, rank_col]).copy()
+        if g.empty:
+            continue
+        # 低い数値が上位という仮定（“確定着順”）
+        g = g.sort_values(rank_col)
+        # 重み（時系列など）を race 単位で持ちたいならここで race_w を作成
+        if weight_col and weight_col in g.columns:
+            w = float(pd.to_numeric(g[weight_col], errors='coerce').mean() or 1.0)
+        else:
+            w = 1.0
+
+        # 上位は下位すべてに勝利
+        order = g[name_col].astype(str).tolist()
+        m = len(order)
+        for a in range(m):
+            ia = idx.get(order[a]); 
+            if ia is None: 
+                continue
+            for b in range(a+1, m):
+                ib = idx.get(order[b])
+                if ib is None:
+                    continue
+                N[ia, ib] += w  # ia beats ib
+    # 合計比較回数 m_ij
+    M = N + N.T
+    return names, N, M
+
+def fit_bradley_terry(names: pd.Index, N: np.ndarray, M: np.ndarray,
+                      max_iter: int = 200, tol: float = 1e-10):
+    """
+    Hunter(2004)のMM更新式：
+      w_i^{new} = S_i / sum_j ( M_ij / (w_i + w_j) ),  S_i = sum_j N_ij
+    初期は一様、スケーリング不定性は sum(w)=1 に規格化。
+    """
+    n = len(names)
+    if n == 0:
+        return pd.Series([], index=names, dtype=float)
+
+    w = np.ones(n, float) / n
+    # 勝数
+    S = N.sum(axis=1)
+
+    for _ in range(max_iter):
+        wsum = w[:, None] + w[None, :]
+        denom = (M / np.maximum(wsum, 1e-12)).sum(axis=1)
+        w_new = S / np.maximum(denom, 1e-12)
+        w_new = np.maximum(w_new, 1e-12)
+        w_new /= w_new.sum()
+
+        if np.max(np.abs(w_new - w)) < tol:
+            w = w_new
+            break
+        w = w_new
+
+    return pd.Series(w, index=names, dtype=float)
+
 
 from types import SimpleNamespace
 
@@ -1137,6 +1211,38 @@ def _make_race_id_for_hist(dfh: pd.DataFrame) -> pd.Series:
 _df['rid_hist'] = _make_race_id_for_hist(_df)
 med = _df.groupby('rid_hist')['score_norm'].transform('median')
 _df['score_adj'] = _df['score_norm'] - med
+
+# ===== ロバスト標準化（週×クラス：median/MAD）=====
+# 週キー（W-MON）とクラスキー（G1/G2/G3…）
+_df['WeekKey'] = pd.to_datetime(_df['レース日'], errors='coerce').dt.to_period('W-MON').astype(str)
+
+def _class_key_row(row):
+    g = normalize_grade_text(row.get('クラス名')) if 'クラス名' in row else None
+    if not g and '競走名' in row:
+        g = normalize_grade_text(row.get('競走名'))
+    return g or 'OTHER'
+
+_df['ClassKey'] = _df.apply(_class_key_row, axis=1)
+
+# group: 週×クラスで median/MAD
+def _mad(s):
+    s = pd.to_numeric(s, errors='coerce')
+    med = s.median()
+    mad = np.median(np.abs(s - med))
+    return med, mad
+
+grp = _df.groupby(['WeekKey','ClassKey'])['score_adj']
+med = grp.transform('median')
+mad = grp.transform(lambda x: np.median(np.abs(pd.to_numeric(x, errors='coerce') - np.nanmedian(pd.to_numeric(x, errors='coerce')))))
+mad = mad.replace(0, np.nan)  # ゼロ割回避
+rb_z = (pd.to_numeric(_df['score_adj'], errors='coerce') - med) / (1.4826 * mad)
+
+# 偏差値（50±10）に写像（欠損は全体で埋め）
+rb_t = 50.0 + 10.0 * rb_z
+rb_t = rb_t.fillna(50.0 + 10.0 * ((pd.to_numeric(_df['score_adj'], errors='coerce') - _df['score_adj'].median()) /
+                                  (1.4826 * np.median(np.abs(pd.to_numeric(_df['score_adj'], errors='coerce') - _df['score_adj'].median()) + 1e-9))))
+
+_df['ScoreT_RB'] = rb_t.clip(0, 100)  # 表示安定のため 0–100 にクリップ
 
 # ===== 右/左回り（推定） =====
 DEFAULT_VENUE_TURN = {'札幌':'右','函館':'右','福島':'右','新潟':'左','東京':'左','中山':'右','中京':'左','京都':'右','阪神':'右','小倉':'右'}
@@ -2119,6 +2225,40 @@ except Exception as e:
 df_agg['PacePts'] = pd.to_numeric(df_agg['PacePts'], errors='coerce').fillna(0.0)
 df_agg['FinalRaw'] += float(pace_gain) * df_agg['PacePts']
 
+# ===== BT学習用データを整形（週×クラスロバスト値も併記可）=====
+bt_base = _df[['馬名','確定着順','rid_hist','レース日','ClassKey','WeekKey','ScoreT_RB']].dropna(subset=['馬名','確定着順','rid_hist']).copy()
+bt_base['確定着順'] = pd.to_numeric(bt_base['確定着順'], errors='coerce')
+bt_base = bt_base[bt_base['確定着順'] >= 1]
+
+# 時系列重み（例：ロバストに寄せてやや緩め）
+bt_base['_w_time'] = 0.5 ** ((pd.Timestamp.today() - pd.to_datetime(bt_base['レース日'], errors='coerce')).dt.days.clip(lower=0) / (half_life_m*30.4375 if half_life_m>0 else 180.0))
+
+# 追加で“重要レース”に重みを足す（例：G1/G2に+20%など）
+def _class_boost(c):
+    return 1.2 if c in ['G1','G2'] else (1.1 if c=='G3' else 1.0)
+bt_base['_w_cls'] = bt_base['ClassKey'].map(_class_boost).fillna(1.0)
+
+bt_base['_w'] = bt_base['_w_time'] * bt_base['_w_cls']
+
+# ===== ペア勝敗 → BT学習 =====
+names_bt, N_bt, M_bt = _build_pairwise_from_ranks(
+    bt_base, rid_col='rid_hist', name_col='馬名', rank_col='確定着順', weight_col='_w'
+)
+worth_bt = fit_bradley_terry(names_bt, N_bt, M_bt)  # Series(index=馬名, value=worth)
+
+# ===== 今日の勝率（BT） =====
+runners = horses['馬名'].astype(str).tolist()
+w_today = pd.Series([worth_bt.get(nm, np.nan) for nm in runners], index=runners, dtype=float)
+
+# 未学習馬にはバックオフ（全体平均の 0.8×など）
+w_back = float(np.nanmean(w_today)) if np.isfinite(np.nanmean(w_today)) else (1.0 / max(len(runners),1))
+w_today = w_today.fillna(0.8 * w_back)
+
+# 規格化 → 勝率
+p_win_bt = (w_today / w_today.sum()).reindex(df_agg['馬名'], fill_value=np.nan)
+df_agg['勝率%_BT'] = (100.0 * p_win_bt).round(2)
+
+
 # ===== 勝率（PL解析解）＆ Top3（Gumbel反対称） =====
 calibrator = None
 if do_calib and SK_ISO:
@@ -2207,9 +2347,11 @@ def _fmt_int(x):
     except:
         return ''
 
+
 show_cols = [
     '順位','枠','番','馬名','脚質',
     'AR100','Band',
+    '勝率%_BT',  # ← 追加
     '勝率%_PL','複勝率%_PL',
     '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
@@ -2217,7 +2359,6 @@ show_cols = [
     'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
     'PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
 ]
-
 
 JP = {
     '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
@@ -2235,7 +2376,8 @@ JP.update({
     'SpecGate_templ_lbl': '想定レース型(テンプレ)',
     'PhysicsZ':'物理Z',
     'PeakWkg':'ピークW/kg',
-    'EAP':'EAP[J/kg/m]'
+    'EAP':'EAP[J/kg/m]',
+    '勝率%_BT': '勝率%（BT）'
 })
 
 
@@ -2265,6 +2407,7 @@ fmt.update({
     JP['PhysicsZ']:'{:.2f}',
     JP['PeakWkg']:'{:.2f}',
     JP['EAP']:'{:.3f}',
+    '勝率%（BT）':'{:.2f}', 
 })
 num_fmt.update(fmt)
 
