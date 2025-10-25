@@ -39,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=8)
+_boot_course_geom(version=9)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2225,6 +2225,88 @@ except Exception as e:
 df_agg['PacePts'] = pd.to_numeric(df_agg['PacePts'], errors='coerce').fillna(0.0)
 df_agg['FinalRaw'] += float(pace_gain) * df_agg['PacePts']
 
+
+# === Bias-lite（場×距離帯×回り：内中外×脚質の軽い補正） ===
+try:
+    s0b = _df[['場名','距離','回り','枠','脚質','確定着順']].copy()
+    s0b['距離帯'] = (pd.to_numeric(s0b['距離'], errors='coerce')/200).round()*200
+    s0b['band'] = pd.cut(pd.to_numeric(s0b['枠'], errors='coerce'),
+                         bins=[0,3,5,8], labels=['内','中','外'])
+    s0b['win'] = (pd.to_numeric(s0b['確定着順'], errors='coerce')==1).astype(int)
+
+    key = (COURSE_ID, int(TARGET_DISTANCE//200*200), TARGET_TURN)
+    sub = s0b[(s0b['場名']==key[0]) & (s0b['距離帯']==key[1]) & (s0b['回り']==key[2])].dropna(subset=['band','脚質'])
+    if len(sub) >= 50:
+        g = sub.groupby(['band','脚質'])['win'].agg(['mean','count']).reset_index()
+        # Wilson補正で中心化した差分 → ±0.8pt の範囲で反映
+        z=1.96
+        p=g['mean'].to_numpy(float); n=g['count'].to_numpy(float)
+        phat=(p + z*z/(2*n)) / (1 + z*z/n)
+        adj = (phat - phat.mean())
+        bias_map = {}
+        for (_, row), val in zip(g.iterrows(), adj):
+            bias_map[(row['band'], row['脚質'])] = float(np.clip(val*4.0, -0.8, 0.8))
+        df_agg['BiasPts'] = [
+            bias_map.get((
+                '内' if (int(r.get('枠',0)) in [1,2,3]) else ('中' if int(r.get('枠',0)) in [4,5] else '外'),
+                str(r.get('脚質',''))
+            ), 0.0) for _, r in df_agg.iterrows()
+        ]
+        df_agg['FinalRaw'] += df_agg['BiasPts'].fillna(0.0)
+except Exception:
+    pass
+# === Traffic-lite（短1角×多頭数×外枠×出脚不安の簡易リスク） ===
+try:
+    field = max(1, len(df_agg))
+    short_1c = 1 if LAYOUT in ['内回り'] else (0 if LAYOUT in ['外回り','直線'] else 0)
+    k1, k2, k3, k4 = 0.06, 0.30, 0.10, 0.20  # 係数は軽め（過信抑制）
+    risk = []
+    for _, r in df_agg.iterrows():
+        waku = pd.to_numeric(r.get('枠'), errors='coerce')
+        stl  = str(r.get('脚質',''))
+        base = k1*max(0, field-12) + k2*short_1c + (k3*max(0, (waku-5)/3) if np.isfinite(waku) else 0.0)
+        esc  = k4*(1.0 if stl in ['逃げ','先行'] else 0.0)  # 出脚で逃げ先行は緩和
+        risk.append(np.clip(base - esc, 0.0, 1.5))
+    df_agg['TrafficPts'] = risk
+    df_agg['FinalRaw'] -= df_agg['TrafficPts'].fillna(0.0)
+except Exception:
+    pass
+# === 自動重み調整（不確実性でMath寄りを弱め、Spec/Physを少し足す） ===
+try:
+    # プリセット（例）：芝1800系 → 既定 0.65:0.35
+    wM, wP = 0.65, 0.35
+
+    # 不確実性指標
+    neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)      # 距離×回りの有効本数
+    sigma = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')                 # タイム分散
+    sigma_med = float(np.nanmedian(sigma)) if np.isfinite(sigma).any() else 0.0
+
+    # Math側の弱め量（0〜0.30）
+    u_M = np.clip((1.0/(1.0 + neff/3.0)) + (0.5 * (sigma / (sigma_med + 1e-9)).median(skipna=True)), 0.0, 0.30)
+
+    # その日の「形（スペクトル）やペース」の強さでPhys側を少し厚めに（0〜0.20）
+    # 既にサイドバーで設定済みの spec_ratio / phys_ratio を利用
+    spec_ratio_safe = float(spec_ratio)  # 上で定義済（スペクトル:物理の配分）
+    pace_amp = float(np.abs(df_agg.get('PacePts', 0)).median())
+    u_P = np.clip(spec_ratio_safe*0.2 + pace_amp*0.1, 0.0, 0.20)
+
+    wM_ = np.clip(wM - float(u_M), 0.30, 0.80)
+    wP_ = 1.0 - wM_
+
+    # 再合成：FinalRaw を一度標準化 → Spec/Phys寄りのZと混合 → 50±10へ戻す
+    Z_math = pd.to_numeric(df_agg['FinalRaw'], errors='coerce')
+    Z_math = Z_math.fillna(Z_math.median())
+    Z_math = (Z_math - Z_math.mean()) / (Z_math.std() + 1e-9)
+
+    Z_spec  = pd.to_numeric(df_agg.get('SpecFitZ'), errors='coerce').fillna(0.0)
+    Z_phys  = ((pd.to_numeric(df_agg.get('PhysicsZ'), errors='coerce') - 50.0) / 10.0).fillna(0.0)
+    Z_ph    = (spec_ratio_safe * Z_spec + (1.0 - spec_ratio_safe) * Z_phys)
+
+    Z_final = wM_ * Z_math + wP_ * Z_ph
+    df_agg['FinalRaw'] = 50 + 10 * ((Z_final - np.nanmean(Z_final)) / (np.nanstd(Z_final) + 1e-9))
+except Exception:
+    pass
+
 # ===== BT学習用データを整形（週×クラスロバスト値も併記可）=====
 bt_base = _df[['馬名','確定着順','rid_hist','レース日','ClassKey','WeekKey','ScoreT_RB']].dropna(subset=['馬名','確定着順','rid_hist']).copy()
 bt_base['確定着順'] = pd.to_numeric(bt_base['確定着順'], errors='coerce')
@@ -2504,12 +2586,55 @@ with st.expander('📈 診断（校正・NDCG）', expanded=False):
         p_raw=np.concatenate(pr) if pr else np.array([])
         ndcg=ndcg_by_race(df_tmp[['race_id','y']], p_raw, k=3)
         st.caption(f"NDCG@3（未校正softmaxの擬似）: {ndcg:.4f}")
+            # === 追加: Brier / LogLoss / AUC / ECE（5-bin） ===
+    try:
+        dfh2 = _df.dropna(subset=['score_adj','確定着順']).copy()
+        dfh2['race_id'] = pd.to_datetime(dfh2['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + dfh2['競走名'].astype(str)
+        P_list2, Y_list2 = [], []
+        for _, g2 in dfh2.groupby('race_id'):
+            xs = g2['score_adj'].astype(float).to_numpy()
+            ys = (pd.to_numeric(g2['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
+            if len(xs) < 2:
+                continue
+            ps = np.exp(beta_pl * (xs - xs.max()))
+            ps = ps / ps.sum()
+            P_list2.append(ps); Y_list2.append(ys)
+        if P_list2:
+            P2 = np.concatenate(P_list2); Y2 = np.concatenate(Y_list2)
+            # Brier / LogLoss
+            brier = float(np.mean((P2 - Y2)**2))
+            eps = 1e-12
+            logloss = float(-np.mean(Y2*np.log(P2+eps) + (1-Y2)*np.log(1-P2+eps)))
+            # AUC
+            try:
+                from sklearn.metrics import roc_auc_score
+                auc = float(roc_auc_score(Y2, P2)) if len(np.unique(Y2)) > 1 else float('nan')
+            except Exception:
+                auc = float('nan')
+            # ECE(5-bin)
+            bins = np.linspace(0, 1, 6)
+            idx = np.digitize(P2, bins) - 1
+            ece = 0.0; n = len(P2)
+            for k in range(5):
+                mask = (idx == k)
+                if mask.any():
+                    conf = float(P2[mask].mean())
+                    acc  = float(Y2[mask].mean())
+                    ece += (mask.sum()/n) * abs(acc - conf)
+            st.write(f"Brier={brier:.4f} / LogLoss={logloss:.4f} / AUC={auc:.4f} / ECE(5bin)={ece:.4f}")
+        else:
+            st.info("評価に足る履歴が不足しています。")
+    except Exception as e:
+        st.info(f"成績指標の計算に失敗: {e}")
+
     except Exception:
         pass
     if calibrator is None and do_calib:
         st.warning('校正器の学習に必要なデータが不足しています。')
     elif calibrator is not None:
         st.success('等温回帰で勝率を校正中。')
+
+
 
 st.markdown("""
 <small>
