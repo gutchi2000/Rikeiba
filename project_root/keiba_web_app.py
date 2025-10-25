@@ -39,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=5)
+_boot_course_geom(version=6)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
