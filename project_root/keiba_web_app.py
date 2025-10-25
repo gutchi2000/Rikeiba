@@ -39,7 +39,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=9)
+_boot_course_geom(version=10)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -503,6 +503,12 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     FULL_TABLE_VIEW = st.checkbox("全頭表示（スクロール無し）", True)
     MAX_TABLE_HEIGHT = st.slider("最大高さ(px)", 800, 10000, 5000, 200)
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
+    
+with st.sidebar.expander("📊 AR100調整", expanded=False):
+    AR_RANK_GAMMA = st.slider(
+        "上位差分の圧縮（γ）", 0.60, 1.20, 0.85, 0.01,
+        help="1.0=従来のまま。0.85など小さくすると1位と2位の差が縮まる。"
+    )
 
 
 if st.button("🧪 PhysS1 スモークテスト"):
@@ -2402,10 +2408,19 @@ for k in range(3):
 df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
 
 # ===== H) AR100: 分位写像 =====
+# ===== H) AR100: 分位写像 =====
 ranks = S.rank(method='average', pct=True).fillna(0.5)
+
+# ★ 追加：上位差分の圧縮（γ<1で差が縮む / γ>1で差が広がる）
+gamma = float(AR_RANK_GAMMA) if 'AR_RANK_GAMMA' in globals() else 1.0
+ranks_eff = np.power(ranks.to_numpy(float), gamma)
+
 qx = np.array([0.00,0.10,0.25,0.50,0.75,0.90,0.97,1.00])
 qy = np.array([40 , 45 , 55 , 65 , 72 , 80 , 90 , 98 ])
-df_agg['AR100'] = np.interp(ranks.to_numpy(float), qx, qy)
+
+# ★ ここを ranks → ranks_eff に
+df_agg['AR100'] = np.interp(ranks_eff, qx, qy)
+
 
 def to_band(v):
     if not np.isfinite(v): return 'E'
