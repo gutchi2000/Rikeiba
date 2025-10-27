@@ -6,28 +6,26 @@ from __future__ import annotations
 # ===== 標準ライブラリ =====
 import os, sys, io, re, json
 
-# ===== サードパーティ =====
-import numpy as np
-import pandas as pd
-import streamlit as st
-from ui_style import topbar, card, pill, score_bar
-
-# ===== 自作モジュールを優先解決 =====
+# ===== 自作モジュールを優先解決（← ここを最初に）=====
 BASE = os.path.dirname(os.path.abspath(__file__))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-# ★ 追加：リポジトリの親ディレクトリもパスに入れる（ui_style.py がリポジトリ直下にあるため）
+# リポジトリの親ディレクトリ（ui_style.py がある場所）もパスに入れる
 ROOT = os.path.abspath(os.path.join(BASE, '..'))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# ===== サードパーティ =====
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+# ← パスを通した “後” にローカルモジュールを import
+from ui_style import topbar, card, pill, score_bar
 from course_geometry import register_all_turf, get_course_geom
 from physics_sprint1 import add_phys_s1_features
 
-
-from course_geometry import register_all_turf, get_course_geom
-from physics_sprint1 import add_phys_s1_features  # ※ ここでは「定義の import のみ」。即時実行しない。
 
 # ===== Streamlit 先にページ設定（UIを使う前に呼ぶ）=====
 st.set_page_config(page_title="Rikeiba", layout="wide")
@@ -49,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=14)
+_boot_course_geom(version=15)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
