@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=16)
+_boot_course_geom(version=17)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -420,6 +420,25 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
     }
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID], key="layout_select")
+   
+with st.sidebar.expander("📊 AR100調整", expanded=False):
+    AR_MODE = st.radio(
+        "AR100の計算モード",
+        ["順位ベース（従来）", "スコアベース（Z値）"],
+        index=0, horizontal=False,
+        help="従来=順位のみで決定。スコアベース=FinalRawの差がそのまま反映されます。"
+    )
+    AR_RANK_GAMMA = st.slider(
+        "上位差分の圧縮（γ）", 0.60, 1.20, 0.85, 0.01,
+        help="順位ベースのときのみ使用。小さいほど1位-2位差が縮む。"
+    )
+
+with st.sidebar.expander("⚖️ 自動バランサ", expanded=False):
+    USE_AUTO_BALANCER = st.checkbox(
+        "自動バランサを有効化（FinalRawを再標準化し Spec/Phys を自動混合）",
+        value=False,
+        help="OFF推奨。ONにすると相対順位だけが効きやすくなり、特性重みの効きが小さく見えます。"
+    )
 
     # 現在の設定で有効な柵だけに絞る
     surface_ui = "芝" if TARGET_SURFACE == "芝" else "ダ"
@@ -511,12 +530,6 @@ with st.sidebar.expander("🖥 表示", expanded=False):
     FULL_TABLE_VIEW = st.checkbox("全頭表示（スクロール無し）", True)
     MAX_TABLE_HEIGHT = st.slider("最大高さ(px)", 800, 10000, 5000, 200)
     SHOW_CORNER = st.checkbox("4角ポジション図を表示", False)
-    
-with st.sidebar.expander("📊 AR100調整", expanded=False):
-    AR_RANK_GAMMA = st.slider(
-        "上位差分の圧縮（γ）", 0.60, 1.20, 0.85, 0.01,
-        help="1.0=従来のまま。0.85など小さくすると1位と2位の差が縮まる。"
-    )
 
 
 if st.button("🧪 PhysS1 スモークテスト"):
@@ -2011,6 +2024,8 @@ df_agg['FinalRaw'] = (
     + df_agg['SexPts'] + df_agg['StylePts'] + df_agg['AgePts'] + df_agg['WakuPts']
 )
 
+df_agg['FinalRaw_before_balance'] = df_agg['FinalRaw'].astype(float)
+
 # 斤量ペナルティ（中央値基準）
 if '斤量' in df_agg.columns and pd.to_numeric(df_agg['斤量'], errors='coerce').notna().any():
     kg = pd.to_numeric(df_agg['斤量'], errors='coerce')
@@ -2286,40 +2301,34 @@ try:
 except Exception:
     pass
 # === 自動重み調整（不確実性でMath寄りを弱め、Spec/Physを少し足す） ===
-try:
-    # プリセット（例）：芝1800系 → 既定 0.65:0.35
-    wM, wP = 0.65, 0.35
+if USE_AUTO_BALANCER:
+    try:
+        # 既存のバランサ中身はそのまま流用
+        wM, wP = 0.65, 0.35
+        neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)
+        sigma = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')
+        sigma_med = float(np.nanmedian(sigma)) if np.isfinite(sigma).any() else 0.0
+        u_M = np.clip((1.0/(1.0 + neff/3.0)) + (0.5 * (sigma / (sigma_med + 1e-9)).median(skipna=True)), 0.0, 0.30)
 
-    # 不確実性指標
-    neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)      # 距離×回りの有効本数
-    sigma = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')                 # タイム分散
-    sigma_med = float(np.nanmedian(sigma)) if np.isfinite(sigma).any() else 0.0
+        spec_ratio_safe = float(spec_ratio)
+        pace_amp = float(np.abs(df_agg.get('PacePts', 0)).median())
+        u_P = np.clip(spec_ratio_safe*0.2 + pace_amp*0.1, 0.0, 0.20)
 
-    # Math側の弱め量（0〜0.30）
-    u_M = np.clip((1.0/(1.0 + neff/3.0)) + (0.5 * (sigma / (sigma_med + 1e-9)).median(skipna=True)), 0.0, 0.30)
+        wM_ = np.clip(wM - float(u_M), 0.30, 0.80)
+        wP_ = 1.0 - wM_
 
-    # その日の「形（スペクトル）やペース」の強さでPhys側を少し厚めに（0〜0.20）
-    # 既にサイドバーで設定済みの spec_ratio / phys_ratio を利用
-    spec_ratio_safe = float(spec_ratio)  # 上で定義済（スペクトル:物理の配分）
-    pace_amp = float(np.abs(df_agg.get('PacePts', 0)).median())
-    u_P = np.clip(spec_ratio_safe*0.2 + pace_amp*0.1, 0.0, 0.20)
+        Z_math = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').fillna(df_agg['FinalRaw'].median())
+        Z_math = (Z_math - Z_math.mean()) / (Z_math.std() + 1e-9)
+        Z_spec = pd.to_numeric(df_agg.get('SpecFitZ'), errors='coerce').fillna(0.0)
+        Z_phys = ((pd.to_numeric(df_agg.get('PhysicsZ'), errors='coerce') - 50.0) / 10.0).fillna(0.0)
+        Z_ph   = (spec_ratio_safe * Z_spec + (1.0 - spec_ratio_safe) * Z_phys)
 
-    wM_ = np.clip(wM - float(u_M), 0.30, 0.80)
-    wP_ = 1.0 - wM_
+        Z_final = wM_ * Z_math + wP_ * Z_ph
+        df_agg['FinalRaw'] = 50 + 10 * ((Z_final - np.nanmean(Z_final)) / (np.nanstd(Z_final) + 1e-9))
+    except Exception:
+        pass
+# OFFのときは FinalRaw_before_balance をそのまま使う（※ここでは何もしない）
 
-    # 再合成：FinalRaw を一度標準化 → Spec/Phys寄りのZと混合 → 50±10へ戻す
-    Z_math = pd.to_numeric(df_agg['FinalRaw'], errors='coerce')
-    Z_math = Z_math.fillna(Z_math.median())
-    Z_math = (Z_math - Z_math.mean()) / (Z_math.std() + 1e-9)
-
-    Z_spec  = pd.to_numeric(df_agg.get('SpecFitZ'), errors='coerce').fillna(0.0)
-    Z_phys  = ((pd.to_numeric(df_agg.get('PhysicsZ'), errors='coerce') - 50.0) / 10.0).fillna(0.0)
-    Z_ph    = (spec_ratio_safe * Z_spec + (1.0 - spec_ratio_safe) * Z_phys)
-
-    Z_final = wM_ * Z_math + wP_ * Z_ph
-    df_agg['FinalRaw'] = 50 + 10 * ((Z_final - np.nanmean(Z_final)) / (np.nanstd(Z_final) + 1e-9))
-except Exception:
-    pass
 
 # ===== BT学習用データを整形（週×クラスロバスト値も併記可）=====
 bt_base = _df[['馬名','確定着順','rid_hist','レース日','ClassKey','WeekKey','ScoreT_RB']].dropna(subset=['馬名','確定着順','rid_hist']).copy()
@@ -2348,8 +2357,6 @@ bt_base['_w'] = bt_base['_w_time'] * bt_base['_w_cls']
 names_bt, N_bt, M_bt = _build_pairwise_from_ranks(
     bt_base, rid_col='rid_hist', name_col='馬名', rank_col='確定着順', weight_col='_w'
 )
-worth_bt = fit_bradley_terry(names_bt, N_bt, M_bt)  # Series(index=馬名, value=worth)
-
 worth_bt = fit_bradley_terry(names_bt, N_bt, M_bt)  # Series(index=馬名, value=worth)
 
 # ★ 追記: 行列が実質ゼロ or 学習結果が空なら、均等重みにフォールバック
@@ -2457,15 +2464,20 @@ for k in range(3):
     counts += np.bincount(rank_idx[:,k], minlength=len(abilities)).astype(float)
 df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
 
-# ===== H) AR100: 分位写像 =====
-ranks = S.rank(method='average', pct=True).fillna(0.5)
+# ===== H) AR100 =====
+S = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').fillna(df_agg['FinalRaw'].median())
 
-# 上位差分の圧縮（γ<1で差が縮む / γ>1で差が広がる）— 既存の挙動は維持
-gamma = float(AR_RANK_GAMMA) if 'AR_RANK_GAMMA' in globals() else 1.0
-ranks_eff = np.power(ranks.to_numpy(float), gamma)
-
-# ★ここを 1〜100 の線形写像に変更（分位 → 1..100）
-df_agg['AR100'] = np.interp(ranks_eff, [0.0, 1.0], [1.0, 100.0])
+if AR_MODE.startswith("スコアベース"):
+    # FinalRawの差をそのまま反映（50±10に正規化してから0..100へクリップ）
+    mu = float(S.mean()); sd = float(S.std(ddof=0) or 1.0)
+    ar = 50.0 + 10.0 * (S - mu) / sd
+    df_agg['AR100'] = ar.clip(0, 100)
+else:
+    # 順位ベース（従来）
+    ranks = S.rank(method='average', pct=True).fillna(0.5)
+    gamma = float(AR_RANK_GAMMA)
+    ranks_eff = np.power(ranks.to_numpy(float), gamma)
+    df_agg['AR100'] = np.interp(ranks_eff, [0.0, 1.0], [1.0, 100.0])
 
 def to_band(v):
     if not np.isfinite(v): return 'E'
