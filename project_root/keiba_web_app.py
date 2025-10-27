@@ -17,6 +17,15 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
+# ★ 追加：リポジトリの親ディレクトリもパスに入れる（ui_style.py がリポジトリ直下にあるため）
+ROOT = os.path.abspath(os.path.join(BASE, '..'))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from course_geometry import register_all_turf, get_course_geom
+from physics_sprint1 import add_phys_s1_features
+
+
 from course_geometry import register_all_turf, get_course_geom
 from physics_sprint1 import add_phys_s1_features  # ※ ここでは「定義の import のみ」。即時実行しない。
 
@@ -40,7 +49,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=13)
+_boot_course_geom(version=14)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
