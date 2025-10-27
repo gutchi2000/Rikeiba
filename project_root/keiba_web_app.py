@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=15)
+_boot_course_geom(version=16)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2460,24 +2460,20 @@ df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
 # ===== H) AR100: 分位写像 =====
 ranks = S.rank(method='average', pct=True).fillna(0.5)
 
-# ★ 追加：上位差分の圧縮（γ<1で差が縮む / γ>1で差が広がる）
+# 上位差分の圧縮（γ<1で差が縮む / γ>1で差が広がる）— 既存の挙動は維持
 gamma = float(AR_RANK_GAMMA) if 'AR_RANK_GAMMA' in globals() else 1.0
 ranks_eff = np.power(ranks.to_numpy(float), gamma)
 
-qx = np.array([0.00,0.10,0.25,0.50,0.75,0.90,0.97,1.00])
-qy = np.array([40 , 45 , 55 , 65 , 72 , 80 , 90 , 98 ])
-
-# ★ ここを ranks → ranks_eff に
-df_agg['AR100'] = np.interp(ranks_eff, qx, qy)
-
+# ★ここを 1〜100 の線形写像に変更（分位 → 1..100）
+df_agg['AR100'] = np.interp(ranks_eff, [0.0, 1.0], [1.0, 100.0])
 
 def to_band(v):
     if not np.isfinite(v): return 'E'
-    if v>=90: return 'SS'
-    if v>=80: return 'S'
-    if v>=70: return 'A'
-    if v>=60: return 'B'
-    if v>=50: return 'C'
+    if v >= 90: return 'SS'
+    if v >= 80: return 'S'
+    if v >= 70: return 'A'
+    if v >= 60: return 'B'
+    if v >= 50: return 'C'
     return 'E'
 
 df_agg['Band'] = df_agg['AR100'].map(to_band)
