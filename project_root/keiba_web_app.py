@@ -10,6 +10,7 @@ import os, sys, io, re, json
 import numpy as np
 import pandas as pd
 import streamlit as st
+from ui_style import topbar, card, pill, score_bar
 
 # ===== 自作モジュールを優先解決 =====
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -569,8 +570,8 @@ if st.button("🧪 PhysS1 スモークテスト"):
 
 
 # ===== ファイルアップロード =====
-st.title("Rikeiba")
-st.subheader("Excelアップロード（sheet0=過去走 / sheet1=出走表）")
+topbar("Rikeiba", "①Excel読込 → ②調整 → ③分析 → ④結果出力（JSON）")
+st.markdown("### Excelアップロード（sheet0=過去走 / sheet1=出走表）")
 excel_file = st.file_uploader("Excel（.xlsx）", type=['xlsx'], key="excel_up")
 if excel_file is None:
     st.info("まずExcelをアップロードしてください。")
@@ -2478,6 +2479,24 @@ df_agg['Band'] = df_agg['AR100'].map(to_band)
 # ▼ スペクトル列を追加した完成版
 _dfdisp = df_agg.copy().sort_values(['AR100','勝率%_PL'], ascending=[False, False]).reset_index(drop=True)
 _dfdisp['順位'] = np.arange(1, len(_dfdisp)+1)
+
+# ---- クイックサマリー（上位の要約） ----
+if '_dfdisp' in globals() and not _dfdisp.empty:
+    with card("クイックサマリー"):
+        top = _dfdisp.iloc[0]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("**本命候補**")
+            st.markdown(f"{top['馬名']}")
+        with c2:
+            st.markdown("**勝率(PL)**")
+            st.markdown(f"{float(top['勝率%_PL']):.2f}%")
+        with c3:
+            st.markdown("**AR100**")
+            st.markdown(f"{float(top['AR100']):.1f}")
+        with c4:
+            st.markdown("**想定ペース**")
+            st.markdown(pace_type if 'pace_type' in globals() else "—")
 
 def _fmt_int(x):
     try:
