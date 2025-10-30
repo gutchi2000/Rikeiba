@@ -785,7 +785,6 @@ def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
 
 
 
-
 # ===== コース断面（坂路の傾斜プロファイル） =====
 def _slope_profile(kind: str):
     # 返り値: list of (length_m, grade_perm) を距離順に
@@ -2115,15 +2114,14 @@ if time_model_pkg is not None:
     models = time_model_pkg['models']
 
     todayX = build_today_design(
-    horses_today=horses,
-    s0_hist=s0,
-    target_distance=int(TARGET_DISTANCE),
-    target_surface=str(TARGET_SURFACE),
-    dist_turn_today_df=_dfturn,
-    feats=feats,
-    pace_type=pace_type  # ← 明示渡し
-)
-
+        horses_today=horses,
+        s0_hist=s0,
+        target_distance=int(TARGET_DISTANCE),
+        target_surface=str(TARGET_SURFACE),
+        dist_turn_today_df=_dfturn,
+        feats=feats,
+        pace_type=pace_type  # ← 明示渡し
+    )
 
     v = todayX[feats].astype(float).to_numpy()
     v = np.where(np.isfinite(v), v, time_model_pkg['col_means'])
@@ -2369,7 +2367,6 @@ if (worth_bt is None) or (len(worth_bt) == 0) or (not np.isfinite(total_comp) or
     worth_bt = pd.Series(1.0, index=names_bt, dtype=float)
 
 # ===== 今日の勝率（BT） =====
-# ===== 今日の勝率（BT） =====
 runners = horses['馬名'].astype(str).tolist()
 
 # 学習結果が空/ほぼゼロのときは均等フォールバック
@@ -2540,292 +2537,90 @@ JP = {
     'PredTime_s':'予測タイム中央値[s]','PredTime_p20':'20%速い側[s]','PredTime_p80':'80%遅い側[s]','PredSigma_s':'タイム分散σ[s]',
     'RecencyZ':'近走Z','StabZ':'安定性Z','PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ',
     'SpecFitZ':'スペクトル適合Z',
-    'SpecGate_horse':'走法型(0=持久,1=中庸,2=瞬発)',      # ← 追加
-    'SpecGate_templ':'想定レース型(テンプレ)'             # ← 追加
-}
-JP.update({
+    'SpecGate_horse':'走法型(0=持久,1=中庸,2=瞬発)',
+    'SpecGate_templ':'想定レース型(テンプレ)',
     'SpecGate_horse_lbl': '走法型',
     'SpecGate_templ_lbl': '想定レース型(テンプレ)',
     'PhysicsZ':'物理Z',
     'PeakWkg':'ピークW/kg',
     'EAP':'EAP[J/kg/m]',
-    '勝率%_BT': '勝率%（BT）'
-})
-
+    '勝率%_BT': '勝率%（BT）',
+    'CornerLoadS1':'コーナー荷重S1',
+    'StartCostS1':'スタート損失S1',
+    'FinishGradeS1':'ゴール前勾配S1',
+    'PhysS1':'PhysS1',
+}
 
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
 
 fmt = {
-    JP['AR100']:'{:.1f}',
-    JP['勝率%_PL']:'{:.2f}',
-    JP['複勝率%_PL']:'{:.2f}',
-    JP['RecencyZ']:'{:.2f}',
-    JP['StabZ']:'{:.2f}',
-    JP['PacePts']:'{:.2f}',
-    JP['TurnPrefPts']:'{:.2f}',
-    JP['DistTurnZ']:'{:.2f}',
-    JP['PredTime_s']:'{:.3f}',
-    JP['PredTime_p20']:'{:.3f}',
-    JP['PredTime_p80']:'{:.3f}',
-    JP['PredSigma_s']:'{:.3f}',
-    JP['SpecFitZ']:'{:.2f}',
+    'AR100':'{:.1f}',
+    '勝率%（PL）':'{:.2f}',
+    '複勝率%（PL）':'{:.2f}',
+    '近走Z':'{:.2f}',
+    '安定性Z':'{:.2f}',
+    'ペースPts':'{:.2f}',
+    '回り加点':'{:.2f}',
+    '距離×回りZ':'{:.2f}',
+    '予測タイム中央値[s]':'{:.3f}',
+    '20%速い側[s]':'{:.3f}',
+    '80%遅い側[s]':'{:.3f}',
+    'タイム分散σ[s]':'{:.3f}',
+    'スペクトル適合Z':'{:.2f}',
+    '物理Z':'{:.2f}',
+    'ピークW/kg':'{:.2f}',
+    'EAP[J/kg/m]':'{:.2f}',
+    'コーナー荷重S1':'{:.3f}',
+    'スタート損失S1':'{:.3f}',
+    'ゴール前勾配S1':'{:.3f}',
+    'PhysS1':'{:.3f}',
+    '勝率%（BT）':'{:.2f}',
+    '勝率%（タイム）':'{:.2f}',
+    '複勝率%（タイム）':'{:.2f}',
+    '期待着順（タイム）':'{:.3f}',
 }
 
 num_fmt = {
-    JP['枠']: _fmt_int,
-    JP['番']: _fmt_int,
+    '枠': _fmt_int,
+    '馬番': _fmt_int,
 }
-fmt.update({
-    JP['PhysicsZ']:'{:.2f}',
-    JP['PeakWkg']:'{:.2f}',
-    JP['EAP']:'{:.3f}',
-    '勝率%（BT）':'{:.2f}', 
-})
-num_fmt.update(fmt)
 
-styled = (
-    _dfdisp_view
-      .style
-      .apply(_style_waku, subset=[JP['枠']])
-      .format(num_fmt, na_rep="")
-)
-
-st.markdown("### 本命リスト（AUTO統合＋スペクトル）")
-st.dataframe(styled, use_container_width=True, height=H(len(_dfdisp_view)))
-
-# 上位抜粋（6頭）
-head_cols = ['順位','枠','番','馬名','AR100','Band','勝率%_PL','勝率%_TIME','PredTime_s','PredSigma_s','PacePts','SpecFitZ','PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1']
-base = _dfdisp.rename(columns=JP) if '_dfdisp' in globals() else _dfdisp_view
-cols_jp = [JP[c] if c in JP else c for c in head_cols]
-head_view = base[cols_jp].head(6).copy()
-
-st.markdown("#### 上位抜粋")
-st.dataframe(
-    head_view.style.format({
-        JP['枠']: _fmt_int,
-        JP['番']: _fmt_int,
-        JP['AR100']:'{:.1f}',
-        JP['勝率%_PL']:'{:.2f}',
-        JP['勝率%_TIME']:'{:.2f}',
-        JP['PacePts']:'{:.2f}',
-        JP['PredTime_s']:'{:.3f}',
-        JP['PredSigma_s']:'{:.3f}',
-        JP['SpecFitZ']:'{:.2f}',
-    }),
-    use_container_width=True, height=H(len(head_view))
-)
-
-# 見送り目安
-if not (_dfdisp['AR100'] >= 70).any():
-    st.warning('今回のレースは「見送り」：A以上（AR100≥70）が不在。')
-else:
-    lead = _dfdisp.iloc[0]
-
-    def _fmt_int_str(x):
-        import pandas as pd, numpy as np
-        try:
-            v = pd.to_numeric(x)
-            return "" if pd.isna(v) else f"{int(v)}"
-        except Exception:
-            return ""
-
-    def _fmt_float(x, n):
-        import pandas as pd
-        try:
-            v = float(x)
-            return f"{v:.{n}f}"
-        except Exception:
-            return "—"
-
-    waku   = _fmt_int_str(lead.get('枠'))
-    umaban = _fmt_int_str(lead.get('番'))
-    win    = _fmt_float(lead.get('勝率%_PL'), 2)
-    ar100  = _fmt_float(lead.get('AR100'), 1)
-
-    # どちらか番号が空ならハイフン省略
-    num_part = f"{waku}-{umaban}".strip("-")
-    title = f"**{num_part} {lead.get('馬名','')}**" if num_part else f"**{lead.get('馬名','')}**"
-
-    st.info(f"本命候補：{title} / 勝率{win}% / AR100 {ar100}")
-
-# 4角図（任意）
-if SHOW_CORNER:
-    try:
-        from matplotlib.patches import Wedge, Rectangle, Circle
-        fig, ax = plt.subplots(figsize=(6,4))
-        xs={'逃げ':0.1,'先行':0.3,'差し':0.7,'追込':0.9}
-        for _,r in _dfdisp.iterrows():
-            x=xs.get(r.get('脚質',''),0.5); y=float(r.get('AR100',50))/100
-            ax.scatter(x,y)
-            ax.annotate(str(r.get('番','')), (x,y), xytext=(3,3), textcoords='offset points', fontsize=8)
-        ax.set_xlim(0,1); ax.set_ylim(0,1); ax.set_xlabel('脚質側'); ax.set_ylabel('AR100正規化')
-        ax.grid(alpha=.3)
-        st.pyplot(fig)
-    except Exception as e:
-        st.caption(f"4角ポジション図は表示できませんでした：{e}")
-
-# 診断タブ（校正/NDCGなど）
-with st.expander('📈 診断（校正・NDCG）', expanded=False):
-    # ---- NDCG@3（未校正softmaxの擬似）----
-    try:
-        df_tmp=_df[['レース日','競走名','score_adj','確定着順']].dropna().copy()
-        df_tmp['race_id']=pd.to_datetime(df_tmp['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + df_tmp['競走名'].astype(str)
-        df_tmp['y']=(pd.to_numeric(df_tmp['確定着順'], errors='coerce')==1).astype(int)
-
-        pr=[]
-        for rid, g in df_tmp.groupby('race_id'):
-            s=g['score_adj'].astype(float).to_numpy()
-            p=np.exp(beta_pl*(s-s.max())); p/=p.sum()
-            pr.append(p)
-        p_raw=np.concatenate(pr) if pr else np.array([])
-        ndcg=ndcg_by_race(df_tmp[['race_id','y']], p_raw, k=3)
-        st.caption(f"NDCG@3（未校正softmaxの擬似）: {ndcg:.4f}")
-    except Exception:
-        pass
-
-    # ---- 追加：Brier / LogLoss / AUC / ECE(5bin) ----
-    try:
-        dfh2 = _df.dropna(subset=['score_adj','確定着順']).copy()
-        dfh2['race_id'] = pd.to_datetime(dfh2['レース日'], errors='coerce').dt.strftime('%Y%m%d') + '_' + dfh2['競走名'].astype(str)
-
-        P_list2, Y_list2 = [], []
-        for _, g2 in dfh2.groupby('race_id'):
-            xs = g2['score_adj'].astype(float).to_numpy()
-            ys = (pd.to_numeric(g2['確定着順'], errors='coerce') == 1).astype(int).to_numpy()
-            if len(xs) < 2:
-                continue
-            ps = np.exp(beta_pl * (xs - xs.max()))
-            ps = ps / ps.sum()
-            P_list2.append(ps); Y_list2.append(ys)
-
-        if P_list2:
-            P2 = np.concatenate(P_list2); Y2 = np.concatenate(Y_list2)
-            brier = float(np.mean((P2 - Y2)**2))
-            eps = 1e-12
-            logloss = float(-np.mean(Y2*np.log(P2+eps) + (1-Y2)*np.log(1-P2+eps)))
-            try:
-                from sklearn.metrics import roc_auc_score
-                auc = float(roc_auc_score(Y2, P2)) if len(np.unique(Y2)) > 1 else float('nan')
-            except Exception:
-                auc = float('nan')
-            bins = np.linspace(0, 1, 6)
-            idx = np.digitize(P2, bins) - 1
-            ece = 0.0; n = len(P2)
-            for k in range(5):
-                mask = (idx == k)
-                if mask.any():
-                    conf = float(P2[mask].mean())
-                    acc  = float(Y2[mask].mean())
-                    ece += (mask.sum()/n) * abs(acc - conf)
-            st.write(f"Brier={brier:.4f} / LogLoss={logloss:.4f} / AUC={auc:.4f} / ECE(5bin)={ece:.4f}")
+# ====== 印をふる（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭） ======
+marks = []
+if not _dfdisp.empty:
+    # すでに能力順で並んでるので、そのまま上から割り当て
+    labels_order = ['◎','〇','▲','☆','△','△','△']
+    for i, row in _dfdisp.iterrows():
+        if i < len(labels_order):
+            marks.append(labels_order[i])
         else:
-            st.info("評価に足る履歴が不足しています。")
-    except Exception as e:
-        st.info(f"成績指標の計算に失敗: {e}")
+            marks.append('消')
+else:
+    marks = []
 
-    # 校正の状況表示
-    if calibrator is None and do_calib:
-        st.warning('校正器の学習に必要なデータが不足しています。')
-    elif calibrator is not None:
-        st.success('等温回帰で勝率を校正中。')
+_dfdisp_view.insert(0, '印', marks)
 
+# ===== 表示 =====
+st.markdown("### 予想結果テーブル")
+st.dataframe(
+    _dfdisp_view.style.format(fmt),
+    use_container_width=True,
+    hide_index=True,
+    height=H(len(_dfdisp_view)) if FULL_TABLE_VIEW else None,
+)
 
+# ===== JSON出力 =====
+# JSONに含める情報をコンパクトに
+export_df = _dfdisp_view.copy()
+export_json = export_df.to_dict(orient='records')
+st.download_button(
+    label="📦 この結果をJSONでダウンロード",
+    data=json.dumps(export_json, ensure_ascii=False, indent=2),
+    file_name="rikeiba_result.json",
+    mime="application/json",
+)
 
-
-st.markdown("""
-<small>
-- 本版は **AUTOモード** が標準です。手動は「🎛 手動（上級者向け）」を展開して利用できます。<br>
-- **score_adj** を基準に、距離×回り・右左・スペクトル適合を統合し、PL→Top3→AR100 へ連結しました。<br>
-- スペクトルは **FFTの帯域判定** と **DTW適合Z** を使用。テンプレは同距離帯・同Surfaceの中央値。<br>
-</small>
-""", unsafe_allow_html=True)
-
-# ===== ③ 公開用JSON：手入力→AR100採用で書き出し =====
-st.markdown("## ③ 公開用JSON（手入力 → AR100得点で書き出し）")
-
-with st.expander("📝 公開メタ入力", expanded=True):
-    # ※ 開催日はサイト側で必要になるので、デフォルトで今日を入れておく
-    PUB_DATE   = st.date_input("開催日（サイト表示に使用）", value=pd.Timestamp.today().date(), key="pub_date2")
-    FILE_NAME  = st.text_input("ファイル名（.json 省略可）", value="rikeiba_picks", key="pub_fname2")
-    RACE_NAME  = st.text_input("レース名（例：秋華賞(G1), 富士S(G2)）", key="pub_rname2")
-    SURFACE_TX = st.radio("馬場", ["芝", "ダート"], horizontal=True, key="pub_surface2")
-    DIST_M     = st.number_input("距離 [m]", min_value=1000, max_value=3600, value=2000, step=100, key="pub_dist2")
-    # 任意：馬場状態は空でもOK
-    GOING_TX   = st.selectbox("馬場状態（任意）", ["", "良", "稍重", "重", "不良"], index=1, key="pub_going2")
-    # 任意：race_id（空でもOK）
-    RACE_ID_TX = st.text_input("レースID（任意・空で可）", value="", key="pub_rid2")
-
-# 上位6頭を AR100 で書き出し（◎ 〇 ▲ △ △ △）
-MARKS6 = ["◎", "〇", "▲", "△", "△", "△"]
-
-btn = st.button("📤 JSONを書き出す（AR100で得点出力）", use_container_width=True)
-if btn:
-    import os, re, json
-    from datetime import datetime
-
-    # 入力バリデーション
-    problems = []
-    if not str(RACE_NAME).strip():
-        problems.append("レース名が未入力です。")
-    if not DIST_M:
-        problems.append("距離[m]が未入力です。")
-    if problems:
-        st.error(" / ".join(problems))
-        st.stop()
-
-    # ファイル名整形
-    fname = str(FILE_NAME).strip()
-    if not fname:
-        fname = "rikeiba_picks"
-    # 半角・安全なファイル名に寄せる
-    fname = re.sub(r"[^\w\-\.\(\)]+", "_", fname)
-    if not fname.lower().endswith(".json"):
-        fname += ".json"
-
-    # 上位6頭（_dfdisp は上の集計で作ってある想定）
-    if '_dfdisp' not in globals() or _dfdisp.empty:
-        st.error("出走表の集計が見つかりません（_dfdisp が空）。先にExcelを読み込んでください。")
-        st.stop()
-
-    top = _dfdisp[['馬名','AR100']].head(6).copy()
-    if top.empty:
-        st.error("上位6頭の抽出に失敗（テーブルが空）。")
-        st.stop()
-
-    # picks を AR100 採用で作成
-    picks = []
-    for i in range(len(top)):
-        row = top.iloc[i]
-        picks.append({
-            "horse": str(row['馬名']),
-            "mark": MARKS6[i],
-            # ← ここがリクエストのポイント：score に AR100 を採用（小数1桁）
-            "score": round(float(row['AR100']), 1) if pd.notna(row['AR100']) else None
-        })
-
-    # track は「芝 / ダート」のみ（サイト側は 'ダ' を含めばダートと判定できる）
-    track_text = "芝" if SURFACE_TX == "芝" else "ダート"
-
-    # 単日フォーマット（サイトは単日/累積どちらも自動対応）
-    payload = {
-        "date": str(PUB_DATE),           # 例: "2025-10-20"
-        "brand": "Rikeiba",
-        "races": [{
-            "race_id": RACE_ID_TX.strip() or None,
-            "race_name": RACE_NAME.strip(),
-            "track": track_text,         # 例: "芝" or "ダート"
-            "distance": int(DIST_M),
-            "going": GOING_TX or "",
-            "picks": picks
-        }]
-    }
-
-    # 保存
-    os.makedirs("public_exports", exist_ok=True)
-    out_path = os.path.join("public_exports", fname)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-    st.success(f"JSONを書き出しました: {out_path}")
-    st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
-    st.caption("※ そのまま commit & push すれば、Actions → Netlify でサイトに反映されます。")
+# ===== 買い目や印だけぱっと見したいとき用 =====
+with st.expander("印だけ見る（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭 消・残り）", expanded=True):
+    for rec in export_json:
+        st.write(f"{rec['印']}  {rec['馬名']}  （AR100={rec['AR100']:.1f}, 勝率PL={rec['勝率%（PL）']:.2f}%）")
