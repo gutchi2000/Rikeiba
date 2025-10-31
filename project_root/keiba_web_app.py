@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=19)
+_boot_course_geom(version=20)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1817,7 +1817,23 @@ for nm in df_agg['馬名'].astype(str):
     rows.append({'馬名':nm, **prof})
 _dfturn = pd.DataFrame(rows)
 df_agg = df_agg.merge(_dfturn, on='馬名', how='left')
-
+neff_cols = [c for c in df_agg.columns if c.startswith('n_eff_turn')]
+if neff_cols:
+    neff_series = (
+        df_agg[neff_cols]
+        .apply(pd.to_numeric, errors='coerce')
+        .bfill(axis=1)                # 先にある列を優先
+        .iloc[:, 0]                   # 代表列を1本だけ選ぶ
+        .fillna(0.0)
+    )
+    df_agg['n_eff_turn'] = neff_series
+    # 余分な *_x, *_y は落としておくと後段で安全
+    for c in neff_cols:
+        if c != 'n_eff_turn':
+            df_agg.drop(columns=c, inplace=True, errors='ignore')
+else:
+    # 列自体が無いケースの保険
+    df_agg['n_eff_turn'] = 0.0
 # ===== ここから スペクトル解析（FFT+DTW）を本線に統合 =====
 with st.sidebar.expander("📡 スペクトル設定", expanded=True):
     spectral_weight_ui = st.slider("スペクトル適合係数", 0.0, 3.0, 1.0, 0.1)
@@ -2321,7 +2337,7 @@ if USE_AUTO_BALANCER:
     try:
         # 既存のバランサ中身はそのまま流用
         wM, wP = 0.65, 0.35
-        neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)
+        neff = pd.to_numeric(df_agg['n_eff_turn'], errors='coerce').fillna(0.0)
         sigma = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')
         sigma_med = float(np.nanmedian(sigma)) if np.isfinite(sigma).any() else 0.0
         u_M = np.clip((1.0/(1.0 + neff/3.0)) + (0.5 * (sigma / (sigma_med + 1e-9)).median(skipna=True)), 0.0, 0.30)
@@ -2486,7 +2502,7 @@ S = S.fillna(S.median())
 # --- 不確実性に基づく Z 縮約（上振れ抑制） ---
 sig = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')  # 予測タイムの不確かさ
 sig_med = float(np.nanmedian(sig)) if np.isfinite(sig).any() else 0.0
-neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)  # 距離×回りの実効データ量
+neff = pd.to_numeric(df_agg['n_eff_turn'], errors='coerce').fillna(0.0)
 
 # 縮約係数 u: 0< u ≤1
 u = 1.0 / np.sqrt(
