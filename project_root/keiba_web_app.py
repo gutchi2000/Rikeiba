@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=22)
+_boot_course_geom(version=23)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2110,7 +2110,7 @@ thr_hi, thr_mid, thr_slow = 0.52, 0.30, 0.18
 beta_pl = tune_beta(_df.copy()) if MODE=="AUTO（推奨）" else float(mc_beta_manual)
 
 rng = np.random.default_rng(24601)
-draws = 4000
+draws = 10000
 Hn=len(name_list)
 sum_pts=np.zeros(Hn,float); pace_counter={'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
 for _ in range(draws//2):
@@ -2180,7 +2180,7 @@ if time_model_pkg is not None:
         'PredSigma_s': sigma
     })
 
-    draws_mc = 12000
+    draws_mc = 120000
     rng_t = np.random.default_rng(13579)
     names = pred_time['馬名'].tolist()
     mu_vec = pred_time['PredTime_s'].to_numpy(float)
@@ -2485,7 +2485,7 @@ if finite.any():
 else:
     abilities = np.zeros(len(S), float)
 
-draws_top3 = 8000
+draws_top3 = 80000
 rng3 = np.random.default_rng(13579)
 G = rng3.gumbel(size=(draws_top3//2, len(abilities)))
 U = np.vstack([beta_pl*abilities[None,:] + G, beta_pl*abilities[None,:] - G])
@@ -2679,6 +2679,51 @@ st.dataframe(
     hide_index=True,
     height=H(len(_dfdisp_view)) if FULL_TABLE_VIEW else None,
 )
+
+# ===== 散布図（AR100 × 勝率PL；サイズ＝勝率PL、ラベル＝馬名） =====
+st.markdown("### 散布図（AR100 × 勝率PL）")
+
+_plot = _dfdisp_view[['馬名','AR100','勝率%（PL）','枠']].copy()
+_plot = _plot.rename(columns={'勝率%（PL）':'WinPL'})
+_plot = _plot.dropna(subset=['AR100','WinPL'])
+
+# 枠色（定義済みの WAKU_COL を使用）
+def _to_color(v):
+    try:
+        return WAKU_COL.get(int(v), '#999999')
+    except Exception:
+        return '#999999'
+_plot['枠色'] = _plot['枠'].apply(_to_color)
+
+if ALT_AVAILABLE:
+    import altair as alt
+    base = alt.Chart(_plot)
+
+    pts = base.mark_circle().encode(
+        x=alt.X('AR100:Q', title='AR100'),
+        y=alt.Y('WinPL:Q', title='勝率%（PL）'),
+        size=alt.Size('WinPL:Q', title='点サイズ=勝率%', scale=alt.Scale(range=[60, 1000])),
+        color=alt.Color('枠色:N', scale=None, title='枠色'),
+        tooltip=['馬名:N','AR100:Q','WinPL:Q','枠:Q']
+    )
+    txt = base.mark_text(align='left', dx=6, dy=0).encode(
+        x='AR100:Q', y='WinPL:Q', text='馬名:N'
+    )
+    st.altair_chart((pts + txt).interactive(), use_container_width=True)
+
+else:
+    fig, ax = plt.subplots(figsize=(8, 6))
+    # 勝率%を 60〜900 にスケール（Matplotlib の marker size は面積）
+    w = _plot['WinPL']
+    s = 60 + 840 * ( (w - w.min()) / ( (w.max() - w.min()) if (w.max() > w.min()) else 1.0 ) )
+    ax.scatter(_plot['AR100'], _plot['WinPL'], s=s, c=_plot['枠色'])
+    for _, r in _plot.iterrows():
+        ax.annotate(r['馬名'], (r['AR100'], r['WinPL']),
+                    xytext=(4, 2), textcoords='offset points')
+    ax.set_xlabel('AR100'); ax.set_ylabel('勝率%（PL）')
+    ax.grid(True, linestyle='--', alpha=0.3)
+    st.pyplot(fig, use_container_width=True)
+
 
 # ===== JSON出力 =====
 # JSONに含める情報をコンパクトに
