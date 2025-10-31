@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=21)
+_boot_course_geom(version=22)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2512,7 +2512,6 @@ u = 1.0 / np.sqrt(
     )
 u = np.clip(u.fillna(1.0), 0.5, 1.0)
 
-from numpy import special as nps
 # フィールド内Z（縮約後）
 mu = float(S.mean()); sd = float(S.std(ddof=0) or 1.0)
 z = (S - mu) / (sd + 1e-9)
