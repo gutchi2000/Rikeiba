@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=18)
+_boot_course_geom(version=19)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -424,14 +424,32 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
 with st.sidebar.expander("📊 AR100調整", expanded=False):
     AR_MODE = st.radio(
         "AR100の計算モード",
-        ["順位ベース（従来）", "スコアベース（Z値）"],
-        index=0, horizontal=False,
-        help="従来=順位のみで決定。スコアベース=FinalRawの差がそのまま反映されます。"
+        [
+            "順位ベース（従来）",
+            "スコアベース（Z値, 従来）",
+            "厳格（erf＋尾部ブースト）",  # ← 新規
+        ],
+        index=2,
+        help="厳格=フィールド内Zを強く圧縮し、さらに上位のごく一部だけロジスティックで100に近づく"
     )
-    AR_RANK_GAMMA = st.slider(
-        "上位差分の圧縮（γ）", 0.60, 1.20, 0.85, 0.01,
-        help="順位ベースのときのみ使用。小さいほど1位-2位差が縮む。"
-    )
+
+    # 順位ベース用
+    AR_RANK_GAMMA = st.slider("順位圧縮 γ（小=差縮む）", 0.60, 1.20, 0.85, 0.01)
+
+    # 厳格スケール用（本体）
+    AR_STRICT_S = st.slider("厳しさ s（大=さらに厳しい）", 0.60, 2.00, 1.10, 0.05)
+    AR_BASE_A   = st.slider("基礎レンジ A（振幅）", 30.0, 48.0, 45.0, 0.5,
+                            help="50±A*erf(...) の±A。A=45だとおおむね 5〜95 レンジ")
+    # 不確実性ペナルティ
+    AR_SHRINK_SIGMA = st.slider("不確実性ペナルティ（σ寄与）", 0.0, 2.0, 0.6, 0.05)
+    AR_SHRINK_NEFF  = st.slider("データ薄さペナルティ（n_eff寄与）", 0.0, 2.0, 0.8, 0.05)
+
+    # 尾部（トップだけ100に寄せる連続ブースト）
+    TAIL_THRESH = st.slider("尾部発火しきい値 T（Z）", 1.8, 3.5, 2.8, 0.1,
+                            help="このZを超えると上振れ側の100寄せがゆっくり効き始める（例: 2.8〜3.2）")
+    TAIL_TAU    = st.slider("尾部の柔らかさ τ（大=なだらか）", 0.2, 1.2, 0.6, 0.05)
+    TAIL_POW    = st.slider("尾部の厳しさ p（大=さらにレア）", 1.0, 4.0, 2.0, 0.1)
+
 
 with st.sidebar.expander("⚖️ 自動バランサ", expanded=False):
     USE_AUTO_BALANCER = st.checkbox(
@@ -2462,30 +2480,67 @@ for k in range(3):
 df_agg['複勝率%_PL'] = (100*(counts / draws_top3)).round(2)
 
 # ===== H) AR100 =====
-S = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').fillna(df_agg['FinalRaw'].median())
+S = pd.to_numeric(df_agg['FinalRaw'], errors='coerce')
+S = S.fillna(S.median())
 
-if AR_MODE.startswith("スコアベース"):
-    # FinalRawの差をそのまま反映（50±10に正規化してから0..100へクリップ）
-    mu = float(S.mean()); sd = float(S.std(ddof=0) or 1.0)
-    ar = 50.0 + 10.0 * (S - mu) / sd
+# --- 不確実性に基づく Z 縮約（上振れ抑制） ---
+sig = pd.to_numeric(df_agg.get('PredSigma_s'), errors='coerce')  # 予測タイムの不確かさ
+sig_med = float(np.nanmedian(sig)) if np.isfinite(sig).any() else 0.0
+neff = pd.to_numeric(df_agg.get('n_eff_turn'), errors='coerce').fillna(0.0)  # 距離×回りの実効データ量
+
+# 縮約係数 u: 0< u ≤1
+u = 1.0 / np.sqrt(
+        1.0
+        + (AR_SHRINK_SIGMA * (sig / (sig_med + 1e-9)))**2
+        + (AR_SHRINK_NEFF  / (1.0 + neff))  # データ薄いほど寄与↑
+    )
+u = np.clip(u.fillna(1.0), 0.5, 1.0)
+
+# フィールド内Z（縮約後）
+mu = float(S.mean()); sd = float(S.std(ddof=0) or 1.0)
+z = (S - mu) / (sd + 1e-9)
+z_eff = z * u
+
+def logistic(x):
+    return 1.0 / (1.0 + np.exp(-x))
+
+if AR_MODE.startswith("厳格"):
+    # 1) 基礎スコア（erfで強圧縮：上が出にくい）
+    base = 50.0 + AR_BASE_A * np.vectorize(math.erf)(
+        z_eff / (np.sqrt(2.0) * AR_STRICT_S)
+    )
+    base = np.clip(base, 0.0, 99.999)
+
+    # 2) 尾部ブースト（トップだけ 100 に緩やかに近づく・連続関数）
+    #    sig ~ logistic((z - T)/τ) の p 乗で非常に厳しく
+    sigm = logistic((z_eff - TAIL_THRESH) / TAIL_TAU)
+    tail_gain = (100.0 - base) * np.power(sigm, TAIL_POW)
+    ar = np.clip(base + tail_gain, 0.0, 100.0)
+    df_agg['AR100'] = ar
+
+elif AR_MODE.startswith("スコアベース"):
+    # 従来Z→0..100（上が出やすい）
+    ar = 50.0 + 10.0 * (S - mu) / (sd or 1.0)
     df_agg['AR100'] = ar.clip(0, 100)
-else:
-    # 順位ベース（従来）
-    ranks = S.rank(method='average', pct=True).fillna(0.5)
-    gamma = float(AR_RANK_GAMMA)
-    ranks_eff = np.power(ranks.to_numpy(float), gamma)
-    df_agg['AR100'] = np.interp(ranks_eff, [0.0, 1.0], [1.0, 100.0])
 
+else:
+    # 順位ベース（上限は100のまま、ただし上位差分はγで圧縮）
+    ranks = S.rank(method='average', pct=True).fillna(0.5).to_numpy(float)
+    ranks_eff = np.power(ranks, float(AR_RANK_GAMMA))
+    df_agg['AR100'] = np.interp(ranks_eff, [0.0, 1.0], [20.0, 100.0])
+
+# --- バンド（厳しめ） ---
 def to_band(v):
     if not np.isfinite(v): return 'E'
-    if v >= 90: return 'SS'
-    if v >= 80: return 'S'
-    if v >= 70: return 'A'
-    if v >= 60: return 'B'
-    if v >= 50: return 'C'
+    if v >= 96: return 'SS'
+    if v >= 90: return 'S'
+    if v >= 82: return 'A'
+    if v >= 74: return 'B'
+    if v >= 66: return 'C'
     return 'E'
 
 df_agg['Band'] = df_agg['AR100'].map(to_band)
+
 
 # ===== テーブル整形（日本語ラベル付き） =====
 # ▼ スペクトル列を追加した完成版
