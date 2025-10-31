@@ -1,4 +1,3 @@
-[
 {
   "date": "2025-11-2",
   "brand": "Rikeiba",
@@ -9,7 +8,7 @@
       "track": "芝",
       "distance": 2000,
       "going": "良",
-      "picks": 
+      "picks": [
   {
     "印": "◎",
     "順位": 1,
