@@ -1,4 +1,15 @@
 [
+{
+  "date": "2025-11-2",
+  "brand": "Rikeiba",
+  "races": [
+    {
+      "race_id": null,
+      "race_name": "天皇賞秋(G1)",
+      "track": "芝",
+      "distance": 2000,
+      "going": "良",
+      "picks": 
   {
     "印": "◎",
     "順位": 1,
