@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=24)
+_boot_course_geom(version=25)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2365,6 +2365,42 @@ if USE_AUTO_BALANCER:
         df_agg['FinalRaw'] = 50 + 10 * ((Z_final - np.nanmean(Z_final)) / (np.nanstd(Z_final) + 1e-9))
     except Exception:
         pass
+
+# ===== Monte Carlo (FinalRawベースの着順サンプリング) =====
+try:
+    rng_mc = np.random.default_rng(20251102)
+    sims = 500000  # 回数は好きに増やしてOK
+
+    names_mc = df_agg['馬名'].tolist()
+    score_mc = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').to_numpy(float)
+    n_h = len(names_mc)
+
+    # Gumbelノイズを足して順位にする
+    win_ct = np.zeros(n_h, int)
+    top3_ct = np.zeros(n_h, int)
+    rank_sum = np.zeros(n_h, float)
+
+    for _ in range(sims):
+        # スコアの大きい方が強い前提
+        noise = rng_mc.gumbel(loc=0.0, scale=1.0, size=n_h)
+        sample = score_mc + noise
+        order = np.argsort(-sample)  # 降順
+        # 1着
+        win_ct[order[0]] += 1
+        # 3着まで
+        for k in range(min(3, n_h)):
+            top3_ct[order[k]] += 1
+        # 各馬の順位を足す（期待着順用）
+        inv = np.empty(n_h, int)
+        inv[order] = np.arange(1, n_h+1)
+        rank_sum += inv
+
+    df_agg['勝率%_MC'] = (win_ct / sims * 100).round(2)
+    df_agg['複勝率%_MC'] = (top3_ct / sims * 100).round(2)
+    df_agg['期待着順_MC'] = (rank_sum / sims).round(3)
+
+except Exception as e:
+    st.warning(f"Monte Carloブロックでエラー: {e}")
 
 # OFFのときは FinalRaw_before_balance をそのまま使う（※ここでは何もしない）
 
