@@ -2351,7 +2351,13 @@ if USE_AUTO_BALANCER:
 
         Z_math = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').fillna(df_agg['FinalRaw'].median())
         Z_math = (Z_math - Z_math.mean()) / (Z_math.std() + 1e-9)
-        Z_spec = pd.to_numeric(df_agg.get('SpecFitZ'), errors='coerce').fillna(0.0)
+
+        # ★★ FIX: スペクトル側にも UI の係数を必ず掛ける
+        Z_spec = (
+            float(spectral_weight_ui)
+            * pd.to_numeric(df_agg.get('SpecFitZ'), errors='coerce').fillna(0.0)
+        )
+
         Z_phys = ((pd.to_numeric(df_agg.get('PhysicsZ'), errors='coerce') - 50.0) / 10.0).fillna(0.0)
         Z_ph   = (spec_ratio_safe * Z_spec + (1.0 - spec_ratio_safe) * Z_phys)
 
@@ -2359,6 +2365,7 @@ if USE_AUTO_BALANCER:
         df_agg['FinalRaw'] = 50 + 10 * ((Z_final - np.nanmean(Z_final)) / (np.nanstd(Z_final) + 1e-9))
     except Exception:
         pass
+
 # OFFのときは FinalRaw_before_balance をそのまま使う（※ここでは何もしない）
 
 
