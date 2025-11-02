@@ -25,7 +25,7 @@ import streamlit as st
 from ui_style import topbar, card, pill, score_bar
 from course_geometry import register_all_turf, get_course_geom
 from physics_sprint1 import add_phys_s1_features
-
+from race_volatility import compute_race_volatility
 
 # ===== Streamlit 先にページ設定（UIを使う前に呼ぶ）=====
 st.set_page_config(page_title="Rikeiba", layout="wide")
@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=23)
+_boot_course_geom(version=24)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
