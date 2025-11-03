@@ -21,6 +21,21 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# === 2歳戦検出 ===
+def detect_2yo_race(horses_df, race_df) -> bool:
+    import pandas as pd
+    # 出走表の年齢がすべて2歳、または競走名に「2歳/二歳/2才」
+    cond_age = False
+    if isinstance(horses_df, pd.DataFrame) and '年齢' in horses_df.columns:
+        ages = pd.to_numeric(horses_df['年齢'], errors='coerce').dropna()
+        if len(ages) and ages.max() <= 2:
+            cond_age = True
+    name0 = ''
+    if isinstance(race_df, pd.DataFrame) and '競走名' in race_df.columns and len(race_df):
+        name0 = str(race_df['競走名'].iloc[0])
+    cond_name = any(k in name0 for k in ['2歳','二歳','2才'])
+    return bool(cond_age or cond_name)
+
 # ← パスを通した “後” にローカルモジュールを import
 from ui_style import topbar, card, pill, score_bar
 from course_geometry import register_all_turf, get_course_geom
@@ -47,7 +62,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=34)
+_boot_course_geom(version=35)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -395,6 +410,27 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
 # ===== サイドバー =====
 st.sidebar.title("⚙️ パラメタ設定（AUTO統合）")
 MODE = st.sidebar.radio("モード", ["AUTO（推奨）","手動（上級者）"], index=0, horizontal=True)
+
+# === 2歳戦モード UI ===
+try:
+    TWOYO_AUTO = detect_2yo_race(s1, s0)  # s1=出走表DF, s0=レース情報DF
+except Exception:
+    TWOYO_AUTO = False
+
+TWOYO_MODE = False
+USE_MC = True
+
+with st.sidebar.expander("🍼 2歳戦モード", expanded=TWOYO_AUTO):
+    TWOYO_MODE = st.checkbox(
+        "2歳戦最適化（履歴依存を弱める）",
+        value=TWOYO_AUTO,
+        help="Turn/Dist/安定性など履歴依存の効きを抑え、スペクトル/調教/幾何を重視します。"
+    )
+    USE_MC = st.checkbox(
+        "モンテカルロ（Pace/着順）を使う",
+        value=not TWOYO_MODE,
+        help="2歳戦ではOFF推奨。OFFならPacePtsを0固定・着順MCをスキップします。"
+    )
 
 with st.sidebar.expander("🔰 基本", expanded=True):
     lambda_part  = st.slider("出走ボーナス λ", 0.0, 1.0, 0.5, 0.05)
@@ -2186,6 +2222,19 @@ df_agg['StabZ']       = pd.to_numeric(df_agg['StabZ'],    errors='coerce').filln
 df_agg['TurnPrefPts'] = pd.to_numeric(df_agg['TurnPrefPts'], errors='coerce').fillna(0.0)
 df_agg['DistTurnZ']   = pd.to_numeric(df_agg['DistTurnZ'],   errors='coerce').fillna(0.0)
 
+# === 2歳戦モードの重み補正 ===
+if 'df_agg' in locals() and TWOYO_MODE:
+    # 履歴の形状適性は弱める（なければ無視される）
+    for col in ('TurnPrefPts', 'DistTurnZ'):
+        if col in df_agg.columns:
+            df_agg[col] = 0.0
+    # 安定性ウェイトが変数なら40%に弱体化（存在すれば）
+    if 'stab_weight' in locals():
+        try:
+            stab_weight = float(stab_weight) * 0.4
+        except Exception:
+            pass
+
 df_agg['PacePts']=0.0  # 後でMCから
 # FinalRaw（基礎：Recency/Stab/Turn/Dist + 特性）
 df_agg['FinalRaw'] = (
@@ -2216,6 +2265,12 @@ if 'ベストタイム秒' in s1.columns:
         df_agg['FinalRaw'] += w_bt * BT_norm
 
 # ★ スペクトル寄与を最後に合成
+# === 2歳戦: スペクトル比重の下限を引き上げ（任意） ===
+if 'spec_ratio' in locals() and TWOYO_MODE:
+    try:
+        spec_ratio = max(float(spec_ratio), 0.65)
+    except Exception:
+        pass
 # ★ スペクトル寄与（ユーザーの係数 × 配分）
 df_agg['SpecFitZ'] = pd.to_numeric(df_agg['SpecFitZ'], errors='coerce')
 df_agg['FinalRaw'] += spec_ratio * float(spectral_weight_ui) * df_agg['SpecFitZ'].fillna(0.0)
@@ -2224,51 +2279,65 @@ df_agg['FinalRaw'] += spec_ratio * float(spectral_weight_ui) * df_agg['SpecFitZ'
 df_agg['PhysicsZ'] = pd.to_numeric(df_agg['PhysicsZ'], errors='coerce')
 df_agg['FinalRaw'] += phys_ratio * ((df_agg['PhysicsZ'] - 50.0) / 10.0).fillna(0.0)
 
-# ===== ペースMC（反対称Gumbelで分散低減） =====
-mark_rule={
-    'ハイペース':      {'逃げ':'△','先行':'△','差し':'◎','追込':'〇'},
-    'ミドルペース':    {'逃げ':'〇','先行':'◎','差し':'〇','追込':'△'},
-    'ややスローペース': {'逃げ':'〇','先行':'◎','差し':'△','追込':'×'},
-    'スローペース':    {'逃げ':'◎','先行':'〇','差し':'△','追込':'×'},
-}
-mark_to_pts={'◎':2,'〇':1,'○':1,'△':0,'×':-1}
-
-name_list=df_agg['馬名'].tolist()
-P=np.zeros((len(name_list),4),float)
-for i, nm in enumerate(name_list):
-    stl = df_agg.loc[df_agg['馬名']==nm, '脚質'].values
-    stl = stl[0] if len(stl)>0 else ''
-    if stl in STYLES:
-        P[i, STYLES.index(stl)] = 1.0
-    else:
-        P[i,:]=0.25
-
-epi_alpha, epi_beta = 1.0, 0.6
-thr_hi, thr_mid, thr_slow = 0.52, 0.30, 0.18
-
 beta_pl = tune_beta(_df.copy()) if MODE=="AUTO（推奨）" else float(mc_beta_manual)
 
-rng = np.random.default_rng(24601)
-draws = 10000
-Hn=len(name_list)
-sum_pts=np.zeros(Hn,float); pace_counter={'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
-for _ in range(draws//2):
-    sampled = [np.argmax(P[i]) for i in range(Hn)]
-    nige  = sum(1 for s in sampled if s==0)
-    sengo = sum(1 for s in sampled if s==1)
-    epi=(epi_alpha*nige + epi_beta*sengo)/max(1,Hn)
-    if   epi>=thr_hi:   pace_t='ハイペース'
-    elif epi>=thr_mid:  pace_t='ミドルペース'
-    elif epi>=thr_slow: pace_t='ややスローペース'
-    else:               pace_t='スローペース'
-    pace_counter[pace_t]+=2
-    mk=mark_rule[pace_t]
-    for i,s in enumerate(sampled):
-        sum_pts[i]+=2*mark_to_pts[ mk[STYLES[s]] ]
+# === 2歳戦: PL鋭さの緩和 ===
+try:
+    if TWOYO_MODE:
+        beta_pl = max(0.9, float(beta_pl) * 0.85)
+except Exception:
+    pass
 
-df_agg['PacePts']=sum_pts/max(1,draws)
-pace_type=max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else 'ミドルペース'
+# === 2歳戦: ペースMCトグル ===
+if USE_MC:
+    # ===== ペースMC（反対称Gumbelで分散低減） =====
+    mark_rule={
+        'ハイペース':      {'逃げ':'△','先行':'△','差し':'◎','追込':'〇'},
+        'ミドルペース':    {'逃げ':'〇','先行':'◎','差し':'〇','追込':'△'},
+        'ややスローペース': {'逃げ':'〇','先行':'◎','差し':'△','追込':'×'},
+        'スローペース':    {'逃げ':'◎','先行':'〇','差し':'△','追込':'×'},
+    }
+    mark_to_pts={'◎':2,'〇':1,'○':1,'△':0,'×':-1}
 
+    name_list=df_agg['馬名'].tolist()
+    P=np.zeros((len(name_list),4),float)
+    for i, nm in enumerate(name_list):
+        stl = df_agg.loc[df_agg['馬名']==nm, '脚質'].values
+        stl = stl[0] if len(stl)>0 else ''
+        if stl in STYLES:
+            P[i, STYLES.index(stl)] = 1.0
+        else:
+            P[i,:]=0.25
+
+    epi_alpha, epi_beta = 1.0, 0.6
+    thr_hi, thr_mid, thr_slow = 0.52, 0.30, 0.18
+
+    rng = np.random.default_rng(24601)
+    draws = 10000
+    Hn=len(name_list)
+    sum_pts=np.zeros(Hn,float); pace_counter={'ハイペース':0,'ミドルペース':0,'ややスローペース':0,'スローペース':0}
+    for _ in range(draws//2):
+        sampled = [np.argmax(P[i]) for i in range(Hn)]
+        nige  = sum(1 for s in sampled if s==0)
+        sengo = sum(1 for s in sampled if s==1)
+        epi=(epi_alpha*nige + epi_beta*sengo)/max(1,Hn)
+        if   epi>=thr_hi:   pace_t='ハイペース'
+        elif epi>=thr_mid:  pace_t='ミドルペース'
+        elif epi>=thr_slow: pace_t='ややスローペース'
+        else:               pace_t='スローペース'
+        pace_counter[pace_t]+=2
+        mk=mark_rule[pace_t]
+        for i,s in enumerate(sampled):
+            sum_pts[i]+=2*mark_to_pts[ mk[STYLES[s]] ]
+
+    df_agg['PacePts']=sum_pts/max(1,draws)
+    pace_type=max(pace_counter, key=lambda k: pace_counter[k]) if sum(pace_counter.values())>0 else 'ミドルペース'
+else:
+    # MCを使わない場合はペース点を固定
+    if 'df_agg' in locals():
+        df_agg['PacePts'] = 0.0
+    pace_type = 'ミドルペース'
+    
 # ===== タイム分布 → 着順MC =====
 half_life_days = int(half_life_m * 30.4375) if half_life_m > 0 else 99999
 
@@ -2505,41 +2574,47 @@ if USE_AUTO_BALANCER:
     except Exception:
         pass
 
-# ===== Monte Carlo (FinalRawベースの着順サンプリング) =====
-try:
-    rng_mc = np.random.default_rng(20251102)
-    sims = 500000  # 回数は好きに増やしてOK
+# === 2歳戦: 着順MCトグル ===
+if USE_MC:
+    # ===== Monte Carlo (FinalRawベースの着順サンプリング) =====
+    try:
+        rng_mc = np.random.default_rng(20251102)
+        sims = 500000  # 回数は好きに増やしてOK
 
-    names_mc = df_agg['馬名'].tolist()
-    score_mc = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').to_numpy(float)
-    n_h = len(names_mc)
+        names_mc = df_agg['馬名'].tolist()
+        score_mc = pd.to_numeric(df_agg['FinalRaw'], errors='coerce').to_numpy(float)
+        n_h = len(names_mc)
 
-    # Gumbelノイズを足して順位にする
-    win_ct = np.zeros(n_h, int)
-    top3_ct = np.zeros(n_h, int)
-    rank_sum = np.zeros(n_h, float)
+        # Gumbelノイズを足して順位にする
+        win_ct = np.zeros(n_h, int)
+        top3_ct = np.zeros(n_h, int)
+        rank_sum = np.zeros(n_h, float)
 
-    for _ in range(sims):
-        # スコアの大きい方が強い前提
-        noise = rng_mc.gumbel(loc=0.0, scale=1.0, size=n_h)
-        sample = score_mc + noise
-        order = np.argsort(-sample)  # 降順
-        # 1着
-        win_ct[order[0]] += 1
-        # 3着まで
-        for k in range(min(3, n_h)):
-            top3_ct[order[k]] += 1
-        # 各馬の順位を足す（期待着順用）
-        inv = np.empty(n_h, int)
-        inv[order] = np.arange(1, n_h+1)
-        rank_sum += inv
+        for _ in range(sims):
+            # スコアの大きい方が強い前提
+            noise = rng_mc.gumbel(loc=0.0, scale=1.0, size=n_h)
+            sample = score_mc + noise
+            order = np.argsort(-sample)  # 降順
+            # 1着
+            win_ct[order[0]] += 1
+            # 3着まで
+            for k in range(min(3, n_h)):
+                top3_ct[order[k]] += 1
+            # 各馬の順位を足す（期待着順用）
+            inv = np.empty(n_h, int)
+            inv[order] = np.arange(1, n_h+1)
+            rank_sum += inv
 
-    df_agg['勝率%_MC'] = (win_ct / sims * 100).round(2)
-    df_agg['複勝率%_MC'] = (top3_ct / sims * 100).round(2)
-    df_agg['期待着順_MC'] = (rank_sum / sims).round(3)
+        df_agg['勝率%_MC'] = (win_ct / sims * 100).round(2)
+        df_agg['複勝率%_MC'] = (top3_ct / sims * 100).round(2)
+        df_agg['期待着順_MC'] = (rank_sum / sims).round(3)
 
-except Exception as e:
-    st.warning(f"Monte Carloブロックでエラー: {e}")
+    except Exception as e:
+        st.warning(f"Monte Carloブロックでエラー: {e}")
+else:
+    if 'df_agg' in locals():
+        for c in ('勝率%_MC','複勝率%_MC','期待着順_MC'):
+            df_agg[c] = np.nan
 
 # OFFのときは FinalRaw_before_balance をそのまま使う（※ここでは何もしない）
 
