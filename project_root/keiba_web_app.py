@@ -20,6 +20,7 @@ if ROOT not in sys.path:
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 
 # === 2歳戦検出 ===
 def detect_2yo_race(horses_df, race_df) -> bool:
@@ -62,7 +63,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=35)
+_boot_course_geom(version=36)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -141,6 +142,115 @@ def normalize_style(s: str) -> str:
 
 # ===== 表示スタイル（枠色）=====
 WAKU_COL = {1:"#ffffff",2:"#000000",3:"#e6002b",4:"#1560bd",5:"#ffd700",6:"#00a04b",7:"#ff7f27",8:"#f19ec2"}
+
+# ===== Plotly 可視化ユーティリティ =====
+WAKU_COLOR_MAP = {
+    1: "#FFFFFF",  # 白
+    2: "#000000",  # 黒
+    3: "#FF3B30",  # 赤
+    4: "#007AFF",  # 青
+    5: "#FFD60A",  # 黄
+    6: "#2ECC71",  # 緑
+    7: "#FF9500",  # 橙
+    8: "#FF69B4",  # 桃
+}
+
+def coerce_int_cols(df, cols=("枠", "馬番")):
+    out = df.copy()
+    for c in cols:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
+    return out
+
+def plot_ar_scatter(
+    df,
+    x_col="馬番",
+    y_col="AR100",
+    name_col="馬名",
+    waku_col="枠",
+    show_text=False,
+    height=420,
+):
+    d = coerce_int_cols(df, cols=(waku_col, x_col)).copy()
+
+    color_map = {str(k): v for k, v in WAKU_COLOR_MAP.items()}
+    color_map.update({k: v for k, v in WAKU_COLOR_MAP.items()})
+
+    fig = px.scatter(
+        d,
+        x=x_col,
+        y=y_col,
+        color=waku_col,
+        color_discrete_map=color_map,
+        hover_name=name_col,
+        hover_data={waku_col: True, x_col: True, y_col: ":.1f"},
+        template="plotly_white",
+        height=height,
+    )
+
+    def line_color_for_waku(w):
+        try:
+            return "#EEEEEE" if int(w) == 2 else "#222222"
+        except Exception:
+            return "#222222"
+
+    for tr in fig.data:
+        try:
+            waku_val = int(tr.name)
+        except Exception:
+            waku_val = int("".join([ch for ch in tr.name if ch.isdigit()]) or 0)
+        tr.update(
+            marker=dict(
+                size=12,
+                line=dict(width=1.5, color=line_color_for_waku(waku_val)),
+            ),
+            opacity=0.95,
+        )
+        if show_text:
+            tr.update(textposition="top center", textfont=dict(size=10))
+
+    fig.update_xaxes(tickmode="linear", dtick=1, tickformat="d", title_text=x_col)
+    fig.update_yaxes(title_text=y_col)
+
+    if show_text:
+        fig.update_traces(text=d[name_col])
+    st.plotly_chart(fig, use_container_width=True)
+
+MARK_ORDER = ["◎", "〇", "▲", "☆", "△", "☑", "消"]
+
+def build_marks_text(
+    df,
+    name_col="馬名",
+    mark_col="印",
+    ar_col="AR100",
+    ar_label="AR",
+    ar_only_for_top=True,
+):
+    if mark_col not in df.columns:
+        return "（印の列が見つかりません）"
+    d = df.copy()
+    rank = {m: i for i, m in enumerate(MARK_ORDER)}
+    d = d[d[mark_col].isin(MARK_ORDER)].copy()
+    if ar_col in d.columns:
+        d["_sort_ar"] = pd.to_numeric(d[ar_col], errors="coerce")
+    else:
+        d["_sort_ar"] = np.nan
+    d["_sort_mark"] = d[mark_col].map(rank)
+    d.sort_values(["_sort_mark", "_sort_ar"], ascending=[True, False], inplace=True)
+
+    lines = []
+    for _, r in d.iterrows():
+        mark = str(r[mark_col])
+        name = str(r[name_col]) if name_col in d.columns else ""
+        show_ar = (mark == "◎") if ar_only_for_top else True
+        ar_txt = ""
+        if show_ar and ar_col in d.columns and pd.notna(r[ar_col]):
+            try:
+                ar_txt = f"　{ar_label}{int(round(float(r[ar_col])))}"
+            except Exception:
+                pass
+        lines.append(f"{mark}{name}{ar_txt}")
+    return "\n".join(lines).strip()
 
 def _style_waku(s: pd.Series):
     out = []
@@ -2910,22 +3020,31 @@ res_json = _dfdisp[json_cols].to_dict(orient='records')
 st.download_button("⬇️ 結果JSONダウンロード", data=json.dumps(res_json, ensure_ascii=False, indent=2).encode('utf-8'),
                    file_name="result_rikeiba.json", mime="application/json")
 
-# ===== ちょい可視化（AR100 vs 勝率PL）=====
-try:
-    import matplotlib.pyplot as plt
-    fig = plt.figure(figsize=(6,4), dpi=120)
-    x = pd.to_numeric(_dfdisp['AR100'], errors='coerce')
-    y = pd.to_numeric(_dfdisp['勝率%_PL'], errors='coerce')
-    plt.scatter(x, y)
-    for i, r in _dfdisp.iterrows():
-        if np.isfinite(x.iloc[i]) and np.isfinite(y.iloc[i]) and i < 10:
-            plt.text(x.iloc[i], y.iloc[i], str(r['馬名']), fontsize=8)
-    plt.xlabel('AR100')
-    plt.ylabel('勝率%（PL）')
-    plt.title('AR100 と 推定勝率（PL）の関係')
-    st.pyplot(fig, use_container_width=True)
-except Exception:
-    pass
+# ===== ちょい可視化（Plotly版 AR100 vs 馬番）=====
+st.markdown("## 📈 AR100 と 馬番の関係")
+show_labels = st.checkbox("ラベルを表示する（重なる場合があります）", value=False)
+df_plot = _dfdisp.copy()
+if '番' in df_plot.columns and '馬番' not in df_plot.columns:
+    df_plot['馬番'] = df_plot['番']
+plot_ar_scatter(
+    df_plot,
+    x_col="馬番" if "馬番" in df_plot.columns else "番",
+    y_col="AR100",
+    name_col="馬名",
+    waku_col="枠",
+    show_text=show_labels,
+)
+
+st.markdown("#### 印（コピペ用）")
+marks_text = build_marks_text(
+    _dfdisp,
+    name_col="馬名",
+    mark_col="印",
+    ar_col="AR100",
+    ar_label="AR",
+    ar_only_for_top=True,
+)
+st.code(marks_text, language="text")
 
 st.success("完了：スコア算出・印付け・出力を生成しました。")
 
