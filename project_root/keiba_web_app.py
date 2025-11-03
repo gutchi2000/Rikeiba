@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=27)
+_boot_course_geom(version=28)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -647,9 +647,15 @@ def load_excel_bytes(content: bytes):
     xls = pd.ExcelFile(io.BytesIO(content))
     s0 = pd.read_excel(xls, sheet_name=0)
     s1 = pd.read_excel(xls, sheet_name=1)
-    return s0, s1
+    # 3枚目があれば読み込む（無ければ空DF）
+    try:
+        s2 = pd.read_excel(xls, sheet_name=2)
+    except Exception:
+        s2 = pd.DataFrame()
+    return s0, s1, s2
 
-sheet0, sheet1 = load_excel_bytes(excel_file.getvalue())
+sheet0, sheet1, sheet2 = load_excel_bytes(excel_file.getvalue())
+
 
 # ===== 調教データ読み込み＆正規化 =====
 def _read_train_xlsx(file, kind: str) -> pd.DataFrame:
@@ -1070,7 +1076,7 @@ PAT_S1={
     '複勝率':[r'複勝率|複勝'],
     'ベストタイム':[r'ベスト.*タイム|Best.*Time|ﾍﾞｽﾄ.*ﾀｲﾑ|タイム.*(最速|ベスト)'],
 }
-REQ_S1=['馬名','枠','番','性別','年齢']
+REQ_S1=['馬名','枠','番']  # ← 性別/年齢は必須から外す
 MAP_S1 = {k: _auto_pick(sheet1, v) for k,v in PAT_S1.items()}
 miss1=[k for k in REQ_S1 if MAP_S1.get(k) is None]
 if miss1:
@@ -1091,6 +1097,33 @@ if '馬名' in s1:
     s1['馬名']=s1['馬名'].astype(str).str.replace('\u3000',' ').str.strip()
     s1=s1[s1['馬名'].ne('')]
 s1=s1.reset_index(drop=True)
+
+# === NEW: sheet2 から 性別/年齢 を補完 ===
+if sheet2 is not None and isinstance(sheet2, pd.DataFrame) and not sheet2.empty:
+    PAT_S2 = {
+        '馬名':[r'馬名|名前|出走馬|Horse|horse'],
+        '性別':[r'性別'],
+        '年齢':[r'年齢|馬齢']
+    }
+    MAP_S2 = {k: _auto_pick(sheet2, v) for k, v in PAT_S2.items()}
+    s2 = pd.DataFrame()
+    for k, col in MAP_S2.items():
+        if col and col in sheet2.columns:
+            s2[k] = sheet2[col]
+
+    if not s2.empty and '馬名' in s2.columns:
+        s2['馬名'] = s2['馬名'].astype(str).str.replace('\u3000', ' ').str.strip()
+        if '年齢' in s2.columns:
+            s2['年齢'] = pd.to_numeric(s2['年齢'], errors='coerce')
+
+        s1 = s1.merge(s2[['馬名','性別','年齢']].drop_duplicates('馬名'), on='馬名', how='left', suffixes=('', '_s2'))
+        if '性別_s2' in s1.columns:
+            s1['性別'] = s1['性別'].where(s1['性別'].astype(str).str.strip().ne(''), s1['性別_s2'])
+            s1.drop(columns=['性別_s2'], inplace=True)
+        if '年齢_s2' in s1.columns:
+            s1['年齢'] = s1['年齢'].fillna(s1['年齢_s2'])
+            s1.drop(columns=['年齢_s2'], inplace=True)
+
 
 # 脚質エディタ
 if '脚質' not in s1.columns: s1['脚質']=''
@@ -1183,6 +1216,25 @@ edit = st.data_editor(
     hide_index=True,
 )
 horses = edit.copy()
+
+# === NEW: sheet0 から 勝率/連対率/複勝率 を自動集計（履歴ベース） ===
+rate_src = s0.dropna(subset=['馬名','確定着順']).copy()
+rate_src['確定着順'] = pd.to_numeric(rate_src['確定着順'], errors='coerce')
+rate_src = rate_src[rate_src['確定着順'] >= 1]
+
+hist_rate = pd.DataFrame(columns=['馬名','勝率%_HIST','連対率%_HIST','複勝率%_HIST','出走数_HIST'])
+if not rate_src.empty:
+    grp = rate_src.groupby('馬名')['確定着順']
+    hist_rate = pd.DataFrame({
+        '勝率%_HIST': (grp.apply(lambda s: (s == 1).mean()) * 100.0).round(2),
+        '連対率%_HIST': (grp.apply(lambda s: (s <= 2).mean()) * 100.0).round(2),
+        '複勝率%_HIST': (grp.apply(lambda s: (s <= 3).mean()) * 100.0).round(2),
+        '出走数_HIST': grp.size(),
+    }).reset_index()
+
+# horses に履歴率をマージ（既存の sheet1 の数値は保持し、こちらは別名で追加）
+if not hist_rate.empty:
+    horses = horses.merge(hist_rate, on='馬名', how='left')
 
 # ===== 入力チェック =====
 problems=[]
@@ -1737,7 +1789,8 @@ for df_ in [df_agg, horses]:
 
 if '脚質' in horses.columns: horses['脚質']=horses['脚質'].map(normalize_style)
 
-cols_to_merge = ['馬名','枠','番','脚質','性別','年齢']
+cols_to_merge = ['馬名','枠','番','脚質','性別','年齢',
+                 '勝率%_HIST','連対率%_HIST','複勝率%_HIST']  # NEW
 cols_to_merge = [c for c in cols_to_merge if c in horses.columns]
 df_agg = df_agg.merge(horses[cols_to_merge], on='馬名', how='left')
 
@@ -2636,6 +2689,7 @@ show_cols = [
     '順位','枠','番','馬名','脚質',
     'AR100','Band',
     '勝率%_BT',  # ← 追加
+    '勝率%_HIST','連対率%_HIST','複勝率%_HIST',
     '勝率%_PL','複勝率%_PL',
     '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
     'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
@@ -2664,6 +2718,9 @@ JP = {
     'StartCostS1':'スタート損失S1',
     'FinishGradeS1':'ゴール前勾配S1',
     'PhysS1':'PhysS1',
+    '勝率%_HIST': '勝率%（履歴）',
+    '連対率%_HIST': '連対率%（履歴）',
+    '複勝率%_HIST': '複勝率%（履歴）',
 }
 
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
@@ -2693,6 +2750,11 @@ fmt = {
     '勝率%（タイム）':'{:.2f}',
     '複勝率%（タイム）':'{:.2f}',
     '期待着順（タイム）':'{:.3f}',
+    '勝率%（履歴）': '{:.2f}',
+    '連対率%（履歴）': '{:.2f}',
+    '複勝率%（履歴）': '{:.2f}',
+})
+
 }
 
 num_fmt = {
@@ -2724,49 +2786,55 @@ st.dataframe(
     height=H(len(_dfdisp_view)) if FULL_TABLE_VIEW else None,
 )
 
-# ===== 散布図（AR100 × 勝率PL；サイズ＝勝率PL、ラベル＝馬名） =====
 st.markdown("### 散布図（AR100 × 勝率PL）")
 
 _plot = _dfdisp_view[['馬名','AR100','勝率%（PL）','枠']].copy()
 _plot = _plot.rename(columns={'勝率%（PL）':'WinPL'})
 _plot = _plot.dropna(subset=['AR100','WinPL'])
 
-# 枠色（定義済みの WAKU_COL を使用）
+# 枠色（1〜8枠）
 def _to_color(v):
     try:
-        return WAKU_COL.get(int(v), '#999999')
+        return WAKU_COL.get(int(v), "#808080")
     except Exception:
-        return '#999999'
-_plot['枠色'] = _plot['枠'].apply(_to_color)
+        return "#808080"
 
-if ALT_AVAILABLE:
-    import altair as alt
-    base = alt.Chart(_plot)
-
-    pts = base.mark_circle().encode(
-        x=alt.X('AR100:Q', title='AR100'),
-        y=alt.Y('WinPL:Q', title='勝率%（PL）'),
-        size=alt.Size('WinPL:Q', title='点サイズ=勝率%', scale=alt.Scale(range=[60, 1000])),
-        color=alt.Color('枠色:N', scale=None, title='枠色'),
-        tooltip=['馬名:N','AR100:Q','WinPL:Q','枠:Q']
-    )
-    txt = base.mark_text(align='left', dx=6, dy=0).encode(
-        x='AR100:Q', y='WinPL:Q', text='馬名:N'
-    )
-    st.altair_chart((pts + txt).interactive(), use_container_width=True)
-
+if _plot.empty:
+    st.info("散布図用のデータがありません。")
 else:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    # 勝率%を 60〜900 にスケール（Matplotlib の marker size は面積）
-    w = _plot['WinPL']
-    s = 60 + 840 * ( (w - w.min()) / ( (w.max() - w.min()) if (w.max() > w.min()) else 1.0 ) )
-    ax.scatter(_plot['AR100'], _plot['WinPL'], s=s, c=_plot['枠色'])
-    for _, r in _plot.iterrows():
-        ax.annotate(r['馬名'], (r['AR100'], r['WinPL']),
-                    xytext=(4, 2), textcoords='offset points')
-    ax.set_xlabel('AR100'); ax.set_ylabel('勝率%（PL）')
-    ax.grid(True, linestyle='--', alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    if ALT_AVAILABLE:
+        import altair as alt
+        # Altair 用に色域を明示
+        dom = [1,2,3,4,5,6,7,8]
+        rng = [WAKU_COL[i] for i in dom]
+        chart = (
+            alt.Chart(_plot)
+              .mark_circle(opacity=0.85, size=120)
+              .encode(
+                  x=alt.X('AR100:Q', title='AR100'),
+                  y=alt.Y('WinPL:Q', title='勝率%（PL）'),
+                  color=alt.Color('枠:O', scale=alt.Scale(domain=dom, range=rng), legend=alt.Legend(title='枠')),
+                  tooltip=['馬名','AR100','WinPL','枠']
+              )
+        )
+        labels = (
+            alt.Chart(_plot)
+              .mark_text(align='left', dx=6, dy=-6, fontSize=11)
+              .encode(x='AR100:Q', y='WinPL:Q', text='馬名')
+        )
+        st.altair_chart((chart + labels).interactive(), use_container_width=True)
+    else:
+        # matplotlib フォールバック
+        fig, ax = plt.subplots()
+        colors = [_to_color(v) for v in _plot['枠']]
+        ax.scatter(_plot['AR100'].to_numpy(float), _plot['WinPL'].to_numpy(float), s=60, alpha=0.9, edgecolors='none', c=colors)
+        for _, r in _plot.iterrows():
+            ax.text(float(r['AR100'])+0.2, float(r['WinPL'])+0.2, str(r['馬名']), fontsize=9)
+        ax.set_xlabel('AR100')
+        ax.set_ylabel('勝率%（PL）')
+        ax.grid(True, linestyle=':', linewidth=0.5, alpha=0.6)
+        st.pyplot(fig, clear_figure=True)
+
 
 
 # ===== JSON出力 =====
