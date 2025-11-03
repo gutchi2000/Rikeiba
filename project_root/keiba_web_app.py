@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=31)
+_boot_course_geom(version=32)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1027,26 +1027,71 @@ sheet0 = _normalize_cols(sheet0)
 
 # --- ② パターン（あなたの提案 + ちょい強化） ---
 # --- sheet0（過去走） マッピング修正 & レース日合成 --- #
-import re
-import numpy as np
-import pandas as pd
+# === sheet0（過去走）を先に正規化して必須列を作る ===
+def _normalize_sheet0(df: pd.DataFrame) -> pd.DataFrame:
+    s = df.copy()
 
-def _pick_col(df, pats):
-    for pat in pats:
-        for c in df.columns:
-            if re.search(pat, str(c)):
-                return c
-    return None
+    # 1) レース日を合成（年・月・日 → 西暦に補正して datetime）
+    if 'レース日' not in s.columns:
+        if {'年','月','日'}.issubset(s.columns):
+            y = pd.to_numeric(s['年'], errors='coerce').astype('Int64')
+            m = pd.to_numeric(s['月'], errors='coerce').astype('Int64')
+            d = pd.to_numeric(s['日'], errors='coerce').astype('Int64')
+            # 2000年代想定（25 -> 2025 など）
+            y = y.where(y >= 1900, y + 2000)
+            s['レース日'] = pd.to_datetime(
+                {'year': y, 'month': m, 'day': d}, errors='coerce'
+            )
+        elif '施行日' in s.columns:
+            s['レース日'] = pd.to_datetime(s['施行日'], errors='coerce')
+        elif '日付' in s.columns:
+            s['レース日'] = pd.to_datetime(s['日付'], errors='coerce')
 
+    # 2) 列名の統一（存在する時だけ）
+    rename_map = {
+        'レース名':'競走名',
+        '場所':'場名',
+        '馬場状態':'馬場',
+        '枠番':'枠',
+        '馬番':'番',
+    }
+    for a,b in rename_map.items():
+        if a in s.columns and b not in s.columns:
+            s[b] = s[a]
+
+    # 3) 走破タイム → 秒（例: "1:33.5" / "33.5"）
+    if '走破タイム秒' not in s.columns and '走破タイム' in s.columns:
+        def _to_sec(x):
+            if pd.isna(x): return pd.NA
+            t = str(x).strip()
+            # mm:ss.s / m:ss.s / ss.s に対応
+            if ':' in t:
+                mm, ss = t.split(':', 1)
+                try:
+                    return float(ss) + 60.0 * float(mm)
+                except:
+                    return pd.NA
+            try:
+                return float(t)
+            except:
+                return pd.NA
+        s['走破タイム秒'] = s['走破タイム'].map(_to_sec)
+
+    return s
+
+# ここで正規化
+sheet0 = _normalize_sheet0(sheet0)
+
+# （以降はそのまま君のマッピングロジックでOK）
 PAT_S0 = {
     '馬名':[r'馬名|名前|出走馬'],
     'レース日':[r'レース日|日付(?!S)|年月日|施行日|開催日'],
     '競走名':[r'競走名|レース名|名称'],
     'クラス名':[r'クラス名|格|条件|レースグレード'],
-    '頭数':[r'頭数|出走頭|出走頭数'],  # ← 出走頭を追加
+    '頭数':[r'頭数|出走頭数'],
     '確定着順':[r'確定着順|着順(?!率)'],
     '枠':[r'枠|枠番'],
-    '番':[r'\b馬番\b|(?<!枠)番'],        # ← 枠番の誤ヒットを避ける
+    '番':[r'馬番|番'],
     '斤量':[r'斤量'],
     '馬体重':[r'馬体重|体重'],
     '上がり3Fタイム':[r'上がり3Fタイム|上がり3F|上3F'],
@@ -1065,36 +1110,13 @@ PAT_S0 = {
 }
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
 
-# まず自動マッピング
-MAP_S0 = {k: _pick_col(sheet0, v) for k, v in PAT_S0.items()}
-
-# いったん拾えた列で DataFrame を作る
-s0 = pd.DataFrame({k: sheet0[col] for k, col in MAP_S0.items() if col and col in sheet0.columns})
-
-# ▼ レース日が無ければ 年/月/日 から合成（2桁年→2000年代補正含む）
-if 'レース日' not in s0.columns:
-    ycol = _pick_col(sheet0, [r'(?<!開)年|開催年|Year|西暦'])
-    mcol = _pick_col(sheet0, [r'月(?!日)|開催月|Month'])
-    dcol = _pick_col(sheet0, [r'(?<!年)日(?!付)$|Day|開催日(?!.{0,2}付)'])
-    if all([ycol, mcol, dcol]):
-        yy = pd.to_numeric(sheet0[ycol], errors='coerce').to_numpy()
-        # 2桁年は 00-69 → 2000年代, 70-99 → 1900年代 とみなす
-        yy = np.where(yy < 100, np.where(yy >= 70, yy + 1900, yy + 2000), yy)
-        s0['レース日'] = pd.to_datetime(
-            {'year': yy,
-             'month': pd.to_numeric(sheet0[mcol], errors='coerce'),
-             'day': pd.to_numeric(sheet0[dcol], errors='coerce')},
-            errors='coerce'
-        )
-        # 文字列にしたいなら以下の1行を有効化
-        # s0['レース日'] = s0['レース日'].dt.strftime('%Y-%m-%d')
-
-# ▼ 必須チェック（UIに投げる前に、合成結果を反映した状態で判定）
-missing = [k for k in REQ_S0 if k not in s0.columns or s0[k].isna().all()]
+MAP_S0 = {k: _auto_pick(sheet0, v) for k,v in PAT_S0.items()}
+missing = [k for k in REQ_S0 if MAP_S0.get(k) is None or sheet0[MAP_S0[k]].isna().all()]
 if missing:
-    # まだ欠けていれば UI マッピングにフォールバック
     MAP_S0 = _map_ui(sheet0, PAT_S0, REQ_S0, 'sheet0（過去走）', 's0')
-    s0 = pd.DataFrame({k: sheet0[col] for k, col in MAP_S0.items() if col and col in sheet0.columns})
+
+s0 = pd.DataFrame({k: sheet0[col] for k,col in MAP_S0.items() if col in sheet0.columns})
+
 
 
 # --- ④ s0 の作成（合成列をここで実体化） ---
