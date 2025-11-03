@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=28)
+_boot_course_geom(version=29)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -2698,6 +2698,7 @@ show_cols = [
     'PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
 ]
 
+# ===== 日本語表示マップ =====
 JP = {
     '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
     'AR100':'AR100','Band':'評価帯',
@@ -2723,6 +2724,7 @@ JP = {
     '複勝率%_HIST': '複勝率%（履歴）',
 }
 
+# 表示用DF（すでに能力順でソート済み想定）
 _dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
 
 fmt = {
@@ -2753,8 +2755,6 @@ fmt = {
     '勝率%（履歴）': '{:.2f}',
     '連対率%（履歴）': '{:.2f}',
     '複勝率%（履歴）': '{:.2f}',
-})
-
 }
 
 num_fmt = {
@@ -2762,20 +2762,18 @@ num_fmt = {
     '馬番': _fmt_int,
 }
 
-# ====== 印をふる（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭） ======
-marks = []
-if not _dfdisp.empty:
-    # すでに能力順で並んでるので、そのまま上から割り当て
-    labels_order = ['◎','〇','▲','☆','△','△','△']
-    for i, row in _dfdisp.iterrows():
-        if i < len(labels_order):
-            marks.append(labels_order[i])
-        else:
-            marks.append('消')
-else:
-    marks = []
+# ====== 印をふる（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭、残りは消） ======
+labels_order = ['◎','〇','▲','☆','△','△','△']
+
+n = len(_dfdisp_view)
+# 上位7頭に labels_order を、残りに '消' を割り当て（馬が7頭未満でもOK）
+marks = (labels_order + ['消'] * max(0, n - len(labels_order)))[:n]
 
 _dfdisp_view.insert(0, '印', marks)
+
+# （任意）存在する列だけフォーマットを当てるとKeyError回避できる
+safe_fmt = {k: v for k, v in fmt.items() if k in _dfdisp_view.columns}
+# 例: st.dataframe(_dfdisp_view.style.format(safe_fmt))
 
 # ===== 表示 =====
 st.markdown("### 予想結果テーブル")
