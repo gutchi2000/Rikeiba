@@ -1029,34 +1029,6 @@ sheet0 = _normalize_cols(sheet0)
 def _normalize_sheet0(df: pd.DataFrame) -> pd.DataFrame:
     s = df.copy()
 
-    # 1) レース日を合成（年・月・日 → 西暦に補正して datetime）
-    if 'レース日' not in s.columns:
-        if {'年','月','日'}.issubset(s.columns):
-            y = pd.to_numeric(s['年'], errors='coerce').astype('Int64')
-            m = pd.to_numeric(s['月'], errors='coerce').astype('Int64')
-            d = pd.to_numeric(s['日'], errors='coerce').astype('Int64')
-            # 2000年代想定（25 -> 2025 など）
-            y = y.where(y >= 1900, y + 2000)
-            s['レース日'] = pd.to_datetime(
-                {'year': y, 'month': m, 'day': d}, errors='coerce'
-            )
-        elif '施行日' in s.columns:
-            s['レース日'] = pd.to_datetime(s['施行日'], errors='coerce')
-        elif '日付' in s.columns:
-            s['レース日'] = pd.to_datetime(s['日付'], errors='coerce')
-
-    # 2) 列名の統一（存在する時だけ）
-    rename_map = {
-        'レース名':'競走名',
-        '場所':'場名',
-        '馬場状態':'馬場',
-        '枠番':'枠',
-        '馬番':'番',
-    }
-    for a,b in rename_map.items():
-        if a in s.columns and b not in s.columns:
-            s[b] = s[a]
-
     # 3) 走破タイム → 秒（例: "1:33.5" / "33.5"）
     if '走破タイム秒' not in s.columns and '走破タイム' in s.columns:
         def _to_sec(x):
