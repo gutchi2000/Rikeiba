@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=30)
+_boot_course_geom(version=31)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1026,19 +1026,31 @@ def _normalize_cols(df):
 sheet0 = _normalize_cols(sheet0)
 
 # --- ② パターン（あなたの提案 + ちょい強化） ---
+# --- sheet0（過去走） マッピング修正 & レース日合成 --- #
+import re
+import numpy as np
+import pandas as pd
+
+def _pick_col(df, pats):
+    for pat in pats:
+        for c in df.columns:
+            if re.search(pat, str(c)):
+                return c
+    return None
+
 PAT_S0 = {
     '馬名':[r'馬名|名前|出走馬'],
     'レース日':[r'レース日|日付(?!S)|年月日|施行日|開催日'],
     '競走名':[r'競走名|レース名|名称'],
     'クラス名':[r'クラス名|格|条件|レースグレード'],
-    '頭数':[r'頭数|出走頭数'],
+    '頭数':[r'頭数|出走頭|出走頭数'],  # ← 出走頭を追加
     '確定着順':[r'確定着順|着順(?!率)'],
     '枠':[r'枠|枠番'],
-    '番':[r'馬番|番'],
+    '番':[r'\b馬番\b|(?<!枠)番'],        # ← 枠番の誤ヒットを避ける
     '斤量':[r'斤量'],
     '馬体重':[r'馬体重|体重'],
-    '上がり3Fタイム':[r'上がり3Fタイム|上がり３Fタイム|上がり3F|上3F'],
-    '上3F順位':[r'上がり3F順位|上がり３F順位|上3F順位'],
+    '上がり3Fタイム':[r'上がり3Fタイム|上がり3F|上3F'],
+    '上3F順位':[r'上がり3F順位|上3F順位'],
     '通過4角':[r'通過.*4角|4角.*通過|第4コーナー|4角通過順'],
     '性別':[r'性別'],
     '年齢':[r'年齢|馬齢'],
@@ -1047,31 +1059,43 @@ PAT_S0 = {
     '芝・ダ':[r'芝.?・.?ダ|芝ダ|コース|馬場種別|Surface'],
     '馬場':[r'馬場(?!.*指数)|馬場状態'],
     '場名':[r'場名|場所|競馬場|開催(地|場|場所)'],
-    'PCI':[r'\bPCI\b|ＰＣＩ'],
-    'PCI3':[r'\bPCI[-_ ]?3(?:F)?\b|ＰＣＩ[-_ ]?3(?:F)?'],
-    'Ave-3F':[r'Ave(?:rage)?[-_ ]?3F|平均(?:上がり|後半)?\s*3F|後半3F平均|ラスト3F平均'],
+    'PCI':[r'\bPCI(?!G)|ＰＣＩ'],
+    'PCI3':[r'\bPCI3\b|ＰＣＩ3'],
+    'Ave-3F':[r'Ave[-_]?3F|平均.*3F'],
 }
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
 
-MAP_S0 = {k: _auto_pick(sheet0, v) for k,v in PAT_S0.items()}
+# まず自動マッピング
+MAP_S0 = {k: _pick_col(sheet0, v) for k, v in PAT_S0.items()}
 
-# --- ③ 先に自動で「レース日」を合成して欠落を解消 ---
-#   Excelには 年・月・日 がある（例：年=2024, 月=11, 日=02）
-if MAP_S0.get('レース日') is None:
-    if {'年','月','日'}.issubset(sheet0.columns):
-        # 後で s0 を作るので、ここでは「作れる」フラグだけ立てる
-        MAP_S0['レース日'] = '__SYNTH_YMD__'
-    elif '年月日' in sheet0.columns:
-        MAP_S0['レース日'] = '年月日'
+# いったん拾えた列で DataFrame を作る
+s0 = pd.DataFrame({k: sheet0[col] for k, col in MAP_S0.items() if col and col in sheet0.columns})
 
-# 必須欠落のUIマップに落とす前に、YMD合成があるなら missing から外す
-missing = [k for k in REQ_S0 if MAP_S0.get(k) is None]
+# ▼ レース日が無ければ 年/月/日 から合成（2桁年→2000年代補正含む）
+if 'レース日' not in s0.columns:
+    ycol = _pick_col(sheet0, [r'(?<!開)年|開催年|Year|西暦'])
+    mcol = _pick_col(sheet0, [r'月(?!日)|開催月|Month'])
+    dcol = _pick_col(sheet0, [r'(?<!年)日(?!付)$|Day|開催日(?!.{0,2}付)'])
+    if all([ycol, mcol, dcol]):
+        yy = pd.to_numeric(sheet0[ycol], errors='coerce').to_numpy()
+        # 2桁年は 00-69 → 2000年代, 70-99 → 1900年代 とみなす
+        yy = np.where(yy < 100, np.where(yy >= 70, yy + 1900, yy + 2000), yy)
+        s0['レース日'] = pd.to_datetime(
+            {'year': yy,
+             'month': pd.to_numeric(sheet0[mcol], errors='coerce'),
+             'day': pd.to_numeric(sheet0[dcol], errors='coerce')},
+            errors='coerce'
+        )
+        # 文字列にしたいなら以下の1行を有効化
+        # s0['レース日'] = s0['レース日'].dt.strftime('%Y-%m-%d')
+
+# ▼ 必須チェック（UIに投げる前に、合成結果を反映した状態で判定）
+missing = [k for k in REQ_S0 if k not in s0.columns or s0[k].isna().all()]
 if missing:
-    # レース日だけは自動合成予定なら missing から外す
-    if 'レース日' in missing and MAP_S0.get('レース日') == '__SYNTH_YMD__':
-        missing = [m for m in missing if m != 'レース日']
-    if missing:
-        MAP_S0 = _map_ui(sheet0, PAT_S0, REQ_S0, 'sheet0（過去走）', 's0')
+    # まだ欠けていれば UI マッピングにフォールバック
+    MAP_S0 = _map_ui(sheet0, PAT_S0, REQ_S0, 'sheet0（過去走）', 's0')
+    s0 = pd.DataFrame({k: sheet0[col] for k, col in MAP_S0.items() if col and col in sheet0.columns})
+
 
 # --- ④ s0 の作成（合成列をここで実体化） ---
 s0 = pd.DataFrame()
