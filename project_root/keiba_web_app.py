@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=33)
+_boot_course_geom(version=34)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1395,7 +1395,16 @@ else:
 
 now = pd.Timestamp.today()
 half_life_m_default = 6.0
-_df['_days_ago']=(now - _df['レース日']).dt.days
+_race_dates = pd.to_datetime(_df['レース日'], errors='coerce')
+try:
+    if _race_dates.dt.tz is not None:
+        _race_dates = _race_dates.dt.tz_convert(None)
+except (TypeError, AttributeError):
+    try:
+        _race_dates = _race_dates.dt.tz_localize(None)
+    except (TypeError, AttributeError):
+        pass
+_df['_days_ago'] = (now - _race_dates).dt.days
 _df['_w'] = 0.5 ** (_df['_days_ago'] / (half_life_m*30.4375 if half_life_m>0 else half_life_m_default*30.4375))
 
 # ===== A) レース内デフレート =====
