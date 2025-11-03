@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=29)
+_boot_course_geom(version=30)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1013,6 +1013,19 @@ def _map_ui(df, patterns, required, title, key_prefix):
     return {k: (v if v != '<未選択>' else None) for k, v in mapping.items()}
 
 # ここに PCI / PCI3 / Ave-3F も拾うキーを追加
+# --- ① 列名の正規化（全角→半角、F/ハイフン統一）を先に ---
+def _normalize_cols(df):
+    trans = str.maketrans({
+        '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9',
+        'Ｆ':'F','ｆ':'f','ー':'-','－':'-','　':' '
+    })
+    out = df.copy()
+    out.columns = [str(c).translate(trans).strip() for c in out.columns]
+    return out
+
+sheet0 = _normalize_cols(sheet0)
+
+# --- ② パターン（あなたの提案 + ちょい強化） ---
 PAT_S0 = {
     '馬名':[r'馬名|名前|出走馬'],
     'レース日':[r'レース日|日付(?!S)|年月日|施行日|開催日'],
@@ -1024,8 +1037,8 @@ PAT_S0 = {
     '番':[r'馬番|番'],
     '斤量':[r'斤量'],
     '馬体重':[r'馬体重|体重'],
-    '上がり3Fタイム':[r'上がり3Fタイム|上がり3F|上3F'],
-    '上3F順位':[r'上がり3F順位|上3F順位'],
+    '上がり3Fタイム':[r'上がり3Fタイム|上がり３Fタイム|上がり3F|上3F'],
+    '上3F順位':[r'上がり3F順位|上がり３F順位|上3F順位'],
     '通過4角':[r'通過.*4角|4角.*通過|第4コーナー|4角通過順'],
     '性別':[r'性別'],
     '年齢':[r'年齢|馬齢'],
@@ -1034,32 +1047,67 @@ PAT_S0 = {
     '芝・ダ':[r'芝.?・.?ダ|芝ダ|コース|馬場種別|Surface'],
     '馬場':[r'馬場(?!.*指数)|馬場状態'],
     '場名':[r'場名|場所|競馬場|開催(地|場|場所)'],
-    'PCI':[r'\bPCI(?!G)|ＰＣＩ'],
-    'PCI3':[r'\bPCI3\b|ＰＣＩ3'],
-    'Ave-3F':[r'Ave[-_]?3F|平均.*3F'],
+    'PCI':[r'\bPCI\b|ＰＣＩ'],
+    'PCI3':[r'\bPCI[-_ ]?3(?:F)?\b|ＰＣＩ[-_ ]?3(?:F)?'],
+    'Ave-3F':[r'Ave(?:rage)?[-_ ]?3F|平均(?:上がり|後半)?\s*3F|後半3F平均|ラスト3F平均'],
 }
 REQ_S0 = ['馬名','レース日','競走名','頭数','確定着順']
 
 MAP_S0 = {k: _auto_pick(sheet0, v) for k,v in PAT_S0.items()}
+
+# --- ③ 先に自動で「レース日」を合成して欠落を解消 ---
+#   Excelには 年・月・日 がある（例：年=2024, 月=11, 日=02）
+if MAP_S0.get('レース日') is None:
+    if {'年','月','日'}.issubset(sheet0.columns):
+        # 後で s0 を作るので、ここでは「作れる」フラグだけ立てる
+        MAP_S0['レース日'] = '__SYNTH_YMD__'
+    elif '年月日' in sheet0.columns:
+        MAP_S0['レース日'] = '年月日'
+
+# 必須欠落のUIマップに落とす前に、YMD合成があるなら missing から外す
 missing = [k for k in REQ_S0 if MAP_S0.get(k) is None]
 if missing:
-    MAP_S0 = _map_ui(sheet0, PAT_S0, REQ_S0, 'sheet0（過去走）', 's0')
+    # レース日だけは自動合成予定なら missing から外す
+    if 'レース日' in missing and MAP_S0.get('レース日') == '__SYNTH_YMD__':
+        missing = [m for m in missing if m != 'レース日']
+    if missing:
+        MAP_S0 = _map_ui(sheet0, PAT_S0, REQ_S0, 'sheet0（過去走）', 's0')
 
+# --- ④ s0 の作成（合成列をここで実体化） ---
 s0 = pd.DataFrame()
 for k, col in MAP_S0.items():
-    if col and col in sheet0.columns:
-        s0[k]=sheet0[col]
+    if col == '__SYNTH_YMD__':
+        y = pd.to_numeric(sheet0['年'], errors='coerce').astype('Int64')
+        m = pd.to_numeric(sheet0['月'], errors='coerce').astype('Int64')
+        d = pd.to_numeric(sheet0['日'], errors='coerce').astype('Int64')
+        s0['レース日'] = pd.to_datetime(
+            y.astype(str) + '-' + m.astype(str) + '-' + d.astype(str),
+            errors='coerce'
+        )
+    elif col and col in sheet0.columns:
+        s0[k] = sheet0[col]
 
-s0['レース日']=pd.to_datetime(s0['レース日'], errors='coerce')
-for c in ['頭数','確定着順','枠','番','斤量','馬体重','上3F順位','通過4角','距離']:
-    if c in s0: s0[c]=pd.to_numeric(s0[c], errors='coerce')
-if '走破タイム秒' in s0: s0['走破タイム秒']=s0['走破タイム秒'].apply(_parse_time_to_sec)
-if '上がり3Fタイム' in s0: s0['上がり3Fタイム']=s0['上がり3Fタイム'].apply(_parse_time_to_sec)
-for col in ['PCI', 'PCI3', 'Ave-3F']:
+# --- ⑤ 走破タイム → 秒 に正規化（元が mm:ss.s 文字列想定） ---
+if '走破タイム秒' not in s0.columns and '走破タイム' in sheet0.columns:
+    import re, numpy as np
+    def _to_sec(x):
+        s = str(x)
+        m = re.match(r'(?:(\d+):)?(\d+)(?:\.(\d+))?$', s)
+        if not m: return np.nan
+        mm = int(m.group(1) or 0)
+        ss = int(m.group(2) or 0)
+        frac = float('0.' + (m.group(3) or '0'))
+        return mm*60 + ss + frac
+    s0['走破タイム秒'] = pd.to_numeric(sheet0['走破タイム'], errors='coerce')
+    mask = s0['走破タイム秒'].isna()
+    if mask.any():
+        s0.loc[mask, '走破タイム秒'] = sheet0.loc[mask, '走破タイム'].map(_to_sec)
+
+# --- ⑥ 型の整備（数値化できるもの） ---
+for col in ['頭数','枠','番','斤量','馬体重','上3F順位']:
     if col in s0.columns:
         s0[col] = pd.to_numeric(s0[col], errors='coerce')
-if '距離' in s0.columns:
-    s0['距離'] = pd.to_numeric(s0['距離'], errors='coerce')
+
 
 # シート1
 PAT_S1={
