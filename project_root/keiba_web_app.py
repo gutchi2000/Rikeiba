@@ -1047,8 +1047,20 @@ def _normalize_sheet0(df: pd.DataFrame) -> pd.DataFrame:
                 return pd.NA
         s['走破タイム秒'] = s['走破タイム'].map(_to_sec)
 
-    return s
+    if 'レース日' in s.columns:
+        ser = s['レース日']
+        if pd.api.types.is_numeric_dtype(ser):
+            # Excelシリアル対策
+            s['レース日'] = pd.to_datetime(ser, unit='d', origin='1899-12-30', errors='coerce')
+        else:
+            s['レース日'] = pd.to_datetime(ser, errors='coerce')
+        # tz 無しに統一（混在対策）
+        try:  s['レース日'] = s['レース日'].dt.tz_convert(None)
+        except: pass
+        try:  s['レース日'] = s['レース日'].dt.tz_localize(None)
+        except: pass
 
+    return s
 # ここで正規化
 sheet0 = _normalize_sheet0(sheet0)
 
