@@ -47,7 +47,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=32)
+_boot_course_geom(version=33)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -1025,8 +1025,6 @@ def _normalize_cols(df):
 
 sheet0 = _normalize_cols(sheet0)
 
-# --- ② パターン（あなたの提案 + ちょい強化） ---
-# --- sheet0（過去走） マッピング修正 & レース日合成 --- #
 # === sheet0（過去走）を先に正規化して必須列を作る ===
 def _normalize_sheet0(df: pd.DataFrame) -> pd.DataFrame:
     s = df.copy()
@@ -2755,44 +2753,11 @@ _dfdisp = df_agg.copy().sort_values(['AR100','勝率%_PL'], ascending=[False, Fa
 _dfdisp['順位'] = np.arange(1, len(_dfdisp)+1)
 
 # ---- クイックサマリー（上位の要約） ----
-if '_dfdisp' in globals() and not _dfdisp.empty:
-    with card("クイックサマリー"):
-        top = _dfdisp.iloc[0]
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown("**本命候補**")
-            st.markdown(f"{top['馬名']}")
-        with c2:
-            st.markdown("**勝率(PL)**")
-            st.markdown(f"{float(top['勝率%_PL']):.2f}%")
-        with c3:
-            st.markdown("**AR100**")
-            st.markdown(f"{float(top['AR100']):.1f}")
-        with c4:
-            st.markdown("**想定ペース**")
-            st.markdown(pace_type if 'pace_type' in globals() else "—")
+if '_dfdisp' not in globals() or _dfdisp.empty:
+    st.error("集計結果が空です。入力やマッピングを確認してください。")
+    st.stop()
 
-def _fmt_int(x):
-    try:
-        return '' if pd.isna(x) else f"{int(x)}"
-    except:
-        return ''
-
-
-show_cols = [
-    '順位','枠','番','馬名','脚質',
-    'AR100','Band',
-    '勝率%_BT',  # ← 追加
-    '勝率%_HIST','連対率%_HIST','複勝率%_HIST',
-    '勝率%_PL','複勝率%_PL',
-    '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
-    'PredTime_s','PredTime_p20','PredTime_p80','PredSigma_s',
-    'RecencyZ','StabZ','PacePts','TurnPrefPts','DistTurnZ',
-    'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
-    'PhysicsZ','PeakWkg','EAP','CornerLoadS1','StartCostS1','FinishGradeS1','PhysS1',
-]
-
-# ===== 日本語表示マップ =====
+# 表示ラベル（最小限）
 JP = {
     '順位':'順位','枠':'枠','番':'馬番','馬名':'馬名','脚質':'脚質',
     'AR100':'AR100','Band':'評価帯',
@@ -2801,146 +2766,98 @@ JP = {
     'PredTime_s':'予測タイム中央値[s]','PredTime_p20':'20%速い側[s]','PredTime_p80':'80%遅い側[s]','PredSigma_s':'タイム分散σ[s]',
     'RecencyZ':'近走Z','StabZ':'安定性Z','PacePts':'ペースPts','TurnPrefPts':'回り加点','DistTurnZ':'距離×回りZ',
     'SpecFitZ':'スペクトル適合Z',
-    'SpecGate_horse':'走法型(0=持久,1=中庸,2=瞬発)',
-    'SpecGate_templ':'想定レース型(テンプレ)',
-    'SpecGate_horse_lbl': '走法型',
-    'SpecGate_templ_lbl': '想定レース型(テンプレ)',
-    'PhysicsZ':'物理Z',
-    'PeakWkg':'ピークW/kg',
-    'EAP':'EAP[J/kg/m]',
-    '勝率%_BT': '勝率%（BT）',
-    'CornerLoadS1':'コーナー荷重S1',
-    'StartCostS1':'スタート損失S1',
-    'FinishGradeS1':'ゴール前勾配S1',
-    'PhysS1':'PhysS1',
-    '勝率%_HIST': '勝率%（履歴）',
-    '連対率%_HIST': '連対率%（履歴）',
-    '複勝率%_HIST': '複勝率%（履歴）',
+    'SpecGate_horse_lbl':'走法型(馬)','SpecGate_templ_lbl':'走法型(テンプレ)',
+    'PhysicsZ':'物理Z','PhysS1':'PhysS1','CornerLoadS1':'コーナー荷重','StartCostS1':'スタート損失','FinishGradeS1':'ゴール前勾配',
+    '勝率%_BT':'勝率%（BT）','勝率%_MC':'勝率%（MC）','複勝率%_MC':'複勝率%（MC）','期待着順_MC':'期待着順（MC）',
 }
 
-# 表示用DF（すでに能力順でソート済み想定）
-_dfdisp_view = _dfdisp[show_cols].rename(columns=JP)
-
-fmt = {
-    'AR100':'{:.1f}',
-    '勝率%（PL）':'{:.2f}',
-    '複勝率%（PL）':'{:.2f}',
-    '近走Z':'{:.2f}',
-    '安定性Z':'{:.2f}',
-    'ペースPts':'{:.2f}',
-    '回り加点':'{:.2f}',
-    '距離×回りZ':'{:.2f}',
-    '予測タイム中央値[s]':'{:.3f}',
-    '20%速い側[s]':'{:.3f}',
-    '80%遅い側[s]':'{:.3f}',
-    'タイム分散σ[s]':'{:.3f}',
-    'スペクトル適合Z':'{:.2f}',
-    '物理Z':'{:.2f}',
-    'ピークW/kg':'{:.2f}',
-    'EAP[J/kg/m]':'{:.2f}',
-    'コーナー荷重S1':'{:.3f}',
-    'スタート損失S1':'{:.3f}',
-    'ゴール前勾配S1':'{:.3f}',
-    'PhysS1':'{:.3f}',
-    '勝率%（BT）':'{:.2f}',
-    '勝率%（タイム）':'{:.2f}',
-    '複勝率%（タイム）':'{:.2f}',
-    '期待着順（タイム）':'{:.3f}',
-    '勝率%（履歴）': '{:.2f}',
-    '連対率%（履歴）': '{:.2f}',
-    '複勝率%（履歴）': '{:.2f}',
-}
-
-num_fmt = {
-    '枠': _fmt_int,
-    '馬番': _fmt_int,
-}
-
-# ====== 印をふる（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭、残りは消） ======
-labels_order = ['◎','〇','▲','☆','△','△','△']
-
-n = len(_dfdisp_view)
-# 上位7頭に labels_order を、残りに '消' を割り当て（馬が7頭未満でもOK）
-marks = (labels_order + ['消'] * max(0, n - len(labels_order)))[:n]
-
-_dfdisp_view.insert(0, '印', marks)
-
-# （任意）存在する列だけフォーマットを当てるとKeyError回避できる
-safe_fmt = {k: v for k, v in fmt.items() if k in _dfdisp_view.columns}
-# 例: st.dataframe(_dfdisp_view.style.format(safe_fmt))
-
-# ===== 表示 =====
-st.markdown("### 予想結果テーブル")
-st.dataframe(
-    _dfdisp_view.style.format(fmt),
-    use_container_width=True,
-    hide_index=True,
-    height=H(len(_dfdisp_view)) if FULL_TABLE_VIEW else None,
+# ===== 印（能力上位順）=====
+# ルール: ◎1頭, 〇1頭, ▲1頭, ☆1頭, △3頭, 残りは「消」
+# デフォルトは AR100 → 同値は 勝率%_PL → RecencyZ の順でタイブレーク
+rank_key = ['AR100','勝率%_PL','RecencyZ']
+for k in rank_key:
+    if k not in _dfdisp.columns:
+        _dfdisp[k] = np.nan
+_dfdisp['_sort_tuple'] = list(
+    zip(_dfdisp['AR100'].fillna(-1e9),
+        _dfdisp['勝率%_PL'].fillna(-1e9),
+        _dfdisp['RecencyZ'].fillna(-1e9))
 )
+_dfdisp = _dfdisp.sort_values('_sort_tuple', ascending=False).reset_index(drop=True)
 
-st.markdown("### 散布図（AR100 × 勝率PL）")
+marks = ['◎','〇','▲','☆','△','△','△']
+印 = ['消'] * len(_dfdisp)
+for i, m in enumerate(marks):
+    if i < len(印):
+        印[i] = m
+_dfdisp['印'] = 印
 
-_plot = _dfdisp_view[['馬名','AR100','勝率%（PL）','枠']].copy()
-_plot = _plot.rename(columns={'勝率%（PL）':'WinPL'})
-_plot = _plot.dropna(subset=['AR100','WinPL'])
+# 主要表示列
+disp_cols = [
+    '順位','印','枠','番','馬名','脚質',
+    'AR100','Band','勝率%_PL','複勝率%_PL',
+    '勝率%_TIME','複勝率%_TIME','期待着順_TIME',
+    'PredTime_s','PredSigma_s',
+    'SpecFitZ','SpecGate_horse_lbl','SpecGate_templ_lbl',
+    'PhysicsZ','PhysS1','PacePts','TurnPrefPts','DistTurnZ'
+]
+disp_cols = [c for c in disp_cols if c in _dfdisp.columns]
 
-# 枠色（1〜8枠）
-def _to_color(v):
-    try:
-        return WAKU_COL.get(int(v), "#808080")
-    except Exception:
-        return "#808080"
+table = _dfdisp[disp_cols].copy()
+table = table.rename(columns=JP)
 
-if _plot.empty:
-    st.info("散布図用のデータがありません。")
-else:
-    if ALT_AVAILABLE:
-        import altair as alt
-        # Altair 用に色域を明示
-        dom = [1,2,3,4,5,6,7,8]
-        rng = [WAKU_COL[i] for i in dom]
-        chart = (
-            alt.Chart(_plot)
-              .mark_circle(opacity=0.85, size=120)
-              .encode(
-                  x=alt.X('AR100:Q', title='AR100'),
-                  y=alt.Y('WinPL:Q', title='勝率%（PL）'),
-                  color=alt.Color('枠:O', scale=alt.Scale(domain=dom, range=rng), legend=alt.Legend(title='枠')),
-                  tooltip=['馬名','AR100','WinPL','枠']
-              )
-        )
-        labels = (
-            alt.Chart(_plot)
-              .mark_text(align='left', dx=6, dy=-6, fontSize=11)
-              .encode(x='AR100:Q', y='WinPL:Q', text='馬名')
-        )
-        st.altair_chart((chart + labels).interactive(), use_container_width=True)
-    else:
-        # matplotlib フォールバック
-        fig, ax = plt.subplots()
-        colors = [_to_color(v) for v in _plot['枠']]
-        ax.scatter(_plot['AR100'].to_numpy(float), _plot['WinPL'].to_numpy(float), s=60, alpha=0.9, edgecolors='none', c=colors)
-        for _, r in _plot.iterrows():
-            ax.text(float(r['AR100'])+0.2, float(r['WinPL'])+0.2, str(r['馬名']), fontsize=9)
-        ax.set_xlabel('AR100')
-        ax.set_ylabel('勝率%（PL）')
-        ax.grid(True, linestyle=':', linewidth=0.5, alpha=0.6)
-        st.pyplot(fig, clear_figure=True)
+# 枠色スタイル
+def _style(df_show: pd.DataFrame):
+    sty = df_show.style
+    if '枠' in df_show.columns:
+        sty = sty.apply(_style_waku, subset=['枠'], axis=0)
+    # 上位を太字
+    if '順位' in df_show.columns:
+        def bold_top(s):
+            return ['font-weight:700' if int(v)<=7 else '' for v in s]
+        sty = sty.apply(bold_top, subset=['順位'])
+    return sty
 
+st.markdown("## 🏁 最終一覧")
+st.dataframe(_style(table), use_container_width=True, hide_index=True)
 
+# ===== 購入案（上位6頭ボックス / 一頭軸フォーメーションの雛形）=====
+top6 = _dfdisp.head(6)['馬名'].tolist()
+head = _dfdisp.iloc[0]['馬名'] if len(_dfdisp)>0 else None
 
-# ===== JSON出力 =====
-# JSONに含める情報をコンパクトに
-export_df = _dfdisp_view.copy()
-export_json = export_df.to_dict(orient='records')
-st.download_button(
-    label="📦 この結果をJSONでダウンロード",
-    data=json.dumps(export_json, ensure_ascii=False, indent=2),
-    file_name="rikeiba_result.json",
-    mime="application/json",
-)
+with st.expander("🧾 買い目ひな形（上位6頭ベース）", expanded=True):
+    st.markdown(f"- 上位6頭（ボックス候補）: **{', '.join(top6)}**" if top6 else "- 上位6頭なし")
+    if head:
+        st.markdown(f"- 一頭軸（軸候補）: **{head}**")
 
-# ===== 買い目や印だけぱっと見したいとき用 =====
-with st.expander("印だけ見る（◎1頭 〇1頭 ▲1頭 ☆1頭 △3頭 消・残り）", expanded=True):
-    for rec in export_json:
-        st.write(f"{rec['印']}  {rec['馬名']}  （AR100={rec['AR100']:.1f}, 勝率PL={rec['勝率%（PL）']:.2f}%）")
+# ===== ダウンロード（CSV / JSON）=====
+export_cols = [c for c in _dfdisp.columns if c != '_sort_tuple']
+res_csv = _dfdisp[export_cols].to_csv(index=False).encode('utf-8-sig')
+st.download_button("⬇️ 結果CSVダウンロード", data=res_csv, file_name="result_rikeiba.csv", mime="text/csv")
+
+# JSON（軽量サマリー）
+json_cols = ['印','枠','番','馬名','脚質','AR100','勝率%_PL','複勝率%_PL','PredTime_s','PredSigma_s','SpecFitZ','PhysicsZ','PhysS1']
+json_cols = [c for c in json_cols if c in _dfdisp.columns]
+res_json = _dfdisp[json_cols].to_dict(orient='records')
+st.download_button("⬇️ 結果JSONダウンロード", data=json.dumps(res_json, ensure_ascii=False, indent=2).encode('utf-8'),
+                   file_name="result_rikeiba.json", mime="application/json")
+
+# ===== ちょい可視化（AR100 vs 勝率PL）=====
+try:
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(6,4), dpi=120)
+    x = pd.to_numeric(_dfdisp['AR100'], errors='coerce')
+    y = pd.to_numeric(_dfdisp['勝率%_PL'], errors='coerce')
+    plt.scatter(x, y)
+    for i, r in _dfdisp.iterrows():
+        if np.isfinite(x.iloc[i]) and np.isfinite(y.iloc[i]) and i < 10:
+            plt.text(x.iloc[i], y.iloc[i], str(r['馬名']), fontsize=8)
+    plt.xlabel('AR100')
+    plt.ylabel('勝率%（PL）')
+    plt.title('AR100 と 推定勝率（PL）の関係')
+    st.pyplot(fig, use_container_width=True)
+except Exception:
+    pass
+
+st.success("完了：スコア算出・印付け・出力を生成しました。")
+
