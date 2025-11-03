@@ -5,6 +5,7 @@ numpy
 openpyxl
 streamlit
 adjustText
+plotly
 
 scikit-learn
 lightgbm
