@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- 
 # 競馬予想アプリ（AUTO統合版 + スペクトル解析）
 
 from __future__ import annotations
