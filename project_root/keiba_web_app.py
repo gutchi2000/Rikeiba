@@ -63,7 +63,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=36)
+_boot_course_geom(version=37)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -141,128 +141,148 @@ def normalize_style(s: str) -> str:
     return s if s in STYLES else ''
 
 # ===== 表示スタイル（枠色）=====
-WAKU_COL = {1:"#ffffff",2:"#000000",3:"#e6002b",4:"#1560bd",5:"#ffd700",6:"#00a04b",7:"#ff7f27",8:"#f19ec2"}
-
-# ===== Plotly 可視化ユーティリティ =====
-WAKU_COLOR_MAP = {
+WAKU_COLORS = {
     1: "#FFFFFF",  # 白
     2: "#000000",  # 黒
-    3: "#FF3B30",  # 赤
-    4: "#007AFF",  # 青
-    5: "#FFD60A",  # 黄
-    6: "#2ECC71",  # 緑
-    7: "#FF9500",  # 橙
+    3: "#FF0000",  # 赤
+    4: "#0000FF",  # 青
+    5: "#FFFF00",  # 黄
+    6: "#008000",  # 緑
+    7: "#FF7F00",  # 橙
     8: "#FF69B4",  # 桃
 }
 
-def coerce_int_cols(df, cols=("枠", "馬番")):
-    out = df.copy()
-    for c in cols:
-        if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
-    return out
+def _text_color_for_bg(hexcode: str) -> str:
+    """背景色に対して見やすい文字色(黒/白)を返す"""
+    hexcode = hexcode.lstrip("#")
+    try:
+        r, g, b = [int(hexcode[i:i+2], 16) for i in (0, 2, 4)]
+    except ValueError:
+        return "#000000"
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "#000000" if lum > 140 else "#FFFFFF"
 
-def plot_ar_scatter(
-    df,
-    x_col="馬番",
-    y_col="AR100",
-    name_col="馬名",
-    waku_col="枠",
-    show_text=False,
-    height=420,
-):
-    d = coerce_int_cols(df, cols=(waku_col, x_col)).copy()
+def style_rank_table(df: pd.DataFrame):
+    """枠セルを枠色で塗り、枠/馬番を整数表示にした Styler を返す"""
+    d = df.copy()
+    format_cols = []
+    for col in ("枠", "馬番"):
+        if col in d.columns:
+            vals = pd.to_numeric(d[col], errors="coerce")
+            d[col] = vals
+            format_cols.append(col)
 
-    color_map = {str(k): v for k, v in WAKU_COLOR_MAP.items()}
-    color_map.update({k: v for k, v in WAKU_COLOR_MAP.items()})
+    def color_waku_col(s: pd.Series):
+        out = []
+        for v in s:
+            if pd.isna(v):
+                out.append("")
+                continue
+            key = str(int(round(float(v))))
+            bg = WAKU_COLORS.get(int(key), "#FFFFFF")
+            fg = _text_color_for_bg(bg)
+            out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
+        return out
 
+    def fmt_int(x):
+        return "" if pd.isna(x) else f"{int(round(float(x)))}"
+
+    styler = d.style
+    if format_cols:
+        styler = styler.format({c: fmt_int for c in format_cols})
+    if "枠" in d.columns:
+        styler = styler.apply(color_waku_col, subset=["枠"])
+    if "順位" in d.columns:
+        def bold_top(s: pd.Series):
+            out = []
+            for v in s:
+                try:
+                    out.append("font-weight:700" if int(v) <= 7 else "")
+                except Exception:
+                    out.append("")
+            return out
+        styler = styler.apply(bold_top, subset=["順位"])
+    try:
+        styler = styler.hide(axis="index")
+    except Exception:
+        pass
+    return styler
+
+def plot_scatter_waku(df: pd.DataFrame):
+    """馬番×AR100 散布図（点色＝枠色, 凡例1～8, ラベル重なり回避のシンプル表示）"""
+    d = df.copy()
+    for col in ("枠", "馬番"):
+        if col in d.columns:
+            d[col] = pd.to_numeric(d[col], errors="coerce").round(0).astype("Int64")
+    if "枠" in d.columns:
+        d["枠_str"] = d["枠"].astype("Int64").astype(str)
+    else:
+        d["枠_str"] = pd.Series([""] * len(d))
+
+
+    x_col = "馬番" if "馬番" in d.columns else (d.columns[0] if len(d.columns) else None)
+    if x_col is None:
+        return px.scatter()
+     hover_data = {"馬名": True, "AR100": ":.1f"}
+    if "馬番" in d.columns:
+        hover_data["馬番"] = True
+    if "枠" in d.columns:
+        hover_data["枠"] = True
+        
     fig = px.scatter(
         d,
         x=x_col,
-        y=y_col,
-        color=waku_col,
-        color_discrete_map=color_map,
-        hover_name=name_col,
-        hover_data={waku_col: True, x_col: True, y_col: ":.1f"},
-        template="plotly_white",
-        height=height,
+        y="AR100",
+        color="枠_str",
+        color_discrete_map={str(k): v for k, v in WAKU_COLORS.items()},
+        category_orders={"枠_str": [str(i) for i in range(1, 9)]},
+        hover_data=hover_data,
+        labels={"枠_str": "枠"},
     )
+    fig.update_traces(marker=dict(size=12, line=dict(width=1, color="rgba(0,0,0,0.35)")))
+    fig.update_layout(
+        template="simple_white",
+        legend_title_text="枠",
+        xaxis=dict(title="馬番", tickmode="linear", dtick=1, tickfont=dict(size=12)),
+        yaxis=dict(title="AR100", tickfont=dict(size=12)),
+        margin=dict(l=40, r=20, t=10, b=40),
+    )
+    return fig
 
-    def line_color_for_waku(w):
-        try:
-            return "#EEEEEE" if int(w) == 2 else "#222222"
-        except Exception:
-            return "#222222"
+def build_marks_text(df: pd.DataFrame) -> str:
+    """
+    コピペ用の印テキストを作る（ARは小数2桁）
+    出力順: ◎ → 〇 → ▲ → ☆ → △（'消'等は無視）
+    """
+    required = {"印", "馬名", "AR100"}
+    if not required.issubset(df.columns):
+        return ""
+    order = ["◎", "〇", "▲", "☆", "△"]
+    lines = []
+    for sym in order:
+        sub = df.loc[df["印"] == sym].copy()
+        if "順位" in sub.columns:
+            sub = sub.sort_values("順位")
+        for _, r in sub.iterrows():
+            try:
+                ar_val = float(r["AR100"])
+            except Exception:
+                ar_val = float("nan")
+            ar_txt = f"AR{ar_val:.2f}" if np.isfinite(ar_val) else "AR--"
+            name = str(r["馬名"]).strip()
+            lines.append(f"{sym}{name}　{ar_txt}")
+    return "\n".join(lines)
 
-    for tr in fig.data:
-        try:
-            waku_val = int(tr.name)
-        except Exception:
-            waku_val = int("".join([ch for ch in tr.name if ch.isdigit()]) or 0)
-        tr.update(
-            marker=dict(
-                size=12,
-                line=dict(width=1.5, color=line_color_for_waku(waku_val)),
-            ),
-            opacity=0.95,
-        )
-        if show_text:
-            tr.update(textposition="top center", textfont=dict(size=10))
+def render_final_view(df_ranked: pd.DataFrame):
+    """最終一覧テーブル → 散布図 → コピペ用印 を一括表示"""
+    st.subheader("🏁 最終一覧")
+    st.dataframe(style_rank_table(df_ranked), use_container_width=True)
 
-    fig.update_xaxes(tickmode="linear", dtick=1, tickformat="d", title_text=x_col)
-    fig.update_yaxes(title_text=y_col)
-
-    if show_text:
-        fig.update_traces(text=d[name_col])
+    fig = plot_scatter_waku(df_ranked)
     st.plotly_chart(fig, use_container_width=True)
 
-MARK_ORDER = ["◎", "〇", "▲", "☆", "△", "☑", "消"]
-
-def build_marks_text(
-    df,
-    name_col="馬名",
-    mark_col="印",
-    ar_col="AR100",
-    ar_label="AR",
-    ar_only_for_top=True,
-):
-    if mark_col not in df.columns:
-        return "（印の列が見つかりません）"
-    d = df.copy()
-    rank = {m: i for i, m in enumerate(MARK_ORDER)}
-    d = d[d[mark_col].isin(MARK_ORDER)].copy()
-    if ar_col in d.columns:
-        d["_sort_ar"] = pd.to_numeric(d[ar_col], errors="coerce")
-    else:
-        d["_sort_ar"] = np.nan
-    d["_sort_mark"] = d[mark_col].map(rank)
-    d.sort_values(["_sort_mark", "_sort_ar"], ascending=[True, False], inplace=True)
-
-    lines = []
-    for _, r in d.iterrows():
-        mark = str(r[mark_col])
-        name = str(r[name_col]) if name_col in d.columns else ""
-        show_ar = (mark == "◎") if ar_only_for_top else True
-        ar_txt = ""
-        if show_ar and ar_col in d.columns and pd.notna(r[ar_col]):
-            try:
-                ar_txt = f"　{ar_label}{int(round(float(r[ar_col])))}"
-            except Exception:
-                pass
-        lines.append(f"{mark}{name}{ar_txt}")
-    return "\n".join(lines).strip()
-
-def _style_waku(s: pd.Series):
-    out = []
-    for v in s:
-        if pd.isna(v):
-            out.append("")
-        else:
-            v = int(v)
-            bg = WAKU_COL.get(v, "#fff")
-            fg = "#000" if v == 1 else "#fff"
-            out.append(f"background-color:{bg}; color:{fg}; font-weight:700; text-align:center;")
-    return out
+    st.subheader("印（コピペ用）")
+    st.code(build_marks_text(df_ranked), language="text")
 
 # ===== 共通関数群 =====
 def season_of(m: int) -> str:
@@ -2984,20 +3004,7 @@ disp_cols = [c for c in disp_cols if c in _dfdisp.columns]
 table = _dfdisp[disp_cols].copy()
 table = table.rename(columns=JP)
 
-# 枠色スタイル
-def _style(df_show: pd.DataFrame):
-    sty = df_show.style
-    if '枠' in df_show.columns:
-        sty = sty.apply(_style_waku, subset=['枠'], axis=0)
-    # 上位を太字
-    if '順位' in df_show.columns:
-        def bold_top(s):
-            return ['font-weight:700' if int(v)<=7 else '' for v in s]
-        sty = sty.apply(bold_top, subset=['順位'])
-    return sty
-
-st.markdown("## 🏁 最終一覧")
-st.dataframe(_style(table), use_container_width=True, hide_index=True)
+render_final_view(table)
 
 # ===== 購入案（上位6頭ボックス / 一頭軸フォーメーションの雛形）=====
 top6 = _dfdisp.head(6)['馬名'].tolist()
