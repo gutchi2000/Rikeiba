@@ -63,7 +63,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=37)
+_boot_course_geom(version=38)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -253,6 +253,88 @@ def plot_scatter_waku(df: pd.DataFrame):
         yaxis=dict(title="AR100", tickfont=dict(size=12)),
         margin=dict(l=40, r=20, t=10, b=40),
     )
+    return fig
+
+def plot_ar_scatter(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    name_col: str | None = None,
+    waku_col: str | None = None,
+    show_text: bool = False,
+):
+    """AR100 と任意の数値列を散布図で表示する（枠色・ラベル対応版）"""
+
+    if x_col not in df.columns or y_col not in df.columns:
+        return px.scatter()
+
+    d = df.copy()
+
+    # 数値列の前処理
+    d[y_col] = pd.to_numeric(d[y_col], errors="coerce")
+    x_numeric = pd.to_numeric(d[x_col], errors="coerce")
+    if x_numeric.notna().any():
+        d["_x_val"] = x_numeric
+        x_for_plot = "_x_val"
+    else:
+        x_for_plot = x_col
+
+    # 欠損を除外
+    d = d.dropna(subset=[y_col])
+    if d.empty:
+        return px.scatter()
+
+    color_key = None
+    scatter_kwargs = {}
+
+    # 枠色をカラーに使用
+    if waku_col and waku_col in d.columns:
+        d[waku_col] = pd.to_numeric(d[waku_col], errors="coerce").round(0).astype("Int64")
+        d["_waku_str"] = d[waku_col].astype("Int64").astype(str)
+        color_key = "_waku_str"
+        scatter_kwargs.update(
+            color=color_key,
+            color_discrete_map={str(k): v for k, v in WAKU_COLORS.items()},
+            category_orders={color_key: [str(i) for i in range(1, 9)]},
+            labels={color_key: "枠"},
+        )
+
+    # Hover 情報を整理
+    hover_data: dict[str, object] = {x_col: True, y_col: ":.1f"}
+    if name_col and name_col in d.columns:
+        hover_data[name_col] = True
+    if waku_col and waku_col in d.columns:
+        hover_data[waku_col] = True
+
+    if show_text and name_col and name_col in d.columns:
+        scatter_kwargs["text"] = name_col
+
+    fig = px.scatter(
+        d,
+        x=x_for_plot,
+        y=y_col,
+        hover_data=hover_data,
+        **scatter_kwargs,
+    )
+
+    if show_text and name_col and name_col in d.columns:
+        fig.update_traces(textposition="top center", textfont=dict(size=12))
+
+    fig.update_traces(marker=dict(size=12, line=dict(width=1, color="rgba(0,0,0,0.35)")))
+    fig.update_layout(
+        template="simple_white",
+        margin=dict(l=40, r=20, t=10, b=40),
+    )
+    if color_key:
+        fig.update_layout(legend_title_text="枠")
+
+    # 軸ラベル・刻み幅を調整
+    xaxis_conf = dict(title=x_col)
+    if x_for_plot == "_x_val":
+        xaxis_conf.update(tickmode="linear", dtick=1)
+    fig.update_xaxes(**xaxis_conf)
+    fig.update_yaxes(title=y_col)
+
     return fig
 
 def build_marks_text(df: pd.DataFrame) -> str:
@@ -3039,7 +3121,7 @@ show_labels = st.checkbox("ラベルを表示する（重なる場合があり�
 df_plot = _dfdisp.copy()
 if '番' in df_plot.columns and '馬番' not in df_plot.columns:
     df_plot['馬番'] = df_plot['番']
-plot_ar_scatter(
+fig = plot_ar_scatter(
     df_plot,
     x_col="馬番" if "馬番" in df_plot.columns else "番",
     y_col="AR100",
@@ -3047,6 +3129,7 @@ plot_ar_scatter(
     waku_col="枠",
     show_text=show_labels,
 )
+st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("#### 印（コピペ用）")
 marks_text = build_marks_text(
