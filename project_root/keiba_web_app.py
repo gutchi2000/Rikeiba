@@ -211,30 +211,36 @@ def style_rank_table(df: pd.DataFrame):
 def plot_scatter_waku(df: pd.DataFrame):
     """馬番×AR100 散布図（点色＝枠色, 凡例1～8, ラベル重なり回避のシンプル表示）"""
     d = df.copy()
+
+    # 枠/馬番は整数化（表示もずれないように）
     for col in ("枠", "馬番"):
         if col in d.columns:
             d[col] = pd.to_numeric(d[col], errors="coerce").round(0).astype("Int64")
+
+    # 枠色キー（文字列）を用意
     if "枠" in d.columns:
         d["枠_str"] = d["枠"].astype("Int64").astype(str)
     else:
         d["枠_str"] = pd.Series([""] * len(d))
 
-
+    # X軸列の決定
     x_col = "馬番" if "馬番" in d.columns else (d.columns[0] if len(d.columns) else None)
     if x_col is None:
         return px.scatter()
-     hover_data = {"馬名": True, "AR100": ":.1f"}
+
+    # ← ここがIndentationErrorの原因。改行して同じ階層に戻す
+    hover_data = {"馬名": True, "AR100": ":.1f"}
     if "馬番" in d.columns:
         hover_data["馬番"] = True
     if "枠" in d.columns:
         hover_data["枠"] = True
-        
+
     fig = px.scatter(
         d,
         x=x_col,
         y="AR100",
         color="枠_str",
-        color_discrete_map={str(k): v for k, v in WAKU_COLORS.items()},
+        color_discrete_map={str(k): v for k, v in WAKU_COLORS.items()},  # 枠色と1対1対応
         category_orders={"枠_str": [str(i) for i in range(1, 9)]},
         hover_data=hover_data,
         labels={"枠_str": "枠"},
