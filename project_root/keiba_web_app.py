@@ -63,7 +63,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=39)
+_boot_course_geom(version=40)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -392,12 +392,9 @@ def build_marks_text(
     return "\n".join(lines)
 
 def render_final_view(df_ranked: pd.DataFrame):
-    """最終一覧テーブル → 散布図 → コピペ用印 を一括表示"""
+    """最終一覧テーブル → コピペ用印 を一括表示"""
     st.subheader("🏁 最終一覧")
     st.dataframe(style_rank_table(df_ranked), use_container_width=True)
-
-    fig = plot_scatter_waku(df_ranked)
-    st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("印（コピペ用）")
     st.code(build_marks_text(df_ranked), language="text")
