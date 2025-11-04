@@ -63,7 +63,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=38)
+_boot_course_geom(version=39)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -337,28 +337,58 @@ def plot_ar_scatter(
 
     return fig
 
-def build_marks_text(df: pd.DataFrame) -> str:
+def build_marks_text(
+    df: pd.DataFrame,
+    *,
+    name_col: str = "馬名",
+    mark_col: str = "印",
+    ar_col: str = "AR100",
+    ar_label: str = "AR",
+    ar_only_for_top: bool = False,
+) -> str:
     """
     コピペ用の印テキストを作る（ARは小数2桁）
     出力順: ◎ → 〇 → ▲ → ☆ → △（'消'等は無視）
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        入力データ。
+    name_col : str, default "馬名"
+        馬名を示す列名。
+    mark_col : str, default "印"
+        印を示す列名。
+    ar_col : str, default "AR100"
+        AR 値を示す列名。
+    ar_label : str, default "AR"
+        AR 値のラベル接頭辞。
+    ar_only_for_top : bool, default False
+        True の場合は最上位の印（◎）に対してのみ AR を表示する。
     """
-    required = {"印", "馬名", "AR100"}
+    required = {mark_col, name_col}
     if not required.issubset(df.columns):
         return ""
+    has_ar = ar_col in df.columns
     order = ["◎", "〇", "▲", "☆", "△"]
     lines = []
     for sym in order:
-        sub = df.loc[df["印"] == sym].copy()
+        sub = df.loc[df[mark_col] == sym].copy()
         if "順位" in sub.columns:
             sub = sub.sort_values("順位")
         for _, r in sub.iterrows():
-            try:
-                ar_val = float(r["AR100"])
-            except Exception:
-                ar_val = float("nan")
-            ar_txt = f"AR{ar_val:.2f}" if np.isfinite(ar_val) else "AR--"
-            name = str(r["馬名"]).strip()
-            lines.append(f"{sym}{name}　{ar_txt}")
+            name = str(r[name_col]).strip()
+            show_ar = has_ar and (not ar_only_for_top or sym == order[0])
+            line = f"{sym}{name}"
+            if show_ar:
+                try:
+                    ar_val = float(r[ar_col])
+                except Exception:
+                    ar_val = float("nan")
+                ar_txt = (
+                    f"{ar_label}{ar_val:.2f}" if np.isfinite(ar_val) else f"{ar_label}--"
+                )
+                line = f"{line}　{ar_txt}"
+            lines.append(line)
     return "\n".join(lines)
 
 def render_final_view(df_ranked: pd.DataFrame):
