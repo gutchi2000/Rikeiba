@@ -24,7 +24,7 @@ def run_mc_prob(
     dist: str = "gumbel",          # "gumbel"（推奨, PL系に近い）or "normal"
     noise_scale: float = 1.0,      # 1.0 を基準（スコアのスケールに合わせて微調整）
     seed: Optional[int] = 42,
-    chunk_size: int = 50_000,      # メモリ対策。18頭×5万なら余裕
+    chunk_size: int = 100_000,      # メモリ対策。18頭×5万なら余裕
     return_counts: bool = False,   # Trueなら回数も返す
 ) -> pd.DataFrame:
     """
