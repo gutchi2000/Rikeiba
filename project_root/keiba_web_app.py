@@ -42,7 +42,11 @@ from ui_style import topbar, card, pill, score_bar
 from course_geometry import register_all_turf, register_all_dirt, get_course_geom
 from physics_sprint1 import add_phys_s1_features
 from race_volatility import compute_race_volatility
-
+from enhanced_features import (
+    simulate_3d_race,
+    plot_radar_and_heatmap,
+    generate_ai_commentary,
+)
 # ===== Streamlit 先にページ設定（UIを使う前に呼ぶ）=====
 st.set_page_config(page_title="Rikeiba", layout="wide")
 
@@ -55,7 +59,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=43)
+_boot_course_geom(version=44)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -3191,6 +3195,51 @@ table = _dfdisp[disp_cols].copy()
 table = table.rename(columns=JP)
 
 render_final_view(table)
+
+# ===== 拡張可視化・実況 =====
+with st.expander("🌀 3Dコース＆レース・シミュレーション", expanded=False):
+    if 'PredTime_s' not in df_agg.columns or df_agg['PredTime_s'].isna().all():
+        st.info("PredTime_s の情報が不足しているためシミュレーションを実行できません。")
+    else:
+        if st.button("再生", key="play_3d_simulation"):
+            try:
+                fig3d = simulate_3d_race(
+                    df_agg[['馬名', 'PredTime_s']],
+                    float(TARGET_DISTANCE),
+                    slope=0.003,
+                )
+                st.plotly_chart(fig3d, use_container_width=True)
+            except Exception as exc:
+                st.error(f"3Dシミュレーションの生成中にエラーが発生しました: {exc}")
+
+with st.expander("📊 特徴可視化 (レーダー & ヒートマップ)", expanded=False):
+    metrics_cols = ['RecencyZ', 'StabZ', 'SectionZ', 'PhysicsZ', 'SpecFitZ']
+    missing_cols = [c for c in metrics_cols if c not in df_agg.columns]
+    if missing_cols:
+        st.info("以下の指標列が見つからないため可視化を表示できません: " + ', '.join(missing_cols))
+    elif df_agg.empty:
+        st.info("表示可能なデータがありません。")
+    else:
+        try:
+            radar_fig, heatmap_fig = plot_radar_and_heatmap(
+                df_agg[['馬名'] + metrics_cols]
+            )
+            st.plotly_chart(radar_fig, use_container_width=True)
+            st.plotly_chart(heatmap_fig, use_container_width=True)
+        except Exception as exc:
+            st.error(f"可視化の生成中にエラーが発生しました: {exc}")
+
+with st.expander("🎤 AI実況コメント", expanded=False):
+    commentary_cols = ['馬名']
+    if 'AR100' in df_agg.columns:
+        commentary_cols.append('AR100')
+    if '勝率%_PL' in df_agg.columns and '勝率%_PL' not in commentary_cols:
+        commentary_cols.append('勝率%_PL')
+    if len(commentary_cols) == 1:
+        st.info("実況生成に必要な指標が不足しています。")
+    else:
+        commentary = generate_ai_commentary(df_agg[commentary_cols], top_n=3)
+        st.text(commentary)
 
 # ===== 購入案（上位6頭ボックス / 一頭軸フォーメーションの雛形）=====
 top6 = _dfdisp.head(6)['馬名'].tolist()
