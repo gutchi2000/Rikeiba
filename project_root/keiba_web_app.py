@@ -55,7 +55,7 @@ def _boot_course_geom(version: int = 1):
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=42)
+_boot_course_geom(version=43)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -710,6 +710,9 @@ with st.sidebar.expander("📐 本レース幾何（コース設定）", expande
         "中山":["内回り","外回り"], "中京":["外回り"],
         "京都":["内回り","外回り"], "阪神":["内回り","外回り"], "小倉":["内回り"]
     }
+    if "layout_select_pending" in st.session_state:
+        st.session_state["layout_select"] = st.session_state.pop("layout_select_pending")
+        
     LAYOUT = st.selectbox("レイアウト", LAYOUT_OPTS[COURSE_ID], key="layout_select")
    
 with st.sidebar.expander("📊 AR100調整", expanded=False):
@@ -798,7 +801,7 @@ with st.sidebar.expander("⚖️ 自動バランサ", expanded=False):
                     pass
             if vr2:
                 st.warning(f"選択レイアウト『{LAYOUT}』では登録が見つからないため『{lay2}』に切り替えました。")
-                st.session_state['layout_select'] = lay2
+                st.session_state['layout_select_pending'] = lay2
                 st.rerun()
                 switched = True
                 break
