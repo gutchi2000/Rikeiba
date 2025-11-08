@@ -652,7 +652,7 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
                 except Exception:
                     continue
 
-if allow_fallback and surface in ("芝", "ダ"):
+    if allow_fallback and surface in ("芝", "ダ"):
         # ← 最終手段：簡易ジオメトリで続行（京都3000mのような未登録距離対策）
         g = _fallback_geom(course_id, surface, int(distance_m), layout, rail)
         return layout, rail, g, int(distance_m), True
