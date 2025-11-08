@@ -39,7 +39,7 @@ def detect_2yo_race(horses_df, race_df) -> bool:
 
 # ← パスを通した “後” にローカルモジュールを import
 from ui_style import topbar, card, pill, score_bar
-from course_geometry import register_all_turf, get_course_geom
+from course_geometry import register_all_turf, register_all_dirt, get_course_geom
 from physics_sprint1 import add_phys_s1_features
 from race_volatility import compute_race_volatility
 
@@ -49,21 +49,13 @@ st.set_page_config(page_title="Rikeiba", layout="wide")
 # ===== コース幾何の初期化（1回だけ）=====
 @st.cache_resource
 def _boot_course_geom(version: int = 1):
-    # 直前の登録をクリア（定義があれば使う）
-    try:
-        from course_geometry.registry import clear_registry
-        clear_registry()
-    except Exception:
-        # clear_registry が無ければ無視（_add が上書きしてくれる想定）
-        pass
-
-    # すべての *_turf.py を登録
-    from course_geometry import register_all_turf
-    register_all_turf()
+       # 一度レジストリをクリアし、芝とダートを登録
+    register_all_turf(clear=True)
+    register_all_dirt(clear=False)
     return True
 
 # ← 数字を上げると Streamlit のキャッシュが破棄されて再登録される
-_boot_course_geom(version=40)
+_boot_course_geom(version=41)
 
 
 # ※ races_df に対して add_phys_s1_features を“ここでは”実行しないこと。
@@ -413,6 +405,24 @@ def z_score(s: pd.Series) -> pd.Series:
         return pd.Series([50] * len(s), index=s.index)
     return 50 + 10 * (s - s.mean()) / std
 
+
+def compute_weight_penalty(distance_m: float, surface: str, track_state: str) -> float:
+    """距離・馬場状態に基づく1kgあたりペナルティを計算する。"""
+    surf = str(surface)
+    if surf.startswith('芝') or 'turf' in surf.lower():
+        base = 0.6 + 0.0003 * float(distance_m)
+    else:
+        base = 0.8 + 0.0004 * float(distance_m)
+
+    mult = {
+        "良": 1.0,
+        "稍重": 1.1,
+        "重": 1.2,
+        "不良": 1.3,
+    }.get(str(track_state).strip(), 1.0)
+
+    return float(base) * float(mult)
+
 def _parse_time_to_sec(x):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return np.nan
@@ -642,7 +652,7 @@ def resolve_course_geom(course_id: str, surface: str, distance_m: int, layout: s
                 except Exception:
                     continue
 
-    if allow_fallback and surface == "芝":
+if allow_fallback and surface in ("芝", "ダ"):
         # ← 最終手段：簡易ジオメトリで続行（京都3000mのような未登録距離対策）
         g = _fallback_geom(course_id, surface, int(distance_m), layout, rail)
         return layout, rail, g, int(distance_m), True
@@ -817,7 +827,11 @@ with st.sidebar.expander("🛠 安定化/補正", expanded=True):
     half_life_m  = st.slider("時系列半減期(月)", 0.0, 12.0, 6.0, 0.5)
     stab_weight  = st.slider("安定性(小さいほど◎)の係数", 0.0, 2.0, 0.7, 0.1)
     pace_gain    = st.slider("ペース適性係数", 0.0, 3.0, 1.0, 0.1)
+    use_dynamic_weight = st.checkbox("距離依存の斤量補正を使用する", value=True)
     weight_coeff = st.slider("斤量ペナルティ強度(pts/kg)", 0.0, 4.0, 1.0, 0.1)
+    
+with st.sidebar.expander("📈 セクションタイム補正", expanded=False):
+    SECTION_WEIGHT = st.slider("セクションタイムの強さ", 0.0, 3.0, 1.0, 0.1)
     
 with st.sidebar.expander("🧩 特性重み（任意）", expanded=False):
     # ── 性別（0.00〜2.00、0.01刻み）──
@@ -1416,6 +1430,23 @@ if '走破タイム秒' not in s0.columns and '走破タイム' in sheet0.column
 for col in ['頭数','枠','番','斤量','馬体重','上3F順位']:
     if col in s0.columns:
         s0[col] = pd.to_numeric(s0[col], errors='coerce')
+
+# --- ⑦ セクションタイム指標を作成 ---
+if {'走破タイム秒', '上がり3Fタイム', '距離'}.issubset(s0.columns):
+    s0 = s0.copy()
+    s0['走破タイム秒'] = pd.to_numeric(s0['走破タイム秒'], errors='coerce')
+    s0['上がり3Fタイム'] = pd.to_numeric(s0['上がり3Fタイム'], errors='coerce')
+    s0['距離'] = pd.to_numeric(s0['距離'], errors='coerce')
+
+    s0['early_time'] = s0['走破タイム秒'] - s0['上がり3Fタイム']
+    s0.loc[s0['early_time'] <= 0, 'early_time'] = np.nan
+    s0['early_dist'] = s0['距離'] - 600.0
+    s0.loc[s0['early_dist'] <= 0, 'early_dist'] = np.nan
+    s0['early_speed'] = s0['early_dist'] / s0['early_time']
+    s0['late_speed'] = 600.0 / s0['上がり3Fタイム']
+    s0.loc[s0['上がり3Fタイム'] <= 0, 'late_speed'] = np.nan
+    s0['speed_ratio'] = s0['late_speed'] / s0['early_speed']
+    s0['speed_ratio'] = s0['speed_ratio'].replace([np.inf, -np.inf], np.nan)
 
 
 # シート1
@@ -2142,6 +2173,30 @@ df_agg=pd.DataFrame(agg)
 if df_agg.empty:
     st.error('過去走の集計が空です。'); st.stop()
 
+# セクションタイムの加重平均 → Z 化
+if 'speed_ratio' in s0.columns:
+    tmp = s0[['馬名', 'speed_ratio']].copy()
+    tmp['speed_ratio'] = pd.to_numeric(tmp['speed_ratio'], errors='coerce')
+    if 'レース日' in s0.columns:
+        rec_w = 0.5 ** (
+            (
+                pd.Timestamp.today()
+                - pd.to_datetime(s0['レース日'], errors='coerce')
+            ).dt.days.clip(lower=0)
+            / 180.0
+        )
+    else:
+        rec_w = pd.Series(1.0, index=s0.index, dtype=float)
+    tmp['_w'] = pd.to_numeric(rec_w, errors='coerce')
+    tmp = tmp.dropna(subset=['馬名', 'speed_ratio', '_w'])
+    sec_mean = tmp.groupby('馬名').apply(
+        lambda g: np.average(g['speed_ratio'], weights=g['_w']) if g['_w'].sum() > 0 else np.nan
+    ).to_dict()
+    df_agg['SectionRatio'] = df_agg['馬名'].map(sec_mean)
+    df_agg['SectionZ'] = z_score(df_agg['SectionRatio'].astype(float))
+else:
+    df_agg['SectionZ'] = 0.0
+
 # WStdの床
 wstd_nontrivial=df_agg.loc[df_agg['Nrun']>=2,'WStd']
 def_std=float(wstd_nontrivial.median()) if wstd_nontrivial.notna().any() else 6.0
@@ -2490,14 +2545,27 @@ df_agg['FinalRaw'] = (
     + df_agg['SexPts'] + df_agg['StylePts'] + df_agg['AgePts'] + df_agg['WakuPts']
 )
 
-df_agg['FinalRaw_before_balance'] = df_agg['FinalRaw'].astype(float)
+df_agg['FinalRaw'] += float(SECTION_WEIGHT) * df_agg['SectionZ'].fillna(0.0)
 
 # 斤量ペナルティ（中央値基準）
 if '斤量' in df_agg.columns and pd.to_numeric(df_agg['斤量'], errors='coerce').notna().any():
-    kg = pd.to_numeric(df_agg['斤量'], errors='coerce')
-    kg_med = float(np.nanmedian(kg))
-    df_agg['FinalRaw'] -= float(weight_coeff) * (kg - kg_med).fillna(0.0)
+    kg_values = pd.to_numeric(df_agg['斤量'], errors='coerce')
+    kg_med = float(np.nanmedian(kg_values))
+    if '馬場状態' in s1.columns:
+        track_states = s1['馬場状態'].dropna().astype(str)
+        today_track_state = track_states.iloc[0] if not track_states.empty else "良"
+    else:
+        today_track_state = "良"
 
+    if use_dynamic_weight:
+        penalty = compute_weight_penalty(
+            distance_m=float(TARGET_DISTANCE),
+            surface=str(TARGET_SURFACE),
+            track_state=str(today_track_state),
+        )
+        df_agg['FinalRaw'] -= penalty * (kg_values - kg_med).fillna(0.0)
+    else:
+        df_agg['FinalRaw'] -= float(weight_coeff) * (kg_values - kg_med).fillna(0.0)
 # BTを加点
 if 'ベストタイム秒' in s1.columns:
     btmap = s1.set_index('馬名')['ベストタイム秒'].to_dict()
