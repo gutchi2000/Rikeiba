@@ -14,7 +14,40 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import streamlit as st
 
+
+def _minmax_0_100_safe(s: pd.Series) -> pd.Series:
+    s = pd.to_numeric(s, errors="coerce")
+    if s.notna().sum() == 0:
+        return pd.Series(np.nan, index=s.index)
+    mn, mx = float(s.min()), float(s.max())
+    rng = mx - mn
+    if not np.isfinite(rng) or rng <= 1e-12:
+        return pd.Series(50.0, index=s.index)
+    return (s - mn) / rng * 100.0
+
+
+def normalize_features_for_viz(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    norm = df[feature_cols].apply(_minmax_0_100_safe)
+
+    constant_cols: list[str] = []
+    nanonly_cols: list[str] = []
+    for c in feature_cols:
+        col = pd.to_numeric(df[c], errors="coerce")
+        if col.notna().sum() == 0:
+            nanonly_cols.append(c)
+        elif col.nunique(dropna=True) == 1:
+            constant_cols.append(c)
+
+    msgs: list[str] = []
+    if constant_cols:
+        msgs.append("※ 次の指標は全頭同一値のためレーダーでは 50 点の水平線として描画: " + "、".join(constant_cols))
+    if nanonly_cols:
+        msgs.append("※ 次の指標は値が取得できず描画対象外: " + "、".join(nanonly_cols))
+    if msgs:
+        st.caption(" / ".join(msgs))
+    return norm
 
 def simulate_3d_race(
     df: pd.DataFrame,
@@ -140,8 +173,11 @@ def plot_radar_and_heatmap(
     if '馬名' not in df.columns:
         raise ValueError("DataFrame に '馬名' 列が必要です")
 
+
+    normalized = normalize_features_for_viz(df, metrics)
+    viz_df = pd.concat([df[['馬名']].reset_index(drop=True), normalized.reset_index(drop=True)], axis=1)
     radar_fig = go.Figure()
-    for _, row in df.iterrows():
+    for _, row in viz_df.iterrows():
         values = [float(row[col]) if np.isfinite(row[col]) else 0.0 for col in metrics]
         radar_fig.add_trace(
             go.Scatterpolar(
@@ -151,12 +187,12 @@ def plot_radar_and_heatmap(
             )
         )
     radar_fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True)),
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
         showlegend=True,
         margin=dict(l=40, r=40, t=40, b=40),
     )
 
-    heat_df = df[['馬名'] + metrics].copy()
+    heat_df = viz_df[['馬名'] + metrics].copy()
     heat_df.set_index('馬名', inplace=True)
     heatmap_fig = px.imshow(
         heat_df[metrics].astype(float),
