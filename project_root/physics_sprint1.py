@@ -2,14 +2,16 @@
 """
 physics_sprint1.py
 Sprint 1 の物理スコア（コーナー v^2/r ・スタート加速 ・終盤勾配）。
+
 公開関数:
 - add_phys_s1_features(df, *, group_cols=("race_id",), band_col=None, verbose=False) -> pd.DataFrame
 
 主な仕様:
-- 最終スコアは「raw合成S_raw → Z正規化 → CDF(0–1) = phys_s1_score」。
+- 最終スコアは「raw合成 S_raw → Z正規化 → CDF(0–1) = phys_s1_score」。
 - 帯域は連続化：gate_no/field_size → band_q∈[0,1] を半径補正に直接使用。
   * 外部から band_q を与えればそれを優先。離散 band（内/中/外）があれば後方互換で使用。
 - 行ごとの final_time_sec を使うため、馬ごとに CornerLoad が連続値化。
+- raw 物理部分を「曲線時の横 g」「スタート加速 a」「勾配による重力成分」に寄せて再構築。
 """
 from __future__ import annotations
 import math
@@ -25,6 +27,9 @@ from course_geometry import get_course_geom  # 幾何を取得
 # =========================
 # 設定
 # =========================
+
+# 重力加速度 [m/s^2]
+G0: float = 9.80665
 
 # スパイラルカーブ低減係数（0.0=負荷ゼロ, 1.0=低減なし）
 SPIRAL_COEFF: Dict[str, float] = {
@@ -44,15 +49,19 @@ RADIUS_R0: Dict[Tuple[str, str], float] = {
 # 表示用 0–1 合成の重み（互換用）
 WEIGHTS_SHOW = dict(corner=0.45, start=0.35, finish=0.20)
 
-# ★ raw合成の重み
+# ★ raw合成の重み（ここをチューニング対象にしてもOK）
 W_CORNER = 1.0
 W_START  = 1.0
 W_FINISH = 1.0
 
-# スケール
-K_CORNER = 1000.0    # (num_turns / distance_m) をkm相当に
-K_START  = 200.0     # 1 / start_to_first_turn_m のスケール
-# finish_raw = |finish_grade_pct| [%] をそのまま
+# 物理スケール係数（おおよそ Corner≈数〜10, Start≈数, Finish≈1 くらいのレンジ）
+K_CORNER_PHYS = 100.0   # g × 曲線区間比 → corner_load_raw
+K_START_PHYS  = 100.0   # g × 加速度 → start_cost_raw
+K_FINISH_PHYS = 200.0   # 勾配[%] × 区間比 → finish_grade_raw
+
+# 出遅れ秒ペナルティ & 枠番スタートペナルティ
+K_BREAK_PEN   = 5.0     # [point / sec]
+K_LANE_START  = 2.0     # 枠q(0〜1) × w_first の係数
 
 # Z基準フォールバック
 Z_N_MIN_STRICT = 30
@@ -69,9 +78,9 @@ BAND_RADIUS_GAIN = 1.0
 # レイアウト候補
 LAYOUT_OPTS: Dict[str, Tuple[str, ...]] = {
     "札幌": ("内回り",), "函館": ("内回り",), "福島": ("内回り",),
-    "新潟": ("外回り","内回り","直線"), "東京": ("外回り",),
-    "中山": ("内回り","外回り"), "中京": ("外回り",),
-    "京都": ("外回り","内回り"), "阪神": ("外回り","内回り"), "小倉": ("内回り",),
+    "新潟": ("外回り", "内回り", "直線"), "東京": ("外回り",),
+    "中山": ("内回り", "外回り"), "中京": ("外回り",),
+    "京都": ("外回り", "内回り"), "阪神": ("外回り", "内回り"), "小倉": ("内回り",),
 }
 
 # =========================
@@ -81,7 +90,7 @@ LAYOUT_OPTS: Dict[str, Tuple[str, ...]] = {
 def _avg_track_width(geom) -> float:
     wmin = getattr(geom, "track_width_min_m", None)
     wmax = getattr(geom, "track_width_max_m", None)
-    if wmin and wmax:
+    if wmin is not None and wmax is not None:
         return (wmin + wmax) / 2.0
     return 25.0
 
@@ -122,7 +131,10 @@ def _minmax01(x: pd.Series) -> pd.Series:
     return (x - xmin) / (xmax - xmin)
 
 def _pick_speed_mps(row: pd.Series, distance_m: float) -> float:
-    """行ごとの速度推定。final_time_sec を優先（馬ごとの予測タイム可）"""
+    """
+    行ごとの速度推定。
+    final_time_sec を優先（馬ごとの予測タイム可）。
+    """
     if 'avg_speed_mps' in row and pd.notna(row['avg_speed_mps']):
         return float(row['avg_speed_mps'])
     for k in ('final_time_sec', 'race_time_sec', 'time_sec'):
@@ -134,9 +146,16 @@ def _pick_speed_mps(row: pd.Series, distance_m: float) -> float:
         if v and float(v) > 0:
             one_f_sec = float(v) / 3.0
             return _safe_div(200.0, one_f_sec, 16.7)
+    # fallback: 60 km/h
     return 16.7
 
 def _first_turn_weight(d_first: Optional[float]) -> float:
+    """
+    1角までの距離に応じた重み。
+    200m → 1.0 （すぐコーナーで難しい）
+    800m → 0.0 （充分余裕）
+    線形で補間。
+    """
     d = d_first if (d_first is not None and d_first > 0) else FIRST_TURN_DIST_DEFAULT
     x = (d - 200.0) / (800.0 - 200.0)
     x = max(0.0, min(1.0, x))
@@ -146,16 +165,16 @@ def _norm_cdf(z: float) -> float:
     return 0.5 * (1.0 + math.erf(float(z) / math.sqrt(2.0)))
 
 def _estimate_S_range(weights=(W_CORNER, W_START, W_FINISH)):
-    # 常識レンジ（安全側）
+    """
+    raw 合成値の概ねのレンジを安全側に見積もる。
+    Corner ≈ [0, 15], Start ≈ [0, 10], Finish ≈ [0, 5] 程度を想定。
+    """
     wC, wS, wF = weights
-    corner_min = (2 / 3600.0) * K_CORNER
-    corner_max = (8 / 1000.0) * K_CORNER
-    start_min  = (1.0 / 1000.0) * K_START
-    start_max  = (1.0 / 100.0)  * K_START
-    finish_min = 0.0
-    finish_max = 4.0
-    S_min = wC*corner_min + wS*start_min + wF*finish_min
-    S_max = wC*corner_max + wS*start_max + wF*finish_max
+    corner_min, corner_max = 0.0, 15.0
+    start_min,  start_max  = 0.0, 10.0
+    finish_min, finish_max = 0.0, 5.0
+    S_min = wC * corner_min + wS * start_min + wF * finish_min
+    S_max = wC * corner_max + wS * start_max  + wF * finish_max
     return S_min, S_max
 
 # =================================================
@@ -164,7 +183,7 @@ def _estimate_S_range(weights=(W_CORNER, W_START, W_FINISH)):
 
 @lru_cache(maxsize=4096)
 def _resolve_geom(course_id: str, surface: str, distance_m: int, layout: str, rail: str):
-    surf = "芝" if str(surface).lower().startswith(("芝","turf")) else "ダ"
+    surf = "芝" if str(surface).lower().startswith(("芝", "turf")) else "ダ"
     dist = int(distance_m)
     try:
         g = get_course_geom(course_id, surf, dist, layout, rail)
@@ -172,7 +191,8 @@ def _resolve_geom(course_id: str, surface: str, distance_m: int, layout: str, ra
             return g, layout, rail
     except Exception:
         pass
-    for r2 in ("A","B","C","D",""):
+    # rail を変えて探す
+    for r2 in ("A", "B", "C", "D", ""):
         if r2 == rail:
             continue
         try:
@@ -181,16 +201,18 @@ def _resolve_geom(course_id: str, surface: str, distance_m: int, layout: str, ra
                 return g, layout, r2
         except Exception:
             continue
-    for lay2 in LAYOUT_OPTS.get(course_id, ("内回り","外回り","直線")):
+    # layout を変えて探す
+    for lay2 in LAYOUT_OPTS.get(course_id, ("内回り", "外回り", "直線")):
         if lay2 == layout:
             continue
-        for r2 in ("A","B","C","D",""):
+        for r2 in ("A", "B", "C", "D", ""):
             try:
                 g = get_course_geom(course_id, surf, dist, lay2, r2)
                 if g is not None:
                     return g, lay2, r2
             except Exception:
                 continue
+    # rail 指定なしでもう一度
     try:
         g = get_course_geom(course_id, surf, dist, layout, "")
         if g is not None:
@@ -202,6 +224,7 @@ def _resolve_geom(course_id: str, surface: str, distance_m: int, layout: str, ra
 # =================================================
 # 帯域（連続 & 離散）
 # =================================================
+
 def band_q_from_waku(gate_no: pd.Series, field_size: pd.Series) -> pd.Series:
     """連続帯域 q∈[0,1]。0=最内, 1=大外"""
     g = pd.to_numeric(gate_no, errors="coerce")
@@ -222,18 +245,24 @@ def band_from_waku(gate_no: pd.Series, field_size: pd.Series) -> pd.Series:
 # =========================
 
 def _corner_load_raw_row(row: pd.Series) -> float:
+    """
+    コーナー時の「横 g × 曲線区間比 × スパイラル係数」ベースの負荷。
+    """
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
     rail      = row.get('rail_state', '')
     distance  = float(row.get('distance_m', np.nan))
+
     if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
+
     geom, lay_used, rail_used = _resolve_geom(course_id, surface, int(distance), layout, rail)
     if geom is None:
         return 0.0
 
-    r0 = _represent_radius(course_id, lay_used or layout)
+    layout_used = lay_used or layout
+    r0 = _represent_radius(course_id, layout_used)
     width_avg = _avg_track_width(geom)
 
     # 連続帯域優先 → 無ければ離散ラベル
@@ -243,7 +272,7 @@ def _corner_load_raw_row(row: pd.Series) -> float:
     else:
         delta_r = _band_delta_r_from_label(row.get('band', None), width_avg)
 
-    r = max(5.0, r0 + delta_r)
+    r_eff = max(5.0, r0 + delta_r)
     s = _course_spiral_coeff(course_id)
 
     nt = row.get('num_turns', None)
@@ -251,60 +280,101 @@ def _corner_load_raw_row(row: pd.Series) -> float:
         nt = getattr(geom, "num_turns", 2) or 2
     nt = int(nt)
 
+    # 90度コーナーを nt 回と近似
     theta_total = (math.pi / 2.0) * nt
+
     v = _pick_speed_mps(row, distance)
 
-    # v^2/r × 角度総量（比例）
-    basic = max(0.0, s * (v ** 2) * theta_total / max(r, 1e-6))
-    # 粗レンジ（回数/距離）も少量ブレンド
-    approx = (nt / max(distance, 1.0)) * K_CORNER
-    return 0.5 * basic + 0.5 * approx
+    # 横方向 g： a_c = v^2 / r_eff [m/s^2] → /G0
+    g_force = (v ** 2) / max(r_eff * G0, 1e-6)
+    g_force = max(0.0, min(g_force, 1.5))  # 安全側クリップ（1.5g くらいまで）
+
+    # 曲線区間比 ≒ 曲線弧長 / 総距離
+    arc_len = r_eff * theta_total
+    frac_curve = _safe_div(arc_len, distance, default=0.0)
+    frac_curve = max(0.0, min(frac_curve, 0.8))  # 80% 以上曲がっていることはほぼない
+
+    load = s * g_force * frac_curve * K_CORNER_PHYS
+    return float(load)
 
 def _start_cost_raw_row(row: pd.Series) -> float:
+    """
+    スタート〜1角の加速負荷。
+    v^2 / (2 d_first) / g をベースに、出遅れ秒・枠番ペナルティを加算。
+    """
     distance  = float(row.get('distance_m', np.nan))
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
     rail      = row.get('rail_state', '')
+
     if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
 
-    v_c = _pick_speed_mps(row, distance)
+    v_mean = _pick_speed_mps(row, distance)
 
     geom, lay_used, rail_used = _resolve_geom(course_id, surface, int(distance), layout, rail)
     d_first = getattr(geom, "start_to_first_turn_m", None) if geom else None
+    if d_first is None or not math.isfinite(d_first) or d_first <= 0:
+        d_first = FIRST_TURN_DIST_DEFAULT
+    d_first = float(d_first)
+
     w_first = _first_turn_weight(d_first)
+
+    # 必要加速度 ≒ v^2 / (2 d_first) [m/s^2]
+    a_req = (v_mean ** 2) / max(2.0 * d_first, 1.0)
+    a_req_g = a_req / G0
+
+    base = a_req_g * w_first * K_START_PHYS
 
     # 出遅れ秒・枠ロスの寄与（列が無ければ0）
     break_loss = float(row.get('break_loss_sec', 0.0) or 0.0)
+    break_loss = max(0.0, break_loss)
+    break_pen = K_BREAK_PEN * break_loss
+
     lane_pen = 0.0
-    gate = row.get('gate_no', None); field = row.get('field_size', None)
+    gate = row.get('gate_no', None)
+    field = row.get('field_size', None)
     if pd.notna(gate) and pd.notna(field) and float(field) > 1:
         q = (float(gate) - 1.0) / (float(field) - 1.0)  # 0=最内,1=大外
         q = float(np.clip(q, 0.0, 1.0))
-        lane_pen = 0.25 * w_first * q
+        lane_pen = K_LANE_START * w_first * q
 
-    # 1角が短いほど難 → 1/d ベース + 速度寄与
-    base = (1.0 / max(d_first if d_first else FIRST_TURN_DIST_DEFAULT, 1.0)) * K_START
-    base += 0.02 * (v_c ** 2) * w_first
-    return float(base + 0.5 * break_loss + lane_pen)
+    return float(base + break_pen + lane_pen)
 
 def _finish_grade_raw_row(row: pd.Series) -> float:
+    """
+    終盤勾配による重力成分負荷。
+    |grade_pct| × 勾配区間比 × K_FINISH_PHYS を採用。
+    上り/下りとも絶対値で負荷とみなす。
+    """
     distance  = float(row.get('distance_m', np.nan))
     course_id = row.get('course_id')
     surface   = row.get('surface', '芝')
     layout    = row.get('layout', '内回り')
     rail      = row.get('rail_state', '')
+
     if not isinstance(course_id, str) or str(surface) != '芝' or not math.isfinite(distance):
         return 0.0
+
     geom, _, _ = _resolve_geom(course_id, surface, int(distance), layout, rail)
     grade_pct = getattr(geom, "finish_grade_pct", None) if geom else None
-    if not grade_pct:
+    if grade_pct is None or not math.isfinite(grade_pct) or float(grade_pct) == 0.0:
         return 0.0
-    # 今は % の絶対値を採用（上り/下りの強さとして）
+
+    grade_pct = float(grade_pct)
+
     L_fin = float(row.get('finish_uphill_len_m', FINISH_UPHILL_LEN_DEFAULT))
-    _ = L_fin  # 将来の距離スケーリング用に確保（現状は強度そのものを使う）
-    return float(abs(grade_pct))
+    if not math.isfinite(L_fin) or L_fin <= 0:
+        L_fin = FINISH_UPHILL_LEN_DEFAULT
+    L_fin = min(L_fin, distance)
+
+    frac = _safe_div(L_fin, distance, default=0.0)
+    frac = max(0.0, min(frac, 1.0))
+
+    slope = abs(grade_pct) / 100.0
+    load = slope * frac * K_FINISH_PHYS
+    return float(load)
 
 # =========================
 # 公開: DataFrame 付与
@@ -324,6 +394,7 @@ def add_phys_s1_features(
       - phys_s1_score_raw（raw合成）
       - phys_s1_score_z（Z）, phys_s1_score_t（偏差値）
       - phys_s1_score（最終0–1 = CDF(Z)）
+
     入力の帯域優先順:
       1) df['band_q'] があれば連続帯域として使用（0..1）
       2) band_col が数値列ならそれを band_q として使用
@@ -363,6 +434,7 @@ def add_phys_s1_features(
 
     # 表示用の各0–1（従来互換）
     if verbose: print("[phys_s1] 0–1 normalize (show only)...")
+
     def _norm_group_show(g: pd.DataFrame) -> pd.DataFrame:
         g = g.copy()
         g["phys_corner_load"]  = _minmax01(g["phys_corner_load_raw"])
@@ -393,9 +465,11 @@ def add_phys_s1_features(
 
     # 基準集合キー（場×面×layout×距離帯400m）
     bins = list(range(800, 4200, 400))
-    labels = [f"{bins[i]}-{bins[i+1]}" for i in range(len(bins)-1)]
-    df["_dist_band"] = pd.cut(pd.to_numeric(df["distance_m"], errors="coerce").astype("Int64"),
-                              bins=bins, labels=labels, right=False)
+    labels = [f"{bins[i]}-{bins[i+1]}" for i in range(len(bins) - 1)]
+    df["_dist_band"] = pd.cut(
+        pd.to_numeric(df["distance_m"], errors="coerce").astype("Int64"),
+        bins=bins, labels=labels, right=False
+    )
 
     def _stats_by(keys, col):
         g = df.groupby(keys, dropna=False)[col]
@@ -404,20 +478,24 @@ def add_phys_s1_features(
         n  = g.transform("count")
         return mu, sd, n
 
-    keys_strict = ["course_id","surface","layout","_dist_band"]
+    keys_strict = ["course_id", "surface", "layout", "_dist_band"]
     mu_s, sd_s, n_s = _stats_by(keys_strict, "phys_s1_score_raw")
 
     use_loose = (n_s < Z_N_MIN_STRICT)
-    keys_loose = ["course_id","surface","layout"]
+    keys_loose = ["course_id", "surface", "layout"]
     mu_l, sd_l, n_l = _stats_by(keys_loose, "phys_s1_score_raw")
     mu = mu_s.where(~use_loose, mu_l)
     sd = sd_s.where(~use_loose, sd_l)
     n  = n_s.where(~use_loose, n_l)
 
-    mu = mu.fillna(df["phys_s1_score_raw"].mean())
-    sd = sd.fillna(df["phys_s1_score_raw"].std() or 0.0)
+    # 全体平均・分散
+    global_mu = df["phys_s1_score_raw"].mean()
+    global_sd = df["phys_s1_score_raw"].std() or 0.0
+    mu = mu.fillna(global_mu)
+    sd = sd.fillna(global_sd)
     n  = n.fillna(len(df))
 
+    # さらにデータが極端に少ない時の理論レンジフォールバック
     S_min, S_max = _estimate_S_range()
     mu_fb = (S_min + S_max) / 2.0
     sd_fb = max((S_max - S_min) / 6.0, 1e-3)
