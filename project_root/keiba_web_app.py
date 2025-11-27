@@ -3196,6 +3196,41 @@ table = table.rename(columns=JP)
 
 render_final_view(table)
 
+# ===== ここから追記：Keras 連携用 CSV 出力 =====
+with st.expander("📤 Keras 連携用 CSV 出力", expanded=False):
+    st.write("Keras 側に渡したい列だけを選んで CSV にします。")
+
+    # Keras に渡したい列候補（足りない／余計ならあとで調整してOK）
+    base_cols = [
+        "馬名",        # マージ用キー
+        "枠", "番",    # 枠・馬番
+        "AR100",       # Rikeiba の最終レーティング
+        "AvgZ", "WAvgZ", "WStd", "Nrun",
+        "RecencyZ", "HistZ",
+        "SpecFitZ",    # スペクトル適合Z
+        "PhysicsZ",    # 物理Z
+        "PhysS1", "CornerLoadS1", "StartCostS1", "FinishGradeS1",
+    ]
+
+    cols_for_keras = [c for c in base_cols if c in _dfdisp.columns]
+    st.write("出力対象列:", cols_for_keras)
+
+    if st.button("💾 Keras 用 CSV を作成", key="btn_export_keras_csv"):
+        import io
+        out = _dfdisp[cols_for_keras].copy()
+
+        # エンコーディングは VSCode で読みやすいように cp932 か utf-8-sig
+        csv_buf = io.StringIO()
+        out.to_csv(csv_buf, index=False, encoding="utf-8")
+        csv_bytes = csv_buf.getvalue().encode("utf-8")
+
+        st.download_button(
+            label="Keras 用 CSV をダウンロード",
+            data=csv_bytes,
+            file_name="rikeiba_features_for_keras.csv",
+            mime="text/csv",
+        )
+
 # ===== 拡張可視化・実況 =====
 with st.expander("🌀 3Dコース＆レース・シミュレーション", expanded=False):
     if 'PredTime_s' not in df_agg.columns or df_agg['PredTime_s'].isna().all():
